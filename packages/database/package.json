@@ -7,9 +7,10 @@
   "scripts": {
     "db:generate": "prisma generate",
     "db:push": "prisma db push && prisma generate",
-    "db:seed": "tsx prisma/seed.ts",
-    "db:bootstrap": "tsx prisma/bootstrap.ts",
-    "db:reset": "prisma db push --force-reset && tsx prisma/seed.ts",
+    "db:push:schema": "prisma db push --skip-generate",
+    "db:seed": "pnpm exec tsx prisma/seed.ts",
+    "db:bootstrap": "pnpm exec tsx prisma/bootstrap.ts",
+    "db:reset": "prisma db push --force-reset && pnpm exec tsx prisma/seed.ts",
     "build": "prisma generate",
     "test": "vitest run"
   },
