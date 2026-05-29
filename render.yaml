@@ -1,0 +1,83 @@
+# Render Blueprint — free tier (Neon Postgres + 3 web services)
+# Docs: https://render.com/docs/infrastructure-as-code
+#
+# Before first deploy:
+#   1. Create a Neon database and copy DATABASE_URL (with ?sslmode=require)
+#   2. From your machine: pnpm db:push && pnpm db:bootstrap (see DEPLOY-FREE-TIER.md)
+#   3. Apply this blueprint, then set env vars marked "manual" in the Render dashboard
+#   4. Redeploy after setting public URLs (NEXTAUTH_URL, CORS_ORIGINS, etc.)
+
+services:
+  - type: web
+    name: booking-inventory-ws
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate
+    startCommand: pnpm --filter ws-server start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: WS_INTERNAL_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: booking-inventory-admin
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter admin build
+    startCommand: pnpm --filter admin start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: WS_EMIT_URL
+        sync: false
+      - key: WS_INTERNAL_SECRET
+        fromService:
+          type: web
+          name: booking-inventory-ws
+          envVarKey: WS_INTERNAL_SECRET
+
+  - type: web
+    name: booking-inventory-sales
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter sales build
+    startCommand: pnpm --filter sales start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: NEXT_PUBLIC_WS_URL
+        sync: false
+      - key: WS_EMIT_URL
+        sync: false
+      - key: WS_INTERNAL_SECRET
+        fromService:
+          type: web
+          name: booking-inventory-ws
+          envVarKey: WS_INTERNAL_SECRET

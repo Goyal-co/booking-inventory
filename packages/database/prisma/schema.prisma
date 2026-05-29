@@ -1,0 +1,305 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  PROJECT_ADMIN
+  SALES_MANAGER
+  SALES_EXEC
+}
+
+enum UnitStatus {
+  AVAILABLE
+  BLOCKED
+  BOOKED
+  SOLD
+  HOLD
+}
+
+enum ProjectLifecycleStatus {
+  UPCOMING
+  LAUNCH_DAY
+  ONGOING
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+}
+
+enum AuditAction {
+  UNIT_BLOCKED
+  UNIT_RELEASED
+  UNIT_BOOKED
+  UNIT_STATUS_CHANGED
+  MASS_BLOCK
+  MASS_UNBLOCK
+  USER_CREATED
+  USER_UPDATED
+  PROJECT_CREATED
+  PROJECT_STATUS_CHANGED
+  PROJECT_UPDATED
+  PROJECT_DELETED
+  INVENTORY_UPDATED
+  BOOKING_REASSIGNED
+  BOOKING_SUBMITTED
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  FORCE_RELEASE
+}
+
+enum FilterDimension {
+  TOWER
+  BHK
+  STATUS
+  FLOOR
+  FACING
+  PRICE_BAND
+  CUSTOM_TAG
+}
+
+model Organization {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  users     User[]
+  projects  Project[]
+}
+
+model User {
+  id             String               @id @default(cuid())
+  email          String               @unique
+  name           String
+  passwordHash   String
+  role           UserRole             @default(SALES_EXEC)
+  isActive       Boolean              @default(true)
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  projectAccess    UserProjectAccess[]
+  blocks           Block[]
+  bookings         Booking[]
+  reviewedBookings Booking[]           @relation("BookingReviewer")
+  auditLogs        AuditLog[]
+  activities       ActivityEvent[]
+}
+
+model UserProjectAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, projectId])
+}
+
+model Project {
+  id              String              @id @default(cuid())
+  name            String
+  slug            String
+  description     String?
+  launchDate              DateTime?
+  lifecycleStatus         ProjectLifecycleStatus @default(UPCOMING)
+  statusAutoManage        Boolean                @default(true)
+  statusLockedByAdmin     Boolean                @default(false)
+  blockDurationMs         Int                    @default(900000)
+  ongoingBlockDurationDays Int?
+  maxBlocksPerUser        Int                    @default(3)
+  logoUrl         String?
+  primaryColor    String              @default("#2563EB")
+  isPublished              Boolean             @default(false)
+  requiresBookingApproval  Boolean             @default(false)
+  organizationId           String
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  towers          Tower[]
+  floorPlanTypes  FloorPlanType[]
+  costSheetTemplates CostSheetTemplate[]
+  filterConfigs   FilterConfig[]
+  userAccess      UserProjectAccess[]
+  activities      ActivityEvent[]
+
+  @@unique([organizationId, slug])
+}
+
+model Tower {
+  id        String   @id @default(cuid())
+  name      String
+  code      String
+  sortOrder Int      @default(0)
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  floors    Floor[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, code])
+}
+
+model Floor {
+  id        String   @id @default(cuid())
+  number    Int
+  label     String?
+  towerId   String
+  tower     Tower    @relation(fields: [towerId], references: [id], onDelete: Cascade)
+  units     Unit[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([towerId, number])
+}
+
+model FloorPlanType {
+  id          String   @id @default(cuid())
+  name        String
+  bhkType     String
+  carpetArea  Int
+  superArea   Int?
+  imageUrl    String?
+  pdfUrl      String?
+  amenities   String[] @default([])
+  metadata    Json?
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  units       Unit[]
+  costSheets  CostSheetTemplate[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CostSheetTemplate {
+  id              String         @id @default(cuid())
+  name            String
+  lineItems       Json
+  totalPrice      Decimal        @db.Decimal(14, 2)
+  floorPlanTypeId String?
+  floorPlanType   FloorPlanType? @relation(fields: [floorPlanTypeId], references: [id], onDelete: SetNull)
+  projectId       String
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  units           Unit[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Unit {
+  id                  String             @id @default(cuid())
+  unitNumber          String
+  status              UnitStatus         @default(AVAILABLE)
+  carpetArea          Int?
+  bhkType             String?
+  facing              String?
+  basePrice           Decimal?           @db.Decimal(14, 2)
+  priceOverride       Decimal?           @db.Decimal(14, 2)
+  remarks             String?
+  customTags          String[]           @default([])
+  floorId             String
+  floor               Floor              @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  floorPlanTypeId     String?
+  floorPlanType       FloorPlanType?     @relation(fields: [floorPlanTypeId], references: [id], onDelete: SetNull)
+  costSheetTemplateId String?
+  costSheetTemplate   CostSheetTemplate? @relation(fields: [costSheetTemplateId], references: [id], onDelete: SetNull)
+  blocks              Block[]
+  bookings            Booking[]
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([floorId, unitNumber])
+  @@index([status])
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  unitId    String
+  unit      Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  isAdmin   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([unitId])
+}
+
+model Booking {
+  id                String        @id @default(cuid())
+  unitId            String
+  unit              Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  userId            String
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerName      String
+  customerPhone     String
+  costSheetSnapshot Json
+  totalPrice        Decimal       @db.Decimal(14, 2)
+  status            BookingStatus @default(CONFIRMED)
+  adminComment      String?
+  reviewedById      String?
+  reviewedBy        User?         @relation("BookingReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  submittedAt       DateTime      @default(now())
+  bookedAt          DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([unitId, status])
+  @@index([userId, status])
+  @@index([status])
+}
+
+model FilterConfig {
+  id        String          @id @default(cuid())
+  projectId String
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dimension FilterDimension
+  label     String
+  options   Json
+  sortOrder Int             @default(0)
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([projectId, dimension])
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  action     AuditAction
+  entityType String
+  entityId   String
+  userId     String?
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model ActivityEvent {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  message   String
+  unitId    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}

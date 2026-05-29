@@ -1,0 +1,37 @@
+{
+  "name": "admin",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3001}",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@booking/database": "workspace:*",
+    "@booking/realtime": "workspace:*",
+    "@booking/ui": "workspace:*",
+    "@booking/validators": "workspace:*",
+    "bcryptjs": "^2.4.3",
+    "lucide-react": "^0.469.0",
+    "next": "^15.1.3",
+    "next-auth": "^5.0.0-beta.25",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "socket.io-client": "^4.8.1",
+    "sonner": "^1.7.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@booking/config-typescript": "workspace:*",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2"
+  }
+}

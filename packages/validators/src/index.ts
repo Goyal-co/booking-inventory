@@ -1,0 +1,220 @@
+import { z } from "zod";
+
+export const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+});
+
+export const createBlockSchema = z.object({
+  unitId: z.string().cuid(),
+  projectId: z.string().cuid(),
+});
+
+export const releaseBlockSchema = z.object({
+  blockId: z.string().cuid(),
+});
+
+export const createBookingSchema = z.object({
+  blockId: z.string().cuid(),
+  customerName: z.string().min(2).max(100),
+  customerPhone: z.string().min(10).max(15),
+});
+
+export const unitFiltersSchema = z.object({
+  projectId: z.string().cuid(),
+  search: z.string().optional(),
+  tower: z.string().optional(),
+  bhk: z.string().optional(),
+  status: z.enum(["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"]).optional(),
+  floor: z.string().optional(),
+  facing: z.string().optional(),
+});
+
+export const createProjectSchema = z.object({
+  name: z.string().min(2).max(100),
+  slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
+  description: z.string().optional(),
+  launchDate: z.string().datetime().optional(),
+  blockDurationMs: z.number().int().min(60000).max(604800000).default(900000),
+  maxBlocksPerUser: z.number().int().min(1).max(10).default(3),
+  primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#2563EB"),
+});
+
+const assetUrlSchema = z
+  .string()
+  .min(1)
+  .refine((v) => v.startsWith("/") || z.string().url().safeParse(v).success, {
+    message: "Must be a valid URL or path starting with /",
+  });
+
+export const floorPlanTypeSchema = z.object({
+  name: z.string().min(2),
+  bhkType: z.string().min(2),
+  carpetArea: z.number().int().positive(),
+  superArea: z.number().int().positive().optional(),
+  imageUrl: assetUrlSchema.optional().or(z.literal("")),
+  pdfUrl: assetUrlSchema.optional().or(z.literal("")),
+  amenities: z.array(z.string()).default([]),
+});
+
+export const updateFloorPlanSchema = floorPlanTypeSchema.partial();
+
+export const costSheetLineItemSchema = z.object({
+  label: z.string().min(1),
+  amount: z.number(),
+});
+
+export const costSheetTemplateSchema = z.object({
+  name: z.string().min(2),
+  lineItems: z.array(costSheetLineItemSchema).min(1),
+  floorPlanTypeId: z.string().cuid().optional(),
+});
+
+export const towerSchema = z.object({
+  name: z.string().min(1),
+  code: z.string().min(1).max(5),
+  sortOrder: z.number().int().default(0),
+});
+
+export const bulkFloorSchema = z.object({
+  towerId: z.string().cuid(),
+  fromFloor: z.number().int().min(0),
+  toFloor: z.number().int().min(1),
+  unitsPerFloor: z.number().int().min(1).max(20),
+  floorPlanTypeId: z.string().cuid(),
+  costSheetTemplateId: z.string().cuid(),
+});
+
+export const bulkAssignSchema = z.object({
+  projectId: z.string().cuid(),
+  unitIds: z.array(z.string().cuid()).min(1),
+  floorPlanTypeId: z.string().cuid().optional(),
+  costSheetTemplateId: z.string().cuid().optional(),
+  status: z.enum(["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"]).optional(),
+});
+
+export const createUnitSchema = z.object({
+  towerId: z.string().cuid(),
+  floorNumber: z.number().int().min(0),
+  unitNumber: z.string().min(1).max(20),
+  floorPlanTypeId: z.string().cuid(),
+  costSheetTemplateId: z.string().cuid(),
+  facing: z.string().max(50).optional(),
+  remarks: z.string().max(500).optional(),
+  priceOverride: z.number().positive().optional(),
+});
+
+export const updateUnitSchema = createUnitSchema
+  .partial()
+  .omit({ towerId: true, floorNumber: true })
+  .extend({
+    status: z.enum(["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"]).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field is required",
+  });
+
+export const deleteUnitSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+export const massBlockSchema = z.object({
+  projectId: z.string().cuid(),
+  unitIds: z.array(z.string().cuid()).min(1),
+  action: z.enum(["block", "unblock", "hold", "release_hold"]),
+  durationMs: z.number().int().optional(),
+});
+
+export const createUserSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2),
+  password: z.string().min(6),
+  role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC"]),
+  projectIds: z.array(z.string().cuid()).default([]),
+});
+
+export const createAdminUserSchema = z
+  .object({
+    email: z.string().email(),
+    name: z.string().min(2),
+    password: z.string().min(8),
+    role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN"]),
+    projectIds: z.array(z.string().cuid()).default([]),
+  })
+  .refine((data) => data.role !== "PROJECT_ADMIN" || data.projectIds.length > 0, {
+    message: "Project Admin must be assigned at least one project",
+    path: ["projectIds"],
+  });
+
+export const importUserRowSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2),
+  password: z.string().min(6),
+  role: z.enum(["SALES_MANAGER", "SALES_EXEC"]),
+  projectIds: z.array(z.string().cuid()).default([]),
+});
+
+export const updateUserSchema = createUserSchema.partial().omit({ password: true }).extend({
+  password: z.string().min(6).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const filterConfigSchema = z.object({
+  dimension: z.enum(["TOWER", "BHK", "STATUS", "FLOOR", "FACING", "PRICE_BAND", "CUSTOM_TAG"]),
+  label: z.string().min(1),
+  options: z.array(z.object({ value: z.string(), label: z.string() })),
+  sortOrder: z.number().int().default(0),
+  isActive: z.boolean().default(true),
+});
+
+export const projectLifecycleStatusSchema = z.enum(["UPCOMING", "LAUNCH_DAY", "ONGOING"]);
+
+export const updateProjectLifecycleSchema = z
+  .object({
+    lifecycleStatus: projectLifecycleStatusSchema.optional(),
+    blockDurationMs: z.number().int().min(60000).max(604800000).optional(),
+    blockDurationDays: z.number().int().min(1).max(7).optional(),
+    maxBlocksPerUser: z.number().int().min(1).max(10).optional(),
+    statusAutoManage: z.boolean().optional(),
+    launchDate: z.string().datetime().optional().nullable(),
+    isPublished: z.boolean().optional(),
+    name: z.string().min(2).max(100).optional(),
+    slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/).optional(),
+    description: z.string().optional(),
+    requiresBookingApproval: z.boolean().optional(),
+  })
+  .refine(
+    (data) => Object.keys(data).length > 0,
+    { message: "At least one field is required" }
+  );
+
+export type LoginInput = z.infer<typeof loginSchema>;
+export type CreateBlockInput = z.infer<typeof createBlockSchema>;
+export type CreateBookingInput = z.infer<typeof createBookingSchema>;
+export type UnitFiltersInput = z.infer<typeof unitFiltersSchema>;
+export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+export type BulkFloorInput = z.infer<typeof bulkFloorSchema>;
+export type BulkAssignInput = z.infer<typeof bulkAssignSchema>;
+export type CreateUnitInput = z.infer<typeof createUnitSchema>;
+export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
+export type MassBlockInput = z.infer<typeof massBlockSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateProjectLifecycleInput = z.infer<typeof updateProjectLifecycleSchema>;
+
+export const cancelBookingSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+export const approveBookingSchema = z.object({
+  action: z.literal("approve"),
+});
+
+export const rejectBookingSchema = z.object({
+  action: z.literal("reject"),
+  comment: z.string().min(1).max(500),
+});
+
+export const patchBookingSchema = z.discriminatedUnion("action", [
+  approveBookingSchema,
+  rejectBookingSchema,
+]);

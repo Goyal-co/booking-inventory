@@ -1,0 +1,31 @@
+{
+  "name": "booking-inventory",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "dev:sales": "turbo dev --filter=sales",
+    "dev:admin": "turbo dev --filter=admin",
+    "dev:admin:clean": "node scripts/kill-port.js 3001 && node -e \"require('fs').rmSync('apps/admin/.next',{recursive:true,force:true})\" && pnpm --filter @booking/database db:generate && turbo dev --filter=admin",
+    "dev:sales:clean": "node scripts/kill-port.js 3000 && node -e \"require('fs').rmSync('apps/sales/.next',{recursive:true,force:true})\" && pnpm --filter @booking/database db:generate && turbo dev --filter=sales",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "db:generate": "turbo db:generate",
+    "db:push": "turbo db:push",
+    "db:seed": "turbo db:seed",
+    "db:bootstrap": "pnpm --filter @booking/database db:bootstrap",
+    "db:reset": "pnpm --filter @booking/database db:reset",
+    "dev:ws": "turbo dev --filter=ws-server",
+    "dev:ws:clean": "node scripts/kill-port.js 3002 && turbo dev --filter=ws-server",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

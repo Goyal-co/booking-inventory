@@ -1,0 +1,18 @@
+{
+  "name": "@booking/validators",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@booking/config-typescript": "workspace:*",
+    "typescript": "^5.7.2"
+  }
+}

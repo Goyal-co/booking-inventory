@@ -1,0 +1,165 @@
+"use client";
+
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { Card, CardContent, formatPrice, ClientDateTime, FilterBar } from "@booking/ui";
+import { TopBar } from "@/components/top-bar";
+import { SalesProjectScopeSelect } from "@/components/sales-project-scope-select";
+import { useSelectedProject } from "@/hooks/use-selected-project";
+
+type BookingStatus = "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED";
+
+interface BookingRow {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  totalPrice: string;
+  bookedAt: string;
+  submittedAt: string;
+  status: BookingStatus;
+  adminComment: string | null;
+  projectId: string;
+  projectName: string;
+  unit: { unitNumber: string; floor: { tower: { name: string } } };
+}
+
+const STATUS_LABELS: Record<BookingStatus, { label: string; className: string }> = {
+  PENDING: { label: "Pending", className: "bg-blue-100 text-blue-800" },
+  CONFIRMED: { label: "Confirmed", className: "bg-emerald-100 text-emerald-800" },
+  REJECTED: { label: "Rejected", className: "bg-red-100 text-red-800" },
+  CANCELLED: { label: "Cancelled", className: "bg-gray-100 text-gray-600" },
+};
+
+function BookingsDoneContent() {
+  const { projects, loading } = useSelectedProject();
+  const [scopeProjectId, setScopeProjectId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [bookings, setBookings] = useState<BookingRow[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
+
+  const assignedProjectIds = new Set(projects.map((p) => p.id));
+  const showProjectColumn = scopeProjectId === null;
+
+  const loadBookings = useCallback(async () => {
+    setFetching(true);
+    setFetchError(null);
+    const params = new URLSearchParams(scopeProjectId ? { projectId: scopeProjectId } : { projectId: "all" });
+    if (search.trim()) params.set("search", search.trim());
+    try {
+      const res = await fetch(`/api/bookings/list?${params}`);
+      const d = await res.json();
+      if (!res.ok) {
+        setFetchError(d.error ?? "Failed to load bookings");
+        setBookings([]);
+      } else {
+        setBookings(d.bookings ?? []);
+      }
+    } catch {
+      setFetchError("Failed to load bookings");
+      setBookings([]);
+    } finally {
+      setFetching(false);
+    }
+  }, [scopeProjectId, search]);
+
+  useEffect(() => {
+    if (!loading) loadBookings();
+  }, [loading, loadBookings]);
+
+  if (loading) {
+    return <div className="flex h-full items-center justify-center">Loading...</div>;
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar>
+        <SalesProjectScopeSelect
+          projects={projects}
+          scopeProjectId={scopeProjectId}
+          onChange={setScopeProjectId}
+        />
+      </TopBar>
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        <h1 className="mb-4 text-xl font-bold">Bookings Done</h1>
+        <div className="mb-4">
+          <FilterBar
+            filters={[]}
+            values={{}}
+            onChange={() => {}}
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search customer name or unit number..."
+          />
+        </div>
+        {projects.length === 0 ? (
+          <p className="text-gray-500">No projects assigned. Contact your admin.</p>
+        ) : fetchError ? (
+          <p className="text-red-600">{fetchError}</p>
+        ) : fetching ? (
+          <p className="text-gray-500">Loading bookings...</p>
+        ) : bookings.length === 0 ? (
+          <p className="text-gray-500">No bookings yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {bookings.map((b) => {
+              const revoked = !assignedProjectIds.has(b.projectId);
+              const statusInfo = STATUS_LABELS[b.status] ?? STATUS_LABELS.CONFIRMED;
+              return (
+                <Card key={b.id}>
+                  <CardContent className="flex items-start justify-between gap-4 p-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <p className="font-bold text-gray-900">{b.unit.unitNumber}</p>
+                        <span
+                          className={`rounded px-2 py-0.5 text-xs font-medium ${statusInfo.className}`}
+                        >
+                          {statusInfo.label}
+                        </span>
+                      </div>
+                      {showProjectColumn && (
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <span className="text-sm text-gray-500">{b.projectName}</span>
+                          {revoked && (
+                            <span className="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-700">
+                              No longer assigned
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-sm text-gray-500">{b.unit.floor.tower.name}</p>
+                      <p className="text-sm">
+                        {b.customerName} · {b.customerPhone}
+                      </p>
+                      {b.status === "REJECTED" && b.adminComment && (
+                        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+                          <strong>Admin note:</strong> {b.adminComment}
+                        </p>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="font-semibold text-brand-600">
+                        {formatPrice(Number(b.totalPrice))}
+                      </p>
+                      <ClientDateTime
+                        value={b.status === "PENDING" ? b.submittedAt : b.bookedAt}
+                        className="text-xs text-gray-400"
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function BookingsDonePage() {
+  return (
+    <Suspense fallback={<div className="flex h-full items-center justify-center">Loading...</div>}>
+      <BookingsDoneContent />
+    </Suspense>
+  );
+}
