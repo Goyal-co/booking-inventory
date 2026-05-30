@@ -13,6 +13,10 @@ export function filterDimensionToQueryKey(dimension: string): string {
     STATUS: "status",
     FLOOR: "floor",
     FACING: "facing",
+    PRICE_BAND: "priceBand",
+    CUSTOM_TAG: "customTag",
+    CARPET_AREA: "carpetArea",
+    SUPER_BUILT_UP: "superArea",
   };
   return map[dimension] ?? dimension.toLowerCase();
 }
@@ -50,6 +54,7 @@ export interface UnitCardData {
   towerCode: string;
   floorNumber: number;
   carpetArea: number | null;
+  superArea: number | null;
   bhkType: string | null;
   price: number | null;
   status: UnitStatus;

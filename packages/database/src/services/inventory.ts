@@ -28,13 +28,33 @@ export async function getInventoryStructure(projectId: string, organizationId: s
   const project = await prisma.project.findFirst({
     where: { id: projectId, organizationId },
     include: {
-      floorPlanTypes: { select: { id: true, name: true, bhkType: true, carpetArea: true } },
+      floorPlanTypes: {
+        select: {
+          id: true,
+          name: true,
+          bhkType: true,
+          carpetArea: true,
+          superArea: true,
+          balconyArea: true,
+          sizeType: true,
+          imageUrl: true,
+          pdfUrl: true,
+          amenities: true,
+        },
+      },
       costSheetTemplates: {
         select: { id: true, name: true, totalPrice: true, floorPlanTypeId: true },
       },
       towers: {
         orderBy: { sortOrder: "asc" },
         include: {
+          unitStackTemplates: {
+            orderBy: { stackNumber: "asc" },
+            include: {
+              floorPlanType: { select: { id: true, name: true, bhkType: true, superArea: true } },
+              costSheetTemplate: { select: { id: true, name: true, totalPrice: true } },
+            },
+          },
           floors: {
             orderBy: { number: "asc" },
             include: {
@@ -72,15 +92,33 @@ export async function getInventoryStructure(projectId: string, organizationId: s
       id: t.id,
       name: t.name,
       code: t.code,
+      unitStackTemplates: t.unitStackTemplates.map((s) => ({
+        id: s.id,
+        stackNumber: s.stackNumber,
+        floorPlanTypeId: s.floorPlanTypeId,
+        costSheetTemplateId: s.costSheetTemplateId,
+        sizeType: s.sizeType,
+        activeFromFloor: s.activeFromFloor,
+        activeToFloor: s.activeToFloor,
+        floorPlanType: s.floorPlanType,
+        costSheetTemplate: {
+          ...s.costSheetTemplate,
+          totalPrice: s.costSheetTemplate.totalPrice.toString(),
+        },
+      })),
       floors: t.floors.map((f) => ({
         id: f.id,
         number: f.number,
         label: f.label,
         unitCount: f.units.length,
-        units: f.units.map((u) => ({
-          ...u,
-          priceOverride: u.priceOverride ? Number(u.priceOverride) : null,
-        })),
+        units: f.units.map((u) => {
+          const plan = project.floorPlanTypes.find((p) => p.id === u.floorPlanTypeId);
+          return {
+            ...u,
+            priceOverride: u.priceOverride ? Number(u.priceOverride) : null,
+            superArea: plan?.superArea ?? null,
+          };
+        }),
       })),
     })),
   };
@@ -422,25 +460,48 @@ export async function bulkAssignInventory(
   return { updated: unitIds.length };
 }
 
+export function formatUnitNumber(towerCode: string, floorNum: number, stackNumber: number) {
+  return `${towerCode}-${floorNum}-${String(stackNumber).padStart(2, "0")}`;
+}
+
 export async function generateInventory(input: {
   towerId: string;
   fromFloor: number;
   toFloor: number;
-  unitsPerFloor: number;
-  floorPlanTypeId: string;
-  costSheetTemplateId: string;
+  stacks: Array<{
+    stackNumber: number;
+    floorPlanTypeId: string;
+    costSheetTemplateId: string;
+    sizeType: string;
+    activeFromFloor: number;
+    activeToFloor: number;
+  }>;
+  saveTemplate?: boolean;
 }) {
   const tower = await prisma.tower.findUnique({
     where: { id: input.towerId },
     include: { project: true },
   });
-  if (!tower) throw new Error("Tower not found");
+  if (!tower) throw new InventoryError("Tower not found", "NOT_FOUND");
 
-  const plan = await prisma.floorPlanType.findUnique({ where: { id: input.floorPlanTypeId } });
-  const costSheet = await prisma.costSheetTemplate.findUnique({ where: { id: input.costSheetTemplateId } });
-  if (!plan || !costSheet) throw new Error("Plan or cost sheet not found");
+  const planIds = [...new Set(input.stacks.map((s) => s.floorPlanTypeId))];
+  const costIds = [...new Set(input.stacks.map((s) => s.costSheetTemplateId))];
+  const [plans, costSheets] = await Promise.all([
+    prisma.floorPlanType.findMany({ where: { id: { in: planIds }, projectId: tower.projectId } }),
+    prisma.costSheetTemplate.findMany({ where: { id: { in: costIds }, projectId: tower.projectId } }),
+  ]);
+  const planMap = new Map(plans.map((p) => [p.id, p]));
+  const costMap = new Map(costSheets.map((c) => [c.id, c]));
+
+  for (const stack of input.stacks) {
+    if (!planMap.has(stack.floorPlanTypeId) || !costMap.has(stack.costSheetTemplateId)) {
+      throw new InventoryError("Invalid floor plan or cost sheet for this project", "NOT_FOUND");
+    }
+  }
 
   let created = 0;
+  let updated = 0;
+  let skipped = 0;
 
   for (let floorNum = input.fromFloor; floorNum <= input.toFloor; floorNum++) {
     const floor = await prisma.floor.upsert({
@@ -449,31 +510,75 @@ export async function generateInventory(input: {
       create: { number: floorNum, label: `Floor ${floorNum}`, towerId: input.towerId },
     });
 
-    for (let i = 1; i <= input.unitsPerFloor; i++) {
-      const unitNumber = `${tower.code}-${floorNum}${String(i).padStart(2, "0")}`;
-      await prisma.unit.upsert({
+    for (const stack of input.stacks) {
+      if (floorNum < stack.activeFromFloor || floorNum > stack.activeToFloor) continue;
+
+      const plan = planMap.get(stack.floorPlanTypeId)!;
+      const costSheet = costMap.get(stack.costSheetTemplateId)!;
+      const unitNumber = formatUnitNumber(tower.code, floorNum, stack.stackNumber);
+
+      const existing = await prisma.unit.findUnique({
         where: { floorId_unitNumber: { floorId: floor.id, unitNumber } },
-        update: {
-          floorPlanTypeId: input.floorPlanTypeId,
-          costSheetTemplateId: input.costSheetTemplateId,
-          bhkType: plan.bhkType,
-          carpetArea: plan.carpetArea,
-          basePrice: costSheet.totalPrice,
-        },
-        create: {
-          unitNumber,
-          floorId: floor.id,
-          floorPlanTypeId: input.floorPlanTypeId,
-          costSheetTemplateId: input.costSheetTemplateId,
-          bhkType: plan.bhkType,
-          carpetArea: plan.carpetArea,
-          basePrice: costSheet.totalPrice,
-          status: UnitStatus.AVAILABLE,
-        },
       });
-      created++;
+
+      if (existing && existing.status !== UnitStatus.AVAILABLE) {
+        skipped++;
+        continue;
+      }
+
+      const unitData = {
+        floorPlanTypeId: stack.floorPlanTypeId,
+        costSheetTemplateId: stack.costSheetTemplateId,
+        bhkType: plan.bhkType,
+        carpetArea: plan.carpetArea,
+        basePrice: costSheet.totalPrice,
+      };
+
+      if (existing) {
+        await prisma.unit.update({ where: { id: existing.id }, data: unitData });
+        updated++;
+      } else {
+        await prisma.unit.create({
+          data: {
+            unitNumber,
+            floorId: floor.id,
+            status: UnitStatus.AVAILABLE,
+            ...unitData,
+          },
+        });
+        created++;
+      }
     }
   }
 
-  return { created };
+  if (input.saveTemplate) {
+    await prisma.unitStackTemplate.deleteMany({ where: { towerId: input.towerId } });
+    await prisma.unitStackTemplate.createMany({
+      data: input.stacks.map((s, idx) => ({
+        towerId: input.towerId,
+        stackNumber: s.stackNumber,
+        floorPlanTypeId: s.floorPlanTypeId,
+        costSheetTemplateId: s.costSheetTemplateId,
+        sizeType: s.sizeType,
+        activeFromFloor: s.activeFromFloor,
+        activeToFloor: s.activeToFloor,
+        sortOrder: idx,
+      })),
+    });
+  }
+
+  return { created, updated, skipped };
+}
+
+export async function deleteFloorPlanType(planId: string, projectId: string, organizationId: string) {
+  const plan = await prisma.floorPlanType.findFirst({
+    where: { id: planId, projectId, project: { organizationId } },
+    include: { _count: { select: { units: true } } },
+  });
+  if (!plan) throw new InventoryError("Floor plan not found", "NOT_FOUND");
+  if (plan._count.units > 0) {
+    throw new InventoryError("Cannot delete floor plan assigned to units", "IN_USE");
+  }
+  await prisma.floorPlanType.delete({ where: { id: planId } });
+  return { success: true };
 }

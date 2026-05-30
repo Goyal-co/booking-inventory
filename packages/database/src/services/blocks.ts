@@ -19,13 +19,30 @@ export class BlockError extends Error {
 }
 
 
-export async function getActiveBlocksForUser(userId: string, projectId?: string, search?: string) {
+export async function getActiveBlocksForUser(
+  userId: string,
+  projectId?: string,
+  search?: string,
+  extra?: { tower?: string; bhk?: string }
+) {
   const trimmed = search?.trim();
   const blocks = await prisma.block.findMany({
     where: {
       userId,
       expiresAt: { gt: new Date() },
-      ...(projectId ? { unit: { floor: { tower: { projectId } } } } : {}),
+      ...(projectId || extra?.tower || extra?.bhk
+        ? {
+            unit: {
+              ...(extra?.bhk ? { bhkType: extra.bhk } : {}),
+              floor: {
+                tower: {
+                  ...(projectId ? { projectId } : {}),
+                  ...(extra?.tower ? { code: extra.tower } : {}),
+                },
+              },
+            },
+          }
+        : {}),
       ...(trimmed
         ? {
             unit: {

@@ -457,7 +457,10 @@ function LiveBookingContent() {
                   <strong>Status:</strong> {selectedUnit.status}
                 </p>
                 <p>
-                  <strong>Area:</strong> {selectedUnit.carpetArea} sqft
+                  <strong>Carpet:</strong> {selectedUnit.carpetArea ?? "N/A"} sqft
+                </p>
+                <p>
+                  <strong>Super built-up:</strong> {selectedUnit.superArea ?? "N/A"} sqft
                 </p>
                 <p>
                   <strong>Facing:</strong> {selectedUnit.facing ?? "N/A"}

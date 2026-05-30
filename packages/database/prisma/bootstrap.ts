@@ -13,7 +13,6 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-const WEAK_SECRETS = new Set(["change-me-in-production", "secret", "password", "password123"]);
 const DEMO_PASSWORDS = new Set(["password123", "admin123", "changeme"]);
 
 function slugify(value: string) {
@@ -33,24 +32,6 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function assertProductionSecrets() {
-  if (process.env.NODE_ENV !== "production") return;
-
-  const nextAuthSecret = process.env.NEXTAUTH_SECRET?.trim();
-  if (!nextAuthSecret || nextAuthSecret.length < 32 || WEAK_SECRETS.has(nextAuthSecret)) {
-    throw new Error(
-      "Set NEXTAUTH_SECRET to a random string of at least 32 characters before production bootstrap."
-    );
-  }
-
-  const wsSecret = process.env.WS_INTERNAL_SECRET?.trim();
-  if (!wsSecret || wsSecret.length < 32 || WEAK_SECRETS.has(wsSecret)) {
-    throw new Error(
-      "Set WS_INTERNAL_SECRET to a random string of at least 32 characters before production bootstrap."
-    );
-  }
-}
-
 function validatePassword(password: string) {
   if (password.length < 12) {
     throw new Error("SUPER_ADMIN_PASSWORD must be at least 12 characters.");
@@ -61,7 +42,8 @@ function validatePassword(password: string) {
 }
 
 async function main() {
-  assertProductionSecrets();
+  // Bootstrap only creates org + admin in the database.
+  // NEXTAUTH_SECRET / WS_INTERNAL_SECRET are required on Render apps, not here.
 
   const orgName = process.env.ORGANIZATION_NAME?.trim() || "My Organization";
   const orgSlug = process.env.ORGANIZATION_SLUG?.trim() || slugify(orgName);

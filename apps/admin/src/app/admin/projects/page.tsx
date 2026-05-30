@@ -14,6 +14,7 @@ import {
   ProjectStatusBadge,
   formatBlockDuration,
   canBlockUnits,
+  FilterBar,
 } from "@booking/ui";
 import { toast, Toaster } from "sonner";
 import { useAdminSession } from "@/hooks/use-admin-session";
@@ -37,15 +38,24 @@ export default function ProjectsPage() {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
 
+  const [search, setSearch] = useState("");
+  const [lifecycleFilter, setLifecycleFilter] = useState("");
+  const [publishedFilter, setPublishedFilter] = useState("");
+
   const load = async () => {
-    const res = await fetch("/api/projects");
+    const params = new URLSearchParams();
+    if (search.trim()) params.set("search", search.trim());
+    if (lifecycleFilter) params.set("lifecycleStatus", lifecycleFilter);
+    if (publishedFilter) params.set("isPublished", publishedFilter);
+    const q = params.toString();
+    const res = await fetch(`/api/projects${q ? `?${q}` : ""}`);
     const data = await res.json();
     setProjects(data.projects ?? []);
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [search, lifecycleFilter, publishedFilter]);
 
   const handleCreate = async () => {
     const res = await fetch("/api/projects", {
@@ -77,6 +87,44 @@ export default function ProjectsPage() {
         {isSuperAdmin && (
           <Button onClick={() => setShowCreate(true)}>New Project</Button>
         )}
+      </div>
+
+      <div className="mb-4">
+        <FilterBar
+          filters={[]}
+          values={{ lifecycleStatus: lifecycleFilter, isPublished: publishedFilter }}
+          onChange={(key, value) => {
+            if (key === "lifecycleStatus") setLifecycleFilter(value);
+            if (key === "isPublished") setPublishedFilter(value);
+          }}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search projects..."
+          extraSelects={[
+            {
+              key: "lifecycleStatus",
+              label: "All lifecycle",
+              options: [
+                { value: "UPCOMING", label: "Upcoming" },
+                { value: "LAUNCH_DAY", label: "Launch day" },
+                { value: "ONGOING", label: "Ongoing" },
+              ],
+            },
+            {
+              key: "isPublished",
+              label: "All visibility",
+              options: [
+                { value: "true", label: "Published" },
+                { value: "false", label: "Draft" },
+              ],
+            },
+          ]}
+          onClearAll={() => {
+            setSearch("");
+            setLifecycleFilter("");
+            setPublishedFilter("");
+          }}
+        />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

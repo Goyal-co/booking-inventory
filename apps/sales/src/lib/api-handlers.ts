@@ -13,13 +13,14 @@ import {
   getHeatmapData,
   BlockError,
   BookingError,
-  applyAutoLifecycleTransitions,
   getSalesAnalyticsForProjects,
+  getSalesAnalyticsCharts,
+  getProjectFilters,
   canBlockUnits,
   formatBlockDuration,
   getProjectIdFromUnit,
 } from "@booking/database";
-import { createBlockSchema, createBookingSchema, unitFiltersSchema } from "@booking/validators";
+import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema } from "@booking/validators";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
 
@@ -27,13 +28,7 @@ async function getSessionUser() {
   const session = await auth();
   if (!session?.user?.id) return null;
 
-  const access = await prisma.userProjectAccess.findMany({
-    where: { userId: session.user.id },
-    select: { projectId: true },
-  });
-  const projectIds = access.map((a) => a.projectId);
-
-  return { ...session.user, projectIds };
+  return { ...session.user, projectIds: session.user.projectIds ?? [] };
 }
 
 export async function GET_units(req: NextRequest) {
@@ -191,7 +186,9 @@ export async function GET_myBlocks(req: NextRequest) {
   const projectId =
     projectIdParam && projectIdParam !== "all" ? projectIdParam : undefined;
   const search = req.nextUrl.searchParams.get("search") ?? undefined;
-  const blocks = await getActiveBlocksForUser(user.id, projectId, search);
+  const tower = req.nextUrl.searchParams.get("tower") ?? undefined;
+  const bhk = req.nextUrl.searchParams.get("bhk") ?? undefined;
+  const blocks = await getActiveBlocksForUser(user.id, projectId, search, { tower, bhk });
   return NextResponse.json({ blocks });
 }
 
@@ -203,7 +200,22 @@ export async function GET_bookings(req: NextRequest) {
   const projectId =
     projectIdParam && projectIdParam !== "all" ? projectIdParam : undefined;
   const search = req.nextUrl.searchParams.get("search") ?? undefined;
-  const bookings = await getBookingsForUser(user.id, projectId, search);
+  const statusParam = req.nextUrl.searchParams.get("status");
+  const status =
+    statusParam && statusParam !== "all"
+      ? (statusParam as import("@booking/database").BookingStatus)
+      : undefined;
+  const tower = req.nextUrl.searchParams.get("tower") ?? undefined;
+  const bhk = req.nextUrl.searchParams.get("bhk") ?? undefined;
+  const dateFrom = req.nextUrl.searchParams.get("dateFrom") ?? undefined;
+  const dateTo = req.nextUrl.searchParams.get("dateTo") ?? undefined;
+  const bookings = await getBookingsForUser(user.id, projectId, search, {
+    status,
+    tower,
+    bhk,
+    dateFrom,
+    dateTo,
+  });
   const serialized = bookings.map((b) => ({
     id: b.id,
     customerName: b.customerName,
@@ -262,8 +274,6 @@ export async function GET_projects(_req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await applyAutoLifecycleTransitions();
-
   const projects = await prisma.project.findMany({
     where: {
       id: { in: user.projectIds },
@@ -295,11 +305,13 @@ export async function GET_projects(_req: NextRequest) {
   return NextResponse.json({ projects: enriched });
 }
 
-export async function GET_dashboard(_req: NextRequest) {
+export async function GET_dashboard(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await applyAutoLifecycleTransitions();
+  const rangeParam = req.nextUrl.searchParams.get("range") ?? "30d";
+  const rangeParsed = dashboardRangeSchema.safeParse(rangeParam);
+  const range = rangeParsed.success ? rangeParsed.data : "30d";
 
   const projects = await prisma.project.findMany({
     where: {
@@ -326,6 +338,13 @@ export async function GET_dashboard(_req: NextRequest) {
     projects.map((p) => p.id)
   );
 
+  const chartsEntries = await Promise.all(
+    projects.map(async (p) =>
+      [p.id, await getSalesAnalyticsCharts(user.id, p.id, range)] as const
+    )
+  );
+  const chartsMap = Object.fromEntries(chartsEntries);
+
   const enriched = projects.map((p) => ({
     ...p,
     canBlock: canBlockUnits(p.lifecycleStatus),
@@ -341,9 +360,10 @@ export async function GET_dashboard(_req: NextRequest) {
       totalBlocksEver: 0,
       conversionRate: 0,
     },
+    charts: chartsMap[p.id],
   }));
 
-  return NextResponse.json({ projects: enriched });
+  return NextResponse.json({ projects: enriched, range });
 }
 
 export async function GET_filters(req: NextRequest) {
@@ -356,16 +376,13 @@ export async function GET_filters(req: NextRequest) {
     return NextResponse.json({ error: "Access denied" }, { status: 403 });
   }
 
-  const filters = await prisma.filterConfig.findMany({
-    where: { projectId, isActive: true },
-    orderBy: { sortOrder: "asc" },
-  });
+  const filters = await getProjectFilters(projectId);
 
   return NextResponse.json({
     filters: filters.map((f) => ({
       dimension: f.dimension,
       label: f.label,
-      options: f.options as Array<{ value: string; label: string }>,
+      options: f.options,
     })),
   });
 }

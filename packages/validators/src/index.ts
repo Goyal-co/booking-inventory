@@ -28,6 +28,10 @@ export const unitFiltersSchema = z.object({
   status: z.enum(["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"]).optional(),
   floor: z.string().optional(),
   facing: z.string().optional(),
+  priceBand: z.string().optional(),
+  customTag: z.string().optional(),
+  carpetArea: z.string().optional(),
+  superArea: z.string().optional(),
 });
 
 export const createProjectSchema = z.object({
@@ -51,7 +55,9 @@ export const floorPlanTypeSchema = z.object({
   name: z.string().min(2),
   bhkType: z.string().min(2),
   carpetArea: z.number().int().positive(),
-  superArea: z.number().int().positive().optional(),
+  superArea: z.number().int().positive(),
+  balconyArea: z.number().int().positive().optional(),
+  sizeType: z.enum(["SBA", "CARPET"]).default("SBA"),
   imageUrl: assetUrlSchema.optional().or(z.literal("")),
   pdfUrl: assetUrlSchema.optional().or(z.literal("")),
   amenities: z.array(z.string()).default([]),
@@ -76,6 +82,36 @@ export const towerSchema = z.object({
   sortOrder: z.number().int().default(0),
 });
 
+export const unitStackRowSchema = z.object({
+  stackNumber: z.number().int().min(1).max(99),
+  floorPlanTypeId: z.string().cuid(),
+  costSheetTemplateId: z.string().cuid(),
+  sizeType: z.enum(["SBA", "CARPET"]).default("SBA"),
+  activeFromFloor: z.number().int().min(1),
+  activeToFloor: z.number().int().min(1),
+});
+
+export const unitStackGenerateSchema = z
+  .object({
+    towerId: z.string().cuid(),
+    fromFloor: z.number().int().min(1),
+    toFloor: z.number().int().min(1),
+    stacks: z.array(unitStackRowSchema).min(1),
+    saveTemplate: z.boolean().default(false),
+  })
+  .refine((d) => d.fromFloor <= d.toFloor, { message: "fromFloor must be <= toFloor" })
+  .refine(
+    (d) =>
+      d.stacks.every(
+        (s) =>
+          s.activeFromFloor >= d.fromFloor &&
+          s.activeToFloor <= d.toFloor &&
+          s.activeFromFloor <= s.activeToFloor
+      ),
+    { message: "Stack active floors must be within the building floor range" }
+  );
+
+/** @deprecated Use unitStackGenerateSchema */
 export const bulkFloorSchema = z.object({
   towerId: z.string().cuid(),
   fromFloor: z.number().int().min(0),
@@ -160,7 +196,17 @@ export const updateUserSchema = createUserSchema.partial().omit({ password: true
 });
 
 export const filterConfigSchema = z.object({
-  dimension: z.enum(["TOWER", "BHK", "STATUS", "FLOOR", "FACING", "PRICE_BAND", "CUSTOM_TAG"]),
+  dimension: z.enum([
+    "TOWER",
+    "BHK",
+    "STATUS",
+    "FLOOR",
+    "FACING",
+    "PRICE_BAND",
+    "CUSTOM_TAG",
+    "CARPET_AREA",
+    "SUPER_BUILT_UP",
+  ]),
   label: z.string().min(1),
   options: z.array(z.object({ value: z.string(), label: z.string() })),
   sortOrder: z.number().int().default(0),
@@ -194,6 +240,42 @@ export type CreateBookingInput = z.infer<typeof createBookingSchema>;
 export type UnitFiltersInput = z.infer<typeof unitFiltersSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type BulkFloorInput = z.infer<typeof bulkFloorSchema>;
+export type UnitStackGenerateInput = z.infer<typeof unitStackGenerateSchema>;
+
+export const userFiltersSchema = z.object({
+  search: z.string().optional(),
+  role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC"]).optional(),
+  isActive: z.enum(["true", "false"]).optional(),
+  projectId: z.string().cuid().optional(),
+});
+
+export const bookingFiltersSchema = z.object({
+  projectId: z.string().optional(),
+  status: z.enum(["PENDING", "CONFIRMED", "REJECTED", "CANCELLED", "all"]).optional(),
+  search: z.string().optional(),
+  tower: z.string().optional(),
+  bhk: z.string().optional(),
+  userId: z.string().cuid().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+
+export const auditFiltersSchema = z.object({
+  action: z.string().optional(),
+  entityType: z.string().optional(),
+  userId: z.string().cuid().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
+export const projectListFiltersSchema = z.object({
+  search: z.string().optional(),
+  lifecycleStatus: z.enum(["UPCOMING", "LAUNCH_DAY", "ONGOING"]).optional(),
+  isPublished: z.enum(["true", "false"]).optional(),
+});
+
+export const dashboardRangeSchema = z.enum(["7d", "30d", "90d"]).default("30d");
 export type BulkAssignInput = z.infer<typeof bulkAssignSchema>;
 export type CreateUnitInput = z.infer<typeof createUnitSchema>;
 export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;

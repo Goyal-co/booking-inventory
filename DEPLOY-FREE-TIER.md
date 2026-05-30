@@ -71,34 +71,37 @@ Save this as `DATABASE_URL` — you will use it locally and on Render.
 
 ## Step 3 — Prepare database & Super Admin (from your PC)
 
-In PowerShell (Windows) from the project root:
+**Important:** Prisma reads `packages/database/.env`, not the root `.env`. Copy your Neon `DATABASE_URL` into **both** files.
+
+**Stop all dev servers** (admin, sales, ws) before `prisma generate` — otherwise Windows may show `EPERM` (DLL file locked). Your project is under OneDrive, which can also lock files; pause OneDrive sync if EPERM persists.
+
+In PowerShell from the project root:
 
 ```powershell
-# Paste your Neon connection string
-$env:DATABASE_URL = "postgresql://....?sslmode=require"
+# Do NOT set NODE_ENV=production before install (it skips dev tools like prisma/tsx)
+Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
 
 pnpm install
-pnpm db:generate
-pnpm db:push
 
-# Production bootstrap — choose YOUR admin email/password
-$env:NODE_ENV = "production"
+# Push schema to Neon only (no generate step)
+pnpm db:push:schema
+
+# After dev servers are stopped:
+pnpm --filter @booking/database exec prisma generate
+
+# Bootstrap — no NODE_ENV or NEXTAUTH_SECRET needed
 $env:ORGANIZATION_NAME = "Your Company"
 $env:ORGANIZATION_SLUG = "your-company"
 $env:SUPER_ADMIN_EMAIL = "you@email.com"
 $env:SUPER_ADMIN_NAME = "Super Admin"
 $env:SUPER_ADMIN_PASSWORD = "YourStrongPassword12!"
 
-# Generate secrets (save these for Render)
-# Run in Git Bash or use an online generator — need 32+ char random strings:
-# NEXTAUTH_SECRET_ADMIN, NEXTAUTH_SECRET_SALES, WS_INTERNAL_SECRET
-
 pnpm db:bootstrap
 ```
 
 You should see `Bootstrap complete` with your admin email.
 
-**Do not** run `SEED_DEMO=true pnpm db:seed` in production.
+**Do not** run `SEED_DEMO=true pnpm db:seed` in production. Render secrets are set in Step 4–6, not during bootstrap.
 
 ---
 
@@ -231,6 +234,9 @@ Use the same env vars as Step 6.
 | Live grid never updates | Redeploy sales after setting `NEXT_PUBLIC_WS_URL`; check browser devtools → Network → WS |
 | Cold start slow | Normal on free tier — first request wakes the service |
 | Uploads disappear | Render free tier has ephemeral disk — use external storage for production PDFs |
+| `EPERM` on `prisma generate` | Stop all dev servers; project in OneDrive can lock files — pause sync or move repo outside OneDrive |
+| `db:push` hits localhost not Neon | Put Neon `DATABASE_URL` in `packages/database/.env` (Prisma reads that file) |
+| Bootstrap asks for NEXTAUTH_SECRET | Not needed for bootstrap — only set secrets on Render |
 
 ---
 

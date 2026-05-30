@@ -73,7 +73,13 @@ export function UnitCard({
 
       <div className="mt-2 space-y-0.5 text-xs text-gray-600">
         {unit.bhkType && <p>{unit.bhkType}</p>}
-        {unit.carpetArea && <p>{unit.carpetArea} sqft</p>}
+        {(unit.carpetArea != null || unit.superArea != null) && (
+          <p>
+            {unit.carpetArea != null && `Carpet ${unit.carpetArea} sqft`}
+            {unit.carpetArea != null && unit.superArea != null && " · "}
+            {unit.superArea != null && `SBA ${unit.superArea} sqft`}
+          </p>
+        )}
         {unit.price != null && <p className="font-semibold text-gray-800">{formatPrice(unit.price)}</p>}
       </div>
 

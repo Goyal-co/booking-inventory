@@ -11,9 +11,19 @@ import {
   ProjectStatusBadge,
   formatBlockDuration,
   canBlockUnits,
+  DashboardRangeSelect,
+  BookingsTrendChart,
+  BhkBreakdownChart,
 } from "@booking/ui";
 import { TopBar } from "@/components/top-bar";
 import { Toaster } from "sonner";
+
+interface ProjectCharts {
+  bookingsTrend: Array<{ date: string; count: number; revenue: number }>;
+  byBhk: Array<{ name: string; count: number }>;
+  byTower: Array<{ name: string; count: number }>;
+  funnel: { blocks: number; bookings: number; conversionRate: number };
+}
 
 interface DashboardProject {
   id: string;
@@ -35,6 +45,7 @@ interface DashboardProject {
     myBookingsTotal: number;
     conversionRate: number;
   };
+  charts?: ProjectCharts;
 }
 
 function blockRulesSummary(project: DashboardProject): string {
@@ -45,13 +56,16 @@ function blockRulesSummary(project: DashboardProject): string {
 export function SalesDashboard() {
   const [projects, setProjects] = useState<DashboardProject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState("30d");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/dashboard")
+    setLoading(true);
+    fetch(`/api/dashboard?range=${range}`)
       .then((r) => r.json())
       .then((d) => setProjects(d.projects ?? []))
       .finally(() => setLoading(false));
-  }, []);
+  }, [range]);
 
   if (loading) {
     return <div className="flex h-full items-center justify-center">Loading dashboard...</div>;
@@ -62,17 +76,20 @@ export function SalesDashboard() {
       <Toaster position="top-right" richColors />
       <TopBar />
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">My Projects</h1>
-          <p className="text-sm text-gray-500">
-            Overview of your assigned projects and performance
-          </p>
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">My Projects</h1>
+            <p className="text-sm text-gray-500">
+              Overview of your assigned projects and performance
+            </p>
+          </div>
+          <DashboardRangeSelect value={range} onChange={setRange} />
         </div>
 
         {projects.length === 0 ? (
           <p className="text-gray-500">No projects assigned. Contact your admin.</p>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-6 lg:grid-cols-2">
             {projects.map((project) => (
               <Card key={project.id} className="overflow-hidden">
                 <CardHeader
@@ -93,32 +110,56 @@ export function SalesDashboard() {
                   <p className="text-sm text-gray-500">{blockRulesSummary(project)}</p>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                     <div className="rounded-lg bg-gray-50 p-3">
                       <p className="text-xs text-gray-500">Active Blocks</p>
-                      <p className="text-xl font-bold text-gray-900">
-                        {project.analytics.activeBlocks}
-                      </p>
+                      <p className="text-xl font-bold">{project.analytics.activeBlocks}</p>
                     </div>
                     <div className="rounded-lg bg-blue-50 p-3">
-                      <p className="text-xs text-blue-600">Pending Approval</p>
-                      <p className="text-xl font-bold text-blue-700">
-                        {project.analytics.pendingBookings}
+                      <p className="text-xs text-blue-600">Pending</p>
+                      <p className="text-xl font-bold text-blue-700">{project.analytics.pendingBookings}</p>
+                    </div>
+                    <div className="rounded-lg bg-emerald-50 p-3">
+                      <p className="text-xs text-emerald-600">Conversion</p>
+                      <p className="text-xl font-bold text-emerald-700">
+                        {project.charts?.funnel.conversionRate ?? project.analytics.conversionRate}%
                       </p>
                     </div>
                     <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">Confirmed Today</p>
-                      <p className="text-xl font-bold text-gray-900">
-                        {project.analytics.bookingsToday}
-                      </p>
+                      <p className="text-xs text-gray-500">Today</p>
+                      <p className="text-xl font-bold">{project.analytics.bookingsToday}</p>
                     </div>
                     <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">Confirmed Total</p>
-                      <p className="text-xl font-bold text-gray-900">
-                        {project.analytics.myBookingsTotal}
-                      </p>
+                      <p className="text-xs text-gray-500">Total bookings</p>
+                      <p className="text-xl font-bold">{project.analytics.myBookingsTotal}</p>
+                    </div>
+                    <div className="rounded-lg bg-purple-50 p-3">
+                      <p className="text-xs text-purple-600">Blocks (period)</p>
+                      <p className="text-xl font-bold text-purple-700">{project.charts?.funnel.blocks ?? 0}</p>
                     </div>
                   </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setExpandedId(expandedId === project.id ? null : project.id)}
+                  >
+                    {expandedId === project.id ? "Hide analytics" : "View analytics"}
+                  </Button>
+
+                  {expandedId === project.id && project.charts && (
+                    <div className="space-y-4 border-t pt-4">
+                      <div>
+                        <p className="mb-2 text-sm font-medium text-gray-700">Bookings trend</p>
+                        <BookingsTrendChart data={project.charts.bookingsTrend} />
+                      </div>
+                      <div>
+                        <p className="mb-2 text-sm font-medium text-gray-700">By BHK</p>
+                        <BhkBreakdownChart data={project.charts.byBhk} />
+                      </div>
+                    </div>
+                  )}
 
                   {project.lifecycleStatus === "UPCOMING" ? (
                     <Button className="w-full" variant="outline" disabled title="Blocking opens on launch day">
@@ -126,9 +167,7 @@ export function SalesDashboard() {
                     </Button>
                   ) : (
                     <Button className="w-full" asChild>
-                      <Link href={`/app/live?projectId=${project.id}`}>
-                        Enter Live Booking
-                      </Link>
+                      <Link href={`/app/live?projectId=${project.id}`}>Enter Live Booking</Link>
                     </Button>
                   )}
                 </CardContent>

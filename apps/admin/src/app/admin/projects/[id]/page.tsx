@@ -4,8 +4,44 @@ import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Modal, ProjectStatusBadge, formatBlockDuration } from "@booking/ui";
 import { toast, Toaster } from "sonner";
-import { uploadFloorPlanFile } from "@/lib/upload-floor-plan-client";
 import { useAdminSession } from "@/hooks/use-admin-session";
+import { FloorPlanPanel } from "@/components/floor-plan-panel";
+import { UnitStackGenerator } from "@/components/unit-stack-generator";
+
+const FILTER_DIMENSIONS = [
+  "TOWER",
+  "BHK",
+  "STATUS",
+  "FLOOR",
+  "FACING",
+  "PRICE_BAND",
+  "CUSTOM_TAG",
+  "CARPET_AREA",
+  "SUPER_BUILT_UP",
+] as const;
+
+type FilterDimension = (typeof FILTER_DIMENSIONS)[number];
+
+const DIMENSION_LABELS: Record<FilterDimension, string> = {
+  TOWER: "Tower",
+  BHK: "Unit Type (BHK)",
+  STATUS: "Status",
+  FLOOR: "Floor",
+  FACING: "Facing",
+  PRICE_BAND: "Price Band",
+  CUSTOM_TAG: "Custom Tag",
+  CARPET_AREA: "Carpet Area",
+  SUPER_BUILT_UP: "Super Built-up Area",
+};
+
+interface FilterConfigRow {
+  id: string;
+  dimension: FilterDimension;
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  sortOrder: number;
+  isActive: boolean;
+}
 
 interface ProjectDetail {
   id: string;
@@ -20,6 +56,7 @@ interface ProjectDetail {
   statusAutoManage: boolean;
   launchDate: string | null;
   ongoingBlockDurationDays: number | null;
+  filterConfigs: FilterConfigRow[];
   floorPlanTypes: Array<{
     id: string;
     name: string;
@@ -29,8 +66,27 @@ interface ProjectDetail {
     pdfUrl: string | null;
   }>;
   costSheetTemplates: Array<{ id: string; name: string; totalPrice: string }>;
-  towers: Array<{ id: string; name: string; code: string; floors: Array<{ id: string; number: number; _count: { units: number } }> }>;
+  towers: Array<{
+    id: string;
+    name: string;
+    code: string;
+    unitStackTemplates?: Array<{
+      stackNumber: number;
+      floorPlanTypeId: string;
+      costSheetTemplateId: string;
+      sizeType: string;
+      activeFromFloor: number;
+      activeToFloor: number;
+    }>;
+    floors: Array<{ id: string; number: number; _count: { units: number } }>;
+  }>;
 }
+
+const emptyFilterForm = () => ({
+  dimension: "TOWER" as FilterDimension,
+  label: "",
+  options: [{ value: "", label: "" }],
+});
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -38,19 +94,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { isSuperAdmin } = useAdminSession();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [step, setStep] = useState(1);
-  const [showPlanModal, setShowPlanModal] = useState(false);
-  const [editingPlan, setEditingPlan] = useState<ProjectDetail["floorPlanTypes"][number] | null>(null);
-  const [planPdfFile, setPlanPdfFile] = useState<File | null>(null);
-  const [planImageFile, setPlanImageFile] = useState<File | null>(null);
-  const [uploadingPlan, setUploadingPlan] = useState(false);
   const [showCostModal, setShowCostModal] = useState(false);
   const [showTowerModal, setShowTowerModal] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
 
-  const [planForm, setPlanForm] = useState({ name: "", bhkType: "2 BHK", carpetArea: 950, superArea: 1200, amenities: "" });
   const [costForm, setCostForm] = useState({ name: "", basePrice: 8500000, floorRise: 200000, plc: 150000, parking: 300000, floorPlanTypeId: "" });
   const [towerForm, setTowerForm] = useState({ name: "", code: "" });
-  const [genForm, setGenForm] = useState({ towerId: "", fromFloor: 1, toFloor: 5, unitsPerFloor: 4, floorPlanTypeId: "", costSheetTemplateId: "" });
+  const [filterForm, setFilterForm] = useState(emptyFilterForm);
+  const [savingFilter, setSavingFilter] = useState(false);
 
   const [lifecycleForm, setLifecycleForm] = useState({
     lifecycleStatus: "UPCOMING" as "UPCOMING" | "LAUNCH_DAY" | "ONGOING",
@@ -69,7 +120,15 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   const load = async () => {
     const res = await fetch(`/api/projects/${id}`);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(
+        typeof data.error === "string"
+          ? data.error
+          : "Failed to load project. Run pnpm db:push:schema against your dev database."
+      );
+      return;
+    }
     const p = data.project;
     setProject(p);
     if (p) {
@@ -93,72 +152,40 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => { load(); }, [id]);
 
-  const addFloorPlan = async () => {
-    setUploadingPlan(true);
-    try {
-      let pdfUrl: string | undefined;
-      let imageUrl: string | undefined;
-      if (planPdfFile) pdfUrl = await uploadFloorPlanFile(planPdfFile, "pdf");
-      if (planImageFile) imageUrl = await uploadFloorPlanFile(planImageFile, "image");
-
-      const res = await fetch(`/api/projects/${id}/floor-plans`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...planForm,
-          pdfUrl,
-          imageUrl,
-          amenities: planForm.amenities.split(",").map((s) => s.trim()).filter(Boolean),
-        }),
-      });
-      if (res.ok) {
-        toast.success("Floor plan added");
-        setShowPlanModal(false);
-        setPlanPdfFile(null);
-        setPlanImageFile(null);
-        load();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(typeof data.error === "string" ? data.error : "Failed to add floor plan");
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Upload failed");
-    } finally {
-      setUploadingPlan(false);
-    }
+  const editFilterConfig = (config: FilterConfigRow) => {
+    setFilterForm({
+      dimension: config.dimension,
+      label: config.label,
+      options: config.options.length > 0 ? config.options : [{ value: "", label: "" }],
+    });
   };
 
-  const updateFloorPlanAssets = async () => {
-    if (!editingPlan) return;
-    setUploadingPlan(true);
-    try {
-      const payload: Record<string, string> = {};
-      if (planPdfFile) payload.pdfUrl = await uploadFloorPlanFile(planPdfFile, "pdf");
-      if (planImageFile) payload.imageUrl = await uploadFloorPlanFile(planImageFile, "image");
-      if (Object.keys(payload).length === 0) {
-        toast.error("Select a PDF or image to upload");
-        return;
-      }
-
-      const res = await fetch(`/api/projects/${id}/floor-plans/${editingPlan.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        toast.success("Floor plan updated");
-        setEditingPlan(null);
-        setPlanPdfFile(null);
-        setPlanImageFile(null);
-        load();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(typeof data.error === "string" ? data.error : "Failed to update floor plan");
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Upload failed");
-    } finally {
-      setUploadingPlan(false);
+  const saveFilterConfig = async () => {
+    const options = filterForm.options
+      .map((o) => ({ value: o.value.trim(), label: o.label.trim() }))
+      .filter((o) => o.value && o.label);
+    if (!filterForm.label.trim() || options.length === 0) {
+      toast.error("Label and at least one option are required");
+      return;
+    }
+    setSavingFilter(true);
+    const res = await fetch(`/api/projects/${id}/filter-configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dimension: filterForm.dimension,
+        label: filterForm.label.trim(),
+        options,
+      }),
+    });
+    setSavingFilter(false);
+    if (res.ok) {
+      toast.success("Filter saved");
+      setFilterForm(emptyFilterForm());
+      load();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast.error(typeof data.error === "string" ? data.error : "Failed to save filter");
     }
   };
 
@@ -185,16 +212,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       body: JSON.stringify(towerForm),
     });
     if (res.ok) { toast.success("Tower added"); setShowTowerModal(false); load(); }
-  };
-
-  const generateInventory = async () => {
-    const res = await fetch("/api/inventory", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "generate", ...genForm }),
-    });
-    const data = await res.json();
-    if (res.ok) { toast.success(`Created ${data.created} units`); setShowGenModal(false); load(); }
   };
 
   const publish = async () => {
@@ -294,7 +311,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   if (!project) return <div className="p-6">Loading...</div>;
 
   const steps = [
-    { n: 1, title: "Floor Plans", count: project.floorPlanTypes.length, action: () => setShowPlanModal(true) },
+    { n: 1, title: "Floor Plans", count: project.floorPlanTypes.length },
     { n: 2, title: "Cost Sheets", count: project.costSheetTemplates.length, action: () => setShowCostModal(true) },
     { n: 3, title: "Towers", count: project.towers.length, action: () => setShowTowerModal(true) },
     { n: 4, title: "Generate Inventory", count: project.towers.reduce((s, t) => s + t.floors.reduce((fs, f) => fs + f._count.units, 0), 0), action: () => setShowGenModal(true) },
@@ -516,7 +533,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         {steps.map((s) => (
           <button
             key={s.n}
-            onClick={() => setStep(s.n)}
+            type="button"
+            onClick={() => {
+              setStep(s.n);
+              s.action?.();
+            }}
             className={`flex-1 rounded-xl border p-4 text-left transition-colors ${step === s.n ? "border-brand-600 bg-brand-50" : "border-gray-200 bg-white"}`}
           >
             <p className="text-xs font-semibold text-gray-500">Step {s.n}</p>
@@ -527,49 +548,144 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       {step === 1 && (
-        <div>
-          <div className="mb-4 flex justify-between">
-            <h2 className="text-lg font-semibold">Floor Plan Types</h2>
-            <Button size="sm" onClick={() => setShowPlanModal(true)}>Add Floor Plan</Button>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {project.floorPlanTypes.map((p) => (
-              <Card key={p.id}>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold">{p.name}</p>
-                      <p className="text-sm text-gray-500">{p.bhkType} · {p.carpetArea} sqft</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {p.pdfUrl && (
-                          <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-                            PDF uploaded
-                          </span>
-                        )}
-                        {p.imageUrl && (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                            Image uploaded
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setEditingPlan(p);
-                        setPlanPdfFile(null);
-                        setPlanImageFile(null);
-                      }}
+        <>
+          <FloorPlanPanel
+            projectId={id}
+            plans={project.floorPlanTypes.map((p) => ({
+              ...p,
+              superArea: (p as { superArea?: number }).superArea ?? null,
+              balconyArea: (p as { balconyArea?: number }).balconyArea ?? null,
+              sizeType: (p as { sizeType?: string }).sizeType ?? "SBA",
+              amenities: (p as { amenities?: string[] }).amenities ?? [],
+            }))}
+            onRefresh={load}
+          />
+
+          <Card className="mt-8">
+            <CardHeader>
+              <CardTitle className="text-lg">Inventory Filters</CardTitle>
+              <p className="text-sm text-gray-500">
+                Configure dropdown filters shown to sales on live booking, blocked units, and bookings pages.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {project.filterConfigs.length === 0 ? (
+                <p className="text-sm text-gray-500">No filters configured yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {project.filterConfigs.map((config) => (
+                    <div
+                      key={config.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 p-3"
                     >
-                      Upload
-                    </Button>
+                      <div>
+                        <p className="font-medium">{config.label}</p>
+                        <p className="text-xs text-gray-500">
+                          {config.dimension} · {config.options.length} option{config.options.length !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => editFilterConfig(config)}>
+                        Edit
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="mb-3 text-sm font-semibold text-gray-900">
+                  {project.filterConfigs.some((c) => c.dimension === filterForm.dimension) ? "Update" : "Add"} filter
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label>Dimension</Label>
+                    <select
+                      className="mt-1 w-full rounded-lg border p-2 text-sm"
+                      value={filterForm.dimension}
+                      onChange={(e) =>
+                        setFilterForm({ ...filterForm, dimension: e.target.value as FilterDimension })
+                      }
+                    >
+                      {FILTER_DIMENSIONS.map((d) => (
+                        <option key={d} value={d}>{DIMENSION_LABELS[d]}</option>
+                      ))}
+                    </select>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
+                  <div>
+                    <Label>Label</Label>
+                    <Input
+                      className="mt-1"
+                      value={filterForm.label}
+                      onChange={(e) => setFilterForm({ ...filterForm, label: e.target.value })}
+                      placeholder="e.g. Tower"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <Label>Options</Label>
+                  {filterForm.options.map((opt, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <Input
+                        placeholder="Value"
+                        value={opt.value}
+                        onChange={(e) => {
+                          const options = [...filterForm.options];
+                          options[idx] = { ...options[idx], value: e.target.value };
+                          setFilterForm({ ...filterForm, options });
+                        }}
+                      />
+                      <Input
+                        placeholder="Label"
+                        value={opt.label}
+                        onChange={(e) => {
+                          const options = [...filterForm.options];
+                          options[idx] = { ...options[idx], label: e.target.value };
+                          setFilterForm({ ...filterForm, options });
+                        }}
+                      />
+                      {filterForm.options.length > 1 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setFilterForm({
+                              ...filterForm,
+                              options: filterForm.options.filter((_, i) => i !== idx),
+                            })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setFilterForm({
+                        ...filterForm,
+                        options: [...filterForm.options, { value: "", label: "" }],
+                      })
+                    }
+                  >
+                    Add option
+                  </Button>
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  <Button onClick={saveFilterConfig} disabled={savingFilter}>
+                    {savingFilter ? "Saving..." : "Save filter"}
+                  </Button>
+                  <Button variant="outline" onClick={() => setFilterForm(emptyFilterForm())}>
+                    Reset
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </>
       )}
 
       {step === 2 && (
@@ -616,88 +732,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             <h2 className="text-lg font-semibold">Inventory Generator</h2>
             <Button size="sm" onClick={() => setShowGenModal(true)}>Generate Units</Button>
           </div>
-          <p className="text-sm text-gray-500">Bulk generate units by floor with floor plan and cost sheet assignment.</p>
+          <p className="text-sm text-gray-500">Generate units using tower, floor range, and unit stack patterns.</p>
         </div>
       )}
-
-      <Modal open={showPlanModal} onOpenChange={setShowPlanModal} title="Add Floor Plan Type">
-        <div className="space-y-3">
-          <div><Label>Name</Label><Input value={planForm.name} onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })} /></div>
-          <div><Label>BHK Type</Label><Input value={planForm.bhkType} onChange={(e) => setPlanForm({ ...planForm, bhkType: e.target.value })} /></div>
-          <div><Label>Carpet Area (sqft)</Label><Input type="number" value={planForm.carpetArea} onChange={(e) => setPlanForm({ ...planForm, carpetArea: +e.target.value })} /></div>
-          <div><Label>Amenities (comma separated)</Label><Input value={planForm.amenities} onChange={(e) => setPlanForm({ ...planForm, amenities: e.target.value })} /></div>
-          <div>
-            <Label>Floor plan PDF</Label>
-            <Input
-              type="file"
-              accept="application/pdf"
-              className="mt-1"
-              onChange={(e) => setPlanPdfFile(e.target.files?.[0] ?? null)}
-            />
-            <p className="mt-1 text-xs text-gray-500">PDF shown in sales floor plan tab (max 20MB)</p>
-          </div>
-          <div>
-            <Label>Preview image (optional)</Label>
-            <Input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              className="mt-1"
-              onChange={(e) => setPlanImageFile(e.target.files?.[0] ?? null)}
-            />
-          </div>
-          <Button className="w-full" disabled={uploadingPlan} onClick={addFloorPlan}>
-            {uploadingPlan ? "Uploading..." : "Add"}
-          </Button>
-        </div>
-      </Modal>
-
-      <Modal
-        open={!!editingPlan}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditingPlan(null);
-            setPlanPdfFile(null);
-            setPlanImageFile(null);
-          }
-        }}
-        title={editingPlan ? `Upload files — ${editingPlan.name}` : "Upload floor plan"}
-      >
-        {editingPlan && (
-          <div className="space-y-3">
-            <div>
-              <Label>Replace or add PDF</Label>
-              <Input
-                type="file"
-                accept="application/pdf"
-                className="mt-1"
-                onChange={(e) => setPlanPdfFile(e.target.files?.[0] ?? null)}
-              />
-              {editingPlan.pdfUrl && (
-                <a
-                  href={editingPlan.pdfUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 inline-block text-xs text-brand-600 hover:underline"
-                >
-                  View current PDF
-                </a>
-              )}
-            </div>
-            <div>
-              <Label>Replace or add preview image</Label>
-              <Input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                className="mt-1"
-                onChange={(e) => setPlanImageFile(e.target.files?.[0] ?? null)}
-              />
-            </div>
-            <Button className="w-full" disabled={uploadingPlan} onClick={updateFloorPlanAssets}>
-              {uploadingPlan ? "Uploading..." : "Save files"}
-            </Button>
-          </div>
-        )}
-      </Modal>
 
       <Modal open={showCostModal} onOpenChange={setShowCostModal} title="Add Cost Sheet">
         <div className="space-y-3">
@@ -722,34 +759,23 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         </div>
       </Modal>
 
-      <Modal open={showGenModal} onOpenChange={setShowGenModal} title="Generate Inventory">
-        <div className="space-y-3">
-          <select className="w-full rounded-lg border p-2" value={genForm.towerId} onChange={(e) => setGenForm({ ...genForm, towerId: e.target.value })}>
-            <option value="">Select Tower</option>
-            {project.towers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>From Floor</Label><Input type="number" value={genForm.fromFloor} onChange={(e) => setGenForm({ ...genForm, fromFloor: +e.target.value })} /></div>
-            <div><Label>To Floor</Label><Input type="number" value={genForm.toFloor} onChange={(e) => setGenForm({ ...genForm, toFloor: +e.target.value })} /></div>
-          </div>
-          <div>
-            <Label>Units per Floor</Label>
-            <Input type="number" value={genForm.unitsPerFloor} onChange={(e) => setGenForm({ ...genForm, unitsPerFloor: +e.target.value })} />
-            <p className="mt-1 text-xs text-gray-500">
-              For uneven floors (e.g. 1 flat on one floor and 3 on another), use Inventory → Manage after bulk generate.
-            </p>
-          </div>
-          <select className="w-full rounded-lg border p-2" value={genForm.floorPlanTypeId} onChange={(e) => setGenForm({ ...genForm, floorPlanTypeId: e.target.value })}>
-            <option value="">Floor Plan</option>
-            {project.floorPlanTypes.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <select className="w-full rounded-lg border p-2" value={genForm.costSheetTemplateId} onChange={(e) => setGenForm({ ...genForm, costSheetTemplateId: e.target.value })}>
-            <option value="">Cost Sheet</option>
-            {project.costSheetTemplates.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <Button className="w-full" onClick={generateInventory}>Generate</Button>
-        </div>
-      </Modal>
+      <UnitStackGenerator
+        open={showGenModal}
+        onOpenChange={setShowGenModal}
+        projectId={id}
+        towers={project.towers}
+        floorPlans={project.floorPlanTypes.map((p) => ({
+          id: p.id,
+          name: p.name,
+          bhkType: p.bhkType,
+          superArea: (p as { superArea?: number }).superArea ?? null,
+        }))}
+        costSheets={project.costSheetTemplates.map((c) => ({
+          ...c,
+          floorPlanTypeId: (c as { floorPlanTypeId?: string | null }).floorPlanTypeId ?? null,
+        }))}
+        onSuccess={load}
+      />
 
       <Modal open={showDeleteModal} onOpenChange={setShowDeleteModal} title="Delete Project">
         <div className="space-y-4">

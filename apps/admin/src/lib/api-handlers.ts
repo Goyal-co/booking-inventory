@@ -15,6 +15,7 @@ import {
   massBlockAction,
   bulkAssignInventory,
   generateInventory,
+  deleteFloorPlanType,
   createUnit,
   updateUnit,
   deleteUnit,
@@ -24,13 +25,18 @@ import {
   AuditAction,
   UserRole,
   BookingStatus,
+  getDefaultBlockDurationForStatus,
+  formatBlockDuration,
+  getOrganizationDashboardStats,
+  getAdminAnalyticsCharts,
+  getProjectFilters,
 } from "@booking/database";
 import {
   createProjectSchema,
   floorPlanTypeSchema,
   costSheetTemplateSchema,
   towerSchema,
-  bulkFloorSchema,
+  unitStackGenerateSchema,
   bulkAssignSchema,
   massBlockSchema,
   createUserSchema,
@@ -45,16 +51,12 @@ import {
   updateFloorPlanSchema,
   createAdminUserSchema,
   importUserRowSchema,
+  unitFiltersSchema,
+  dashboardRangeSchema,
 } from "@booking/validators";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
 import bcrypt from "bcryptjs";
-import {
-  applyAutoLifecycleTransitions,
-  getDefaultBlockDurationForStatus,
-  formatBlockDuration,
-  getOrganizationDashboardStats,
-} from "@booking/database";
 import {
   getAdminUser,
   isSuperAdmin,
@@ -111,14 +113,28 @@ function formatUserResponse(
   };
 }
 
-export async function GET_projects() {
+export async function GET_projects(req: NextRequest) {
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await applyAutoLifecycleTransitions();
+  const search = req.nextUrl.searchParams.get("search")?.trim();
+  const lifecycleStatus = req.nextUrl.searchParams.get("lifecycleStatus");
+  const isPublished = req.nextUrl.searchParams.get("isPublished");
 
   const projects = await prisma.project.findMany({
-    where: orgProjectsWhere(user),
+    where: {
+      ...orgProjectsWhere(user),
+      ...(lifecycleStatus ? { lifecycleStatus: lifecycleStatus as import("@booking/database").ProjectLifecycleStatus } : {}),
+      ...(isPublished === "true" ? { isPublished: true } : isPublished === "false" ? { isPublished: false } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { slug: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    },
     include: {
       _count: { select: { towers: true, floorPlanTypes: true } },
     },
@@ -170,7 +186,12 @@ export async function GET_project(req: NextRequest, { params }: { params: Promis
   const project = await prisma.project.findFirst({
     where: { id, ...orgProjectsWhere(user) },
     include: {
-      towers: { include: { floors: { include: { _count: { select: { units: true } } } } } },
+      towers: {
+        include: {
+          unitStackTemplates: { orderBy: { stackNumber: "asc" } },
+          floors: { include: { _count: { select: { units: true } } } },
+        },
+      },
       floorPlanTypes: true,
       costSheetTemplates: true,
       filterConfigs: true,
@@ -383,6 +404,29 @@ export async function PATCH_floorPlan(
   return NextResponse.json({ floorPlan: plan });
 }
 
+export async function DELETE_floorPlan(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string; planId: string }> }
+) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id: projectId, planId } = await params;
+  const denied = denyUnlessProjectAccess(user, projectId);
+  if (denied) return denied;
+
+  try {
+    await deleteFloorPlanType(planId, projectId, user.organizationId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof InventoryError) {
+      const status = error.code === "IN_USE" ? 409 : 404;
+      return NextResponse.json({ error: error.message, code: error.code }, { status });
+    }
+    throw error;
+  }
+}
+
 export async function POST_costSheet(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -434,7 +478,7 @@ export async function POST_generateInventory(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const parsed = bulkFloorSchema.safeParse(body);
+  const parsed = unitStackGenerateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
   const towerProjectId = await getProjectIdFromTower(parsed.data.towerId);
@@ -502,8 +546,17 @@ export async function GET_units(req: NextRequest) {
   const denied = denyUnlessProjectAccess(user, projectId);
   if (denied) return denied;
 
-  const search = req.nextUrl.searchParams.get("search") ?? undefined;
-  const units = await getUnits({ projectId, hideHold: false, search });
+  const params = Object.fromEntries(req.nextUrl.searchParams.entries());
+  const parsed = unitFiltersSchema.safeParse({ ...params, projectId });
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+  const { projectId: _pid, status, ...rest } = parsed.data;
+  const units = await getUnits({
+    ...rest,
+    projectId,
+    hideHold: false,
+    status: status as import("@booking/database").UnitStatus | undefined,
+  });
   return NextResponse.json({ units });
 }
 
@@ -619,18 +672,36 @@ export async function DELETE_unit(req: NextRequest, { params }: { params: Promis
   }
 }
 
-export async function GET_users() {
+export async function GET_users(req: NextRequest) {
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const search = req.nextUrl.searchParams.get("search")?.trim();
+  const roleParam = req.nextUrl.searchParams.get("role");
+  const isActiveParam = req.nextUrl.searchParams.get("isActive");
+  const projectIdFilter = req.nextUrl.searchParams.get("projectId");
+
   const users = await prisma.user.findMany({
-    where: isSuperAdmin(user)
-      ? { organizationId: user.organizationId }
-      : {
-          organizationId: user.organizationId,
-          role: { in: [UserRole.SALES_EXEC, UserRole.SALES_MANAGER] },
-          projectAccess: { some: { projectId: { in: user.projectIds } } },
-        },
+    where: {
+      ...(isSuperAdmin(user)
+        ? { organizationId: user.organizationId }
+        : {
+            organizationId: user.organizationId,
+            role: { in: [UserRole.SALES_EXEC, UserRole.SALES_MANAGER] },
+            projectAccess: { some: { projectId: { in: user.projectIds } } },
+          }),
+      ...(roleParam ? { role: roleParam as UserRole } : {}),
+      ...(isActiveParam === "true" ? { isActive: true } : isActiveParam === "false" ? { isActive: false } : {}),
+      ...(projectIdFilter ? { projectAccess: { some: { projectId: projectIdFilter } } } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    },
     include: { projectAccess: { include: { project: { select: { id: true, name: true } } } } },
     orderBy: { createdAt: "desc" },
   });
@@ -806,14 +877,28 @@ export async function PATCH_user(req: NextRequest, { params }: { params: Promise
   return NextResponse.json({ user: formatUserResponse(updated) });
 }
 
-export async function GET_audit() {
+export async function GET_audit(req: NextRequest) {
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const denied = denyUnlessSuperAdmin(user);
   if (denied) return denied;
 
-  const logs = await getAuditLogs({ limit: 100 });
+  const action = req.nextUrl.searchParams.get("action") ?? undefined;
+  const entityType = req.nextUrl.searchParams.get("entityType") ?? undefined;
+  const userId = req.nextUrl.searchParams.get("userId") ?? undefined;
+  const dateFrom = req.nextUrl.searchParams.get("dateFrom") ?? undefined;
+  const dateTo = req.nextUrl.searchParams.get("dateTo") ?? undefined;
+  const limit = req.nextUrl.searchParams.get("limit");
+
+  const logs = await getAuditLogs({
+    action,
+    entityType,
+    userId,
+    dateFrom,
+    dateTo,
+    limit: limit ? parseInt(limit, 10) : 100,
+  });
   return NextResponse.json({ logs });
 }
 
@@ -830,6 +915,12 @@ export async function GET_bookings(req: NextRequest) {
       ? (statusParam as BookingStatus)
       : undefined;
   const search = req.nextUrl.searchParams.get("search") ?? undefined;
+  const tower = req.nextUrl.searchParams.get("tower") ?? undefined;
+  const bhk = req.nextUrl.searchParams.get("bhk") ?? undefined;
+  const userId = req.nextUrl.searchParams.get("userId") ?? undefined;
+  const dateFrom = req.nextUrl.searchParams.get("dateFrom") ?? undefined;
+  const dateTo = req.nextUrl.searchParams.get("dateTo") ?? undefined;
+  const extra = { tower, bhk, userId, dateFrom, dateTo };
 
   if (projectId) {
     const denied = denyUnlessProjectAccess(user, projectId);
@@ -841,11 +932,13 @@ export async function GET_bookings(req: NextRequest) {
         projectId,
         projectId ? undefined : user.organizationId,
         status,
-        search
+        search,
+        undefined,
+        extra
       )
     : projectId
-      ? await getAllBookings(projectId, undefined, status, search)
-      : await getAllBookings(undefined, undefined, status, search, user.projectIds);
+      ? await getAllBookings(projectId, undefined, status, search, undefined, extra)
+      : await getAllBookings(undefined, undefined, status, search, user.projectIds, extra);
 
   return NextResponse.json({
     bookings: bookings.map((b) => ({
@@ -1066,6 +1159,27 @@ export async function POST_importUsers(
   return NextResponse.json({ created: created.length });
 }
 
+export async function GET_filters(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const projectId = req.nextUrl.searchParams.get("projectId");
+  if (!projectId) return NextResponse.json({ error: "projectId required" }, { status: 400 });
+
+  const denied = denyUnlessProjectAccess(user, projectId);
+  if (denied) return denied;
+
+  const filters = await getProjectFilters(projectId);
+
+  return NextResponse.json({
+    filters: filters.map((f) => ({
+      dimension: f.dimension,
+      label: f.label,
+      options: f.options,
+    })),
+  });
+}
+
 export async function GET_dashboard(req: NextRequest) {
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -1073,17 +1187,28 @@ export async function GET_dashboard(req: NextRequest) {
   const projectIdParam = req.nextUrl.searchParams.get("projectId");
   const projectId =
     projectIdParam && projectIdParam !== "all" ? projectIdParam : undefined;
+  const rangeParam = req.nextUrl.searchParams.get("range") ?? "30d";
+  const rangeParsed = dashboardRangeSchema.safeParse(rangeParam);
+  const range = rangeParsed.success ? rangeParsed.data : "30d";
 
   if (projectId) {
     const denied = denyUnlessProjectAccess(user, projectId);
     if (denied) return denied;
   }
 
-  const stats = isSuperAdmin(user)
-    ? await getOrganizationDashboardStats(user.organizationId, projectId)
+  const statsPromise = isSuperAdmin(user)
+    ? getOrganizationDashboardStats(user.organizationId, projectId)
     : projectId
-      ? await getOrganizationDashboardStats(user.organizationId, projectId)
-      : await getOrganizationDashboardStats(user.organizationId, undefined, user.projectIds);
+      ? getOrganizationDashboardStats(user.organizationId, projectId)
+      : getOrganizationDashboardStats(user.organizationId, undefined, user.projectIds);
 
-  return NextResponse.json({ stats });
+  const chartsPromise = isSuperAdmin(user)
+    ? getAdminAnalyticsCharts(user.organizationId, range, projectId)
+    : projectId
+      ? getAdminAnalyticsCharts(user.organizationId, range, projectId)
+      : getAdminAnalyticsCharts(user.organizationId, range, undefined, user.projectIds);
+
+  const [stats, charts] = await Promise.all([statsPromise, chartsPromise]);
+
+  return NextResponse.json({ stats, charts });
 }

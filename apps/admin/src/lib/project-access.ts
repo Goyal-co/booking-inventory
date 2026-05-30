@@ -17,18 +17,13 @@ export async function getAdminUser(): Promise<AdminUser | null> {
   const role = session.user.role;
   if (!["SUPER_ADMIN", "PROJECT_ADMIN"].includes(role)) return null;
 
-  const access = await prisma.userProjectAccess.findMany({
-    where: { userId: session.user.id },
-    select: { projectId: true },
-  });
-
   return {
     id: session.user.id,
     email: session.user.email,
     name: session.user.name,
     role: session.user.role,
     organizationId: session.user.organizationId,
-    projectIds: access.map((a) => a.projectId),
+    projectIds: session.user.projectIds ?? [],
   };
 }
 

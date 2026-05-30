@@ -19,6 +19,7 @@ export function Modal({ open, onOpenChange, title, description, children, classN
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content
+          {...(description ? {} : { "aria-describedby": undefined })}
           className={cn(
             "fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 shadow-xl sm:max-w-lg sm:p-6",
             className

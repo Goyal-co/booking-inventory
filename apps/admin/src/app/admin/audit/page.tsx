@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClientDateTime, PageHeader, Card, CardContent } from "@booking/ui";
+import { ClientDateTime, PageHeader, Card, CardContent, FilterBar } from "@booking/ui";
+
+const AUDIT_ACTIONS = [
+  "UNIT_BLOCKED", "UNIT_RELEASED", "UNIT_BOOKED", "USER_CREATED", "USER_UPDATED",
+  "BOOKING_SUBMITTED", "BOOKING_APPROVED", "BOOKING_REJECTED", "INVENTORY_UPDATED",
+];
 
 export default function AuditPage() {
   const [logs, setLogs] = useState<
@@ -15,19 +20,57 @@ export default function AuditPage() {
       metadata: unknown;
     }>
   >([]);
+  const [action, setAction] = useState("");
+  const [entityType, setEntityType] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
-    async function load() {
-      const res = await fetch("/api/audit");
-      const data = await res.json();
-      setLogs(data.logs ?? []);
-    }
-    load();
-  }, []);
+    const params = new URLSearchParams();
+    if (action) params.set("action", action);
+    if (entityType.trim()) params.set("entityType", entityType.trim());
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    const q = params.toString();
+    fetch(`/api/audit${q ? `?${q}` : ""}`)
+      .then((r) => r.json())
+      .then((data) => setLogs(data.logs ?? []));
+  }, [action, entityType, dateFrom, dateTo]);
 
   return (
     <div className="p-4 md:p-6">
       <PageHeader title="Audit Log" description="Recent admin and system activity" />
+
+      <div className="mb-4">
+        <FilterBar
+          filters={[]}
+          values={{ action, entityType }}
+          onChange={(key, value) => {
+            if (key === "action") setAction(value);
+            if (key === "entityType") setEntityType(value);
+          }}
+          search={entityType}
+          onSearchChange={setEntityType}
+          searchPlaceholder="Filter by entity type..."
+          extraSelects={[
+            {
+              key: "action",
+              label: "All actions",
+              options: AUDIT_ACTIONS.map((a) => ({ value: a, label: a.replace(/_/g, " ") })),
+            },
+          ]}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+          onClearAll={() => {
+            setAction("");
+            setEntityType("");
+            setDateFrom("");
+            setDateTo("");
+          }}
+        />
+      </div>
 
       <div className="space-y-3 lg:hidden">
         {logs.map((log) => (

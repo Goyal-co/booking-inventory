@@ -20,6 +20,8 @@ export interface UnitWithRelations {
     imageUrl: string | null;
     pdfUrl: string | null;
     amenities: string[];
+    superArea: number | null;
+    carpetArea: number;
   } | null;
   costSheetTemplate: {
     id: string;
@@ -67,6 +69,7 @@ export function serializeUnit(unit: UnitWithRelations, hideHold = true) {
     towerId: unit.floor.tower.id,
     floorNumber: unit.floor.number,
     carpetArea: unit.carpetArea,
+    superArea: unit.floorPlanType?.superArea ?? null,
     bhkType: unit.bhkType,
     facing: unit.facing,
     price: price ? Number(price) : null,
@@ -111,6 +114,10 @@ export async function getUnits(filters: {
   status?: UnitStatus;
   floor?: string;
   facing?: string;
+  priceBand?: string;
+  customTag?: string;
+  carpetArea?: string;
+  superArea?: string;
   hideHold?: boolean;
 }) {
   const where: Prisma.UnitWhereInput = {
@@ -123,6 +130,7 @@ export async function getUnits(filters: {
     },
     ...(filters.bhk ? { bhkType: filters.bhk } : {}),
     ...(filters.facing ? { facing: filters.facing } : {}),
+    ...(filters.customTag ? { customTags: { has: filters.customTag } } : {}),
     ...(filters.status
       ? { status: filters.status }
       : filters.hideHold !== false
@@ -136,6 +144,46 @@ export async function getUnits(filters: {
       { bhkType: { contains: filters.search, mode: "insensitive" } },
       { floor: { tower: { name: { contains: filters.search, mode: "insensitive" } } } },
     ];
+  }
+
+  if (filters.priceBand) {
+    const [minStr, maxStr] = filters.priceBand.split("-");
+    const min = Number(minStr);
+    const max = maxStr ? Number(maxStr) : undefined;
+    if (!Number.isNaN(min)) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        {
+          OR: [
+            {
+              priceOverride: {
+                ...(max !== undefined && !Number.isNaN(max) ? { gte: min, lte: max } : { gte: min }),
+              },
+            },
+            {
+              priceOverride: null,
+              basePrice: {
+                ...(max !== undefined && !Number.isNaN(max) ? { gte: min, lte: max } : { gte: min }),
+              },
+            },
+          ],
+        },
+      ];
+    }
+  }
+
+  if (filters.carpetArea) {
+    const area = parseInt(filters.carpetArea, 10);
+    if (!Number.isNaN(area)) {
+      where.carpetArea = area;
+    }
+  }
+
+  if (filters.superArea) {
+    const area = parseInt(filters.superArea, 10);
+    if (!Number.isNaN(area)) {
+      where.floorPlanType = { superArea: area };
+    }
   }
 
   const units = await prisma.unit.findMany({

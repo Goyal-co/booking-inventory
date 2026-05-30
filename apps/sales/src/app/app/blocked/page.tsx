@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
-import { BlockTimer, Button, Card, CardContent, FilterBar } from "@booking/ui";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { BlockTimer, Button, Card, CardContent, FilterBar, type FilterConfig } from "@booking/ui";
 import { TopBar } from "@/components/top-bar";
 import { SalesProjectScopeSelect } from "@/components/sales-project-scope-select";
 import { useSelectedProject } from "@/hooks/use-selected-project";
@@ -20,18 +20,36 @@ function BlockedUnitsContent() {
   const { projects, loading } = useSelectedProject();
   const [scopeProjectId, setScopeProjectId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<FilterConfig[]>([]);
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
   const [blocks, setBlocks] = useState<BlockRow[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
 
+  const filterProjectId = scopeProjectId ?? projects[0]?.id ?? null;
+
   const assignedProjectIds = new Set(projects.map((p) => p.id));
   const showProjectColumn = scopeProjectId === null;
+
+  useEffect(() => {
+    if (!filterProjectId) {
+      setFilters([]);
+      return;
+    }
+    setFilterValues({});
+    fetch(`/api/filters?projectId=${filterProjectId}`)
+      .then((r) => r.json())
+      .then((d) => setFilters(d.filters ?? []));
+  }, [filterProjectId]);
 
   const loadBlocks = useCallback(async () => {
     setFetching(true);
     setFetchError(null);
     const params = new URLSearchParams(scopeProjectId ? { projectId: scopeProjectId } : { projectId: "all" });
     if (search.trim()) params.set("search", search.trim());
+    Object.entries(filterValues).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
     try {
       const res = await fetch(`/api/my-blocks?${params}`);
       const d = await res.json();
@@ -47,7 +65,7 @@ function BlockedUnitsContent() {
     } finally {
       setFetching(false);
     }
-  }, [scopeProjectId, search]);
+  }, [scopeProjectId, search, filterValues]);
 
   useEffect(() => {
     if (!loading) loadBlocks();
@@ -63,6 +81,16 @@ function BlockedUnitsContent() {
       toast.error(data.error ?? "Failed to release block");
     }
   };
+
+  const clearFilters = useCallback(() => {
+    setSearch("");
+    setFilterValues({});
+  }, []);
+
+  const hasActiveFilters = useMemo(
+    () => search.trim() !== "" || Object.values(filterValues).some(Boolean),
+    [search, filterValues]
+  );
 
   if (loading) {
     return <div className="flex h-full items-center justify-center">Loading...</div>;
@@ -82,12 +110,13 @@ function BlockedUnitsContent() {
         <h1 className="mb-4 text-xl font-bold">My Blocked Units</h1>
         <div className="mb-4">
           <FilterBar
-            filters={[]}
-            values={{}}
-            onChange={() => {}}
+            filters={filters}
+            values={filterValues}
+            onChange={(key, value) => setFilterValues((prev) => ({ ...prev, [key]: value }))}
             search={search}
             onSearchChange={setSearch}
             searchPlaceholder="Search unit number or tower..."
+            onClearAll={hasActiveFilters ? clearFilters : undefined}
           />
         </div>
         {projects.length === 0 ? (

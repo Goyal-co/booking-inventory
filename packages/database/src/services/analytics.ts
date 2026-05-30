@@ -81,9 +81,8 @@ export async function getSalesAnalytics(
 }
 
 export async function getSalesAnalyticsForProjects(userId: string, projectIds: string[]) {
-  const result: Record<string, ProjectAnalytics> = {};
-  for (const projectId of projectIds) {
-    result[projectId] = await getSalesAnalytics(userId, projectId);
-  }
-  return result;
+  const entries = await Promise.all(
+    projectIds.map(async (projectId) => [projectId, await getSalesAnalytics(userId, projectId)] as const)
+  );
+  return Object.fromEntries(entries) as Record<string, ProjectAnalytics>;
 }

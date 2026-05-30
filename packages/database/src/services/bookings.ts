@@ -336,12 +336,45 @@ export async function rejectBooking(
   });
 }
 
-export async function getBookingsForUser(userId: string, projectId?: string, search?: string) {
+export async function getBookingsForUser(
+  userId: string,
+  projectId?: string,
+  search?: string,
+  extra?: {
+    status?: BookingStatus;
+    tower?: string;
+    bhk?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+) {
   const trimmed = search?.trim();
+  const dateFilter: { gte?: Date; lte?: Date } = {};
+  if (extra?.dateFrom) dateFilter.gte = new Date(extra.dateFrom);
+  if (extra?.dateTo) {
+    const end = new Date(extra.dateTo);
+    end.setHours(23, 59, 59, 999);
+    dateFilter.lte = end;
+  }
+
   return prisma.booking.findMany({
     where: {
       userId,
-      ...(projectId ? { unit: { floor: { tower: { projectId } } } } : {}),
+      ...(extra?.status ? { status: extra.status } : {}),
+      ...(Object.keys(dateFilter).length ? { bookedAt: dateFilter } : {}),
+      ...(projectId || extra?.tower || extra?.bhk
+        ? {
+            unit: {
+              ...(extra?.bhk ? { bhkType: extra.bhk } : {}),
+              floor: {
+                tower: {
+                  ...(projectId ? { projectId } : {}),
+                  ...(extra?.tower ? { code: extra.tower } : {}),
+                },
+              },
+            },
+          }
+        : {}),
       ...(trimmed
         ? {
             OR: [
@@ -374,7 +407,14 @@ export async function getAllBookings(
   organizationId?: string,
   status?: BookingStatus,
   search?: string,
-  projectIds?: string[]
+  projectIds?: string[],
+  extra?: {
+    tower?: string;
+    bhk?: string;
+    userId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
 ) {
   const trimmed = search?.trim();
   const projectFilter = projectId
@@ -385,10 +425,33 @@ export async function getAllBookings(
         ? { unit: { floor: { tower: { project: { organizationId } } } } }
         : {};
 
+  const dateFilter: { gte?: Date; lte?: Date } = {};
+  if (extra?.dateFrom) dateFilter.gte = new Date(extra.dateFrom);
+  if (extra?.dateTo) {
+    const end = new Date(extra.dateTo);
+    end.setHours(23, 59, 59, 999);
+    dateFilter.lte = end;
+  }
+
   return prisma.booking.findMany({
     where: {
       ...(status ? { status } : {}),
       ...projectFilter,
+      ...(extra?.userId ? { userId: extra.userId } : {}),
+      ...(Object.keys(dateFilter).length ? { bookedAt: dateFilter } : {}),
+      ...(extra?.tower || extra?.bhk
+        ? {
+            unit: {
+              ...(extra.bhk ? { bhkType: extra.bhk } : {}),
+              floor: {
+                tower: {
+                  ...(projectId ? { projectId } : {}),
+                  ...(extra.tower ? { code: extra.tower } : {}),
+                },
+              },
+            },
+          }
+        : {}),
       ...(trimmed
         ? {
             OR: [

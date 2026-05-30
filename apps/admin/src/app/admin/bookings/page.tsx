@@ -37,6 +37,10 @@ function AdminBookingsContent() {
     useAdminProject();
   const [statusTab, setStatusTab] = useState<StatusTab>("PENDING");
   const [search, setSearch] = useState("");
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [filterConfigs, setFilterConfigs] = useState<Array<{ dimension: string; label: string; options: Array<{ value: string; label: string }> }>>([]);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [cancelling, setCancelling] = useState<BookingRow | null>(null);
   const [rejecting, setRejecting] = useState<BookingRow | null>(null);
@@ -50,14 +54,28 @@ function AdminBookingsContent() {
     params.set("projectId", selectedProjectId ?? "all");
     if (statusTab !== "all") params.set("status", statusTab);
     if (search.trim()) params.set("search", search.trim());
+    if (filterValues.tower) params.set("tower", filterValues.tower);
+    if (filterValues.bhk) params.set("bhk", filterValues.bhk);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
     fetch(`/api/bookings?${params}`)
       .then((r) => r.json().catch(() => ({})))
       .then((d) => setBookings(d.bookings ?? []));
   };
 
   useEffect(() => {
+    if (selectedProjectId) {
+      fetch(`/api/filters?projectId=${selectedProjectId}`)
+        .then((r) => r.json())
+        .then((d) => setFilterConfigs(d.filters ?? []));
+    } else {
+      setFilterConfigs([]);
+    }
+  }, [selectedProjectId]);
+
+  useEffect(() => {
     loadBookings();
-  }, [selectedProjectId, loading, statusTab, search]);
+  }, [selectedProjectId, loading, statusTab, search, filterValues, dateFrom, dateTo]);
 
   const handleCancel = async () => {
     if (!cancelling) return;
@@ -181,12 +199,22 @@ function AdminBookingsContent() {
 
       <div className="mb-4">
         <FilterBar
-          filters={[]}
-          values={{}}
-          onChange={() => {}}
+          filters={filterConfigs as import("@booking/ui").FilterConfig[]}
+          values={filterValues}
+          onChange={(key, value) => setFilterValues((prev) => ({ ...prev, [key]: value }))}
           search={search}
           onSearchChange={setSearch}
           searchPlaceholder="Search customer name or unit number..."
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+          onClearAll={() => {
+            setSearch("");
+            setFilterValues({});
+            setDateFrom("");
+            setDateTo("");
+          }}
         />
       </div>
 

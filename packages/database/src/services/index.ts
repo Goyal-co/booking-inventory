@@ -7,3 +7,5 @@ export * from "./inventory";
 export * from "./project-lifecycle";
 export * from "./analytics";
 export * from "./organization-stats";
+export * from "./dashboard-analytics";
+export * from "./project-filters";

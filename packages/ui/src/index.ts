@@ -23,3 +23,4 @@ export * from "./components/client-date-time";
 export * from "./components/mobile-nav-sheet";
 export * from "./components/mobile-shell-header";
 export * from "./components/page-header";
+export * from "./components/analytics-charts";

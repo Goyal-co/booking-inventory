@@ -18,6 +18,7 @@ interface StructureUnit {
   floorPlanTypeId: string | null;
   costSheetTemplateId: string | null;
   carpetArea: number | null;
+  superArea: number | null;
 }
 
 interface StructureFloor {
@@ -53,6 +54,15 @@ interface InventoryStructure {
   floorPlanTypes: FloorPlanType[];
   costSheetTemplates: CostSheetTemplate[];
   towers: StructureTower[];
+}
+
+export type { InventoryStructure };
+
+interface InventoryFloorListProps {
+  projectId: string;
+  onChanged: () => void;
+  sharedStructure?: InventoryStructure | null;
+  sharedLoading?: boolean;
 }
 
 interface UnitFormState {
@@ -145,14 +155,17 @@ function StatusWarningBanner({ status }: { status: UnitStatus }) {
   );
 }
 
-interface InventoryFloorListProps {
-  projectId: string;
-  onChanged: () => void;
-}
-
-export function InventoryFloorList({ projectId, onChanged }: InventoryFloorListProps) {
-  const [structure, setStructure] = useState<InventoryStructure | null>(null);
-  const [loading, setLoading] = useState(true);
+export function InventoryFloorList({
+  projectId,
+  onChanged,
+  sharedStructure,
+  sharedLoading,
+}: InventoryFloorListProps) {
+  const usesSharedStructure = sharedStructure !== undefined;
+  const [structure, setStructure] = useState<InventoryStructure | null>(
+    sharedStructure ?? null
+  );
+  const [loading, setLoading] = useState(!usesSharedStructure);
   const [showForm, setShowForm] = useState(false);
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editingUnit, setEditingUnit] = useState<StructureUnit | null>(null);
@@ -174,8 +187,13 @@ export function InventoryFloorList({ projectId, onChanged }: InventoryFloorListP
   }, [projectId]);
 
   useEffect(() => {
+    if (usesSharedStructure) {
+      setStructure(sharedStructure ?? null);
+      setLoading(sharedLoading ?? false);
+      return;
+    }
     load();
-  }, [load]);
+  }, [usesSharedStructure, sharedStructure, sharedLoading, load]);
 
   const openAdd = (tower: StructureTower, floor?: StructureFloor) => {
     const floorNumber = floor?.number ?? 1;
@@ -340,7 +358,8 @@ export function InventoryFloorList({ projectId, onChanged }: InventoryFloorListP
                             <div>
                               <p className="font-medium">{unit.unitNumber}</p>
                               <p className="text-xs text-gray-500">
-                                {unit.bhkType ?? "—"} · {unit.facing ?? "—"}
+                                {unit.bhkType ?? "—"} · Carpet {unit.carpetArea ?? "—"} · SBA{" "}
+                                {unit.superArea ?? "—"}
                               </p>
                             </div>
                             <StatusBadge status={unit.status} />
@@ -373,6 +392,8 @@ export function InventoryFloorList({ projectId, onChanged }: InventoryFloorListP
                           <tr className="text-left text-xs text-gray-500">
                             <th className="px-4 py-2 font-medium">Unit</th>
                             <th className="px-4 py-2 font-medium">Type</th>
+                            <th className="px-4 py-2 font-medium">Carpet (sqft)</th>
+                            <th className="px-4 py-2 font-medium">SBA (sqft)</th>
                             <th className="px-4 py-2 font-medium">Facing</th>
                             <th className="px-4 py-2 font-medium">Status</th>
                             <th className="px-4 py-2 font-medium">Actions</th>
@@ -383,6 +404,8 @@ export function InventoryFloorList({ projectId, onChanged }: InventoryFloorListP
                             <tr key={unit.id} className="border-t border-gray-100">
                               <td className="px-4 py-2 font-medium">{unit.unitNumber}</td>
                               <td className="px-4 py-2 text-gray-600">{unit.bhkType ?? "—"}</td>
+                              <td className="px-4 py-2 text-gray-600">{unit.carpetArea ?? "—"}</td>
+                              <td className="px-4 py-2 text-gray-600">{unit.superArea ?? "—"}</td>
                               <td className="px-4 py-2 text-gray-600">{unit.facing ?? "—"}</td>
                               <td className="px-4 py-2">
                                 <StatusBadge status={unit.status} />

@@ -161,6 +161,26 @@ async function seedProjectInventory(
       },
       {
         projectId,
+        dimension: FilterDimension.CARPET_AREA,
+        label: "Carpet Area",
+        options: [
+          { value: "950", label: "950 sqft carpet" },
+          { value: "1250", label: "1250 sqft carpet" },
+        ],
+        sortOrder: 3,
+      },
+      {
+        projectId,
+        dimension: FilterDimension.SUPER_BUILT_UP,
+        label: "Super Built-up Area",
+        options: [
+          { value: "1200", label: "1200 sqft super built-up" },
+          { value: "1550", label: "1550 sqft super built-up" },
+        ],
+        sortOrder: 4,
+      },
+      {
+        projectId,
         dimension: FilterDimension.STATUS,
         label: "Status",
         options: [
@@ -168,7 +188,7 @@ async function seedProjectInventory(
           { value: "BLOCKED", label: "Blocked" },
           { value: "BOOKED", label: "Booked" },
         ],
-        sortOrder: 3,
+        sortOrder: 5,
       },
     ],
     skipDuplicates: true,

@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
-import { Card, CardContent, formatPrice, ClientDateTime, FilterBar } from "@booking/ui";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Card, CardContent, formatPrice, ClientDateTime, FilterBar, type FilterConfig } from "@booking/ui";
 import { TopBar } from "@/components/top-bar";
 import { SalesProjectScopeSelect } from "@/components/sales-project-scope-select";
 import { useSelectedProject } from "@/hooks/use-selected-project";
@@ -33,18 +33,40 @@ function BookingsDoneContent() {
   const { projects, loading } = useSelectedProject();
   const [scopeProjectId, setScopeProjectId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<FilterConfig[]>([]);
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
 
+  const filterProjectId = scopeProjectId ?? projects[0]?.id ?? null;
+
   const assignedProjectIds = new Set(projects.map((p) => p.id));
   const showProjectColumn = scopeProjectId === null;
+
+  useEffect(() => {
+    if (!filterProjectId) {
+      setFilters([]);
+      return;
+    }
+    setFilterValues((prev) => (prev.status ? { status: prev.status } : {} as Record<string, string>));
+    fetch(`/api/filters?projectId=${filterProjectId}`)
+      .then((r) => r.json())
+      .then((d) => setFilters(d.filters ?? []));
+  }, [filterProjectId]);
 
   const loadBookings = useCallback(async () => {
     setFetching(true);
     setFetchError(null);
     const params = new URLSearchParams(scopeProjectId ? { projectId: scopeProjectId } : { projectId: "all" });
     if (search.trim()) params.set("search", search.trim());
+    Object.entries(filterValues).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
     try {
       const res = await fetch(`/api/bookings/list?${params}`);
       const d = await res.json();
@@ -60,11 +82,27 @@ function BookingsDoneContent() {
     } finally {
       setFetching(false);
     }
-  }, [scopeProjectId, search]);
+  }, [scopeProjectId, search, filterValues, dateFrom, dateTo]);
 
   useEffect(() => {
     if (!loading) loadBookings();
   }, [loading, loadBookings]);
+
+  const clearFilters = useCallback(() => {
+    setSearch("");
+    setFilterValues({});
+    setDateFrom("");
+    setDateTo("");
+  }, []);
+
+  const hasActiveFilters = useMemo(
+    () =>
+      search.trim() !== "" ||
+      Object.values(filterValues).some(Boolean) ||
+      dateFrom !== "" ||
+      dateTo !== "",
+    [search, filterValues, dateFrom, dateTo]
+  );
 
   if (loading) {
     return <div className="flex h-full items-center justify-center">Loading...</div>;
@@ -83,12 +121,29 @@ function BookingsDoneContent() {
         <h1 className="mb-4 text-xl font-bold">Bookings Done</h1>
         <div className="mb-4">
           <FilterBar
-            filters={[]}
-            values={{}}
-            onChange={() => {}}
+            filters={filters}
+            values={filterValues}
+            onChange={(key, value) => setFilterValues((prev) => ({ ...prev, [key]: value }))}
             search={search}
             onSearchChange={setSearch}
             searchPlaceholder="Search customer name or unit number..."
+            extraSelects={[
+              {
+                key: "status",
+                label: "All statuses",
+                options: [
+                  { value: "PENDING", label: "Pending" },
+                  { value: "CONFIRMED", label: "Confirmed" },
+                  { value: "REJECTED", label: "Rejected" },
+                  { value: "CANCELLED", label: "Cancelled" },
+                ],
+              },
+            ]}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            onDateFromChange={setDateFrom}
+            onDateToChange={setDateTo}
+            onClearAll={hasActiveFilters ? clearFilters : undefined}
           />
         </div>
         {projects.length === 0 ? (

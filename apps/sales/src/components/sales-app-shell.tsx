@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { MobileShellHeader } from "@booking/ui";
 import { SalesMobileNav, Sidebar } from "@/components/sidebar";
+import { SalesProjectsProvider } from "@/contexts/sales-projects-provider";
 
-export function SalesAppShell({ children }: { children: React.ReactNode }) {
+function SalesShellInner({ children }: { children: React.ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
 
   return (
@@ -16,5 +17,15 @@ export function SalesAppShell({ children }: { children: React.ReactNode }) {
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
+  );
+}
+
+export function SalesAppShell({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center text-sm text-gray-500">Loading…</div>}>
+      <SalesProjectsProvider>
+        <SalesShellInner>{children}</SalesShellInner>
+      </SalesProjectsProvider>
+    </Suspense>
   );
 }

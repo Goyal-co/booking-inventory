@@ -1,9 +1,10 @@
 const { execSync } = require("child_process");
 
-const port = process.argv[2];
-if (!port) process.exit(0);
+const wait = process.argv.includes("--wait");
+const ports = process.argv.slice(2).filter((a) => a !== "--wait");
+const targets = ports.length ? ports : ["3000", "3001", "3002"];
 
-function killOnWindows() {
+function killOnWindows(port) {
   let output;
   try {
     output = execSync(`netstat -ano | findstr ":${port}"`, { encoding: "utf8" });
@@ -29,7 +30,7 @@ function killOnWindows() {
   }
 }
 
-function killOnUnix() {
+function killOnUnix(port) {
   try {
     execSync(`lsof -ti:${port} | xargs kill -9`, { stdio: "ignore" });
     console.log(`Freed port ${port}`);
@@ -38,8 +39,18 @@ function killOnUnix() {
   }
 }
 
-if (process.platform === "win32") {
-  killOnWindows();
-} else {
-  killOnUnix();
+for (const port of targets) {
+  if (process.platform === "win32") {
+    killOnWindows(port);
+  } else {
+    killOnUnix(port);
+  }
+}
+
+if (wait) {
+  const cmd =
+    process.platform === "win32"
+      ? "powershell -Command Start-Sleep -Seconds 2"
+      : "sleep 2";
+  execSync(cmd, { stdio: "ignore" });
 }

@@ -1,10 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Label, Modal, PageHeader, Card, CardContent } from "@booking/ui";
+import { Button, Label, Modal, PageHeader, Card, CardContent, FilterBar } from "@booking/ui";
+import {
+  UserFormFields,
+  AddAdminForm,
+  ProjectCheckboxes,
+  UserActions,
+} from "@/components/users/user-form-fields";
 import { toast, Toaster } from "sonner";
 import { formatApiError } from "@/lib/format-api-error";
 import { useAdminSession } from "@/hooks/use-admin-session";
+import { useAdminProject } from "@/hooks/use-admin-project";
 
 interface UserRow {
   id: string;
@@ -47,8 +54,8 @@ function roleBadge(role: string) {
 
 export default function UsersPage() {
   const { isSuperAdmin } = useAdminSession();
+  const { projects } = useAdminProject();
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAdmin, setShowAddAdmin] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -58,18 +65,26 @@ export default function UsersPage() {
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
   const [importProjectIds, setImportProjectIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [activeFilter, setActiveFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
 
   const load = async () => {
-    const [uRes, pRes] = await Promise.all([fetch("/api/users"), fetch("/api/projects")]);
+    const params = new URLSearchParams();
+    if (search.trim()) params.set("search", search.trim());
+    if (roleFilter) params.set("role", roleFilter);
+    if (activeFilter) params.set("isActive", activeFilter);
+    if (projectFilter) params.set("projectId", projectFilter);
+    const q = params.toString();
+    const uRes = await fetch(`/api/users${q ? `?${q}` : ""}`);
     const uData = await uRes.json();
-    const pData = await pRes.json();
     setUsers(uData.users ?? []);
-    setProjects(pData.projects ?? []);
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [search, roleFilter, activeFilter, projectFilter]);
 
   const openEdit = (user: UserRow) => {
     setEditingUser(user);
@@ -201,116 +216,6 @@ export default function UsersPage() {
     }
   };
 
-  const ProjectCheckboxes = ({
-    selectedIds,
-    onChange,
-  }: {
-    selectedIds: string[];
-    onChange: (ids: string[]) => void;
-  }) => (
-    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3">
-      {projects.map((p) => (
-        <label key={p.id} className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={selectedIds.includes(p.id)}
-            onChange={(e) => {
-              onChange(
-                e.target.checked
-                  ? [...selectedIds, p.id]
-                  : selectedIds.filter((id) => id !== p.id)
-              );
-            }}
-          />
-          {p.name}
-        </label>
-      ))}
-      {projects.length === 0 && (
-        <p className="text-sm text-gray-400">No projects available</p>
-      )}
-    </div>
-  );
-
-  const UserFormFields = ({
-    includePasswordDefault = true,
-  }: {
-    includePasswordDefault?: boolean;
-  }) => (
-    <>
-      <div>
-        <Label>Name</Label>
-        <Input
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-        />
-      </div>
-      <div>
-        <Label>Email</Label>
-        <Input
-          type="email"
-          value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })}
-        />
-      </div>
-      <div>
-        <Label>
-          {includePasswordDefault ? "Password" : "New Password (leave blank to keep current)"}
-        </Label>
-        <Input
-          type="password"
-          value={form.password}
-          placeholder={includePasswordDefault ? "Min 6 characters" : "Unchanged"}
-          onChange={(e) => setForm({ ...form, password: e.target.value })}
-        />
-      </div>
-      <div>
-        <Label>Role</Label>
-        <select
-          className="w-full rounded-lg border p-2"
-          value={form.role}
-          onChange={(e) => setForm({ ...form, role: e.target.value })}
-        >
-          <option value="SALES_EXEC">Sales Executive</option>
-          <option value="SALES_MANAGER">Sales Manager</option>
-          {isSuperAdmin && (
-            <>
-              <option value="PROJECT_ADMIN">Project Admin</option>
-              <option value="SUPER_ADMIN">Super Admin</option>
-            </>
-          )}
-        </select>
-      </div>
-      <div>
-        <Label>Assigned Projects</Label>
-        <ProjectCheckboxes
-          selectedIds={form.projectIds}
-          onChange={(projectIds) => setForm({ ...form, projectIds })}
-        />
-      </div>
-      {!includePasswordDefault && (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={form.isActive}
-            onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-          />
-          Active
-        </label>
-      )}
-    </>
-  );
-
-  const UserActions = ({ user }: { user: UserRow }) => (
-    <div className="flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" onClick={() => openEdit(user)}>
-        Edit
-      </Button>
-      <Button size="sm" variant="outline" onClick={() => toggleActive(user)}>
-        {user.isActive ? "Deactivate" : "Activate"}
-      </Button>
-    </div>
-  );
-
   return (
     <div className="p-4 md:p-6">
       <Toaster position="top-right" richColors />
@@ -351,6 +256,52 @@ export default function UsersPage() {
         }
       />
 
+      <div className="mb-4">
+        <FilterBar
+          filters={[]}
+          values={{ role: roleFilter, isActive: activeFilter, projectId: projectFilter }}
+          onChange={(key, value) => {
+            if (key === "role") setRoleFilter(value);
+            if (key === "isActive") setActiveFilter(value);
+            if (key === "projectId") setProjectFilter(value);
+          }}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search name or email..."
+          extraSelects={[
+            {
+              key: "role",
+              label: "All roles",
+              options: [
+                { value: "SALES_EXEC", label: "Sales Executive" },
+                { value: "SALES_MANAGER", label: "Sales Manager" },
+                { value: "PROJECT_ADMIN", label: "Project Admin" },
+                { value: "SUPER_ADMIN", label: "Super Admin" },
+              ],
+            },
+            {
+              key: "isActive",
+              label: "All statuses",
+              options: [
+                { value: "true", label: "Active" },
+                { value: "false", label: "Inactive" },
+              ],
+            },
+            {
+              key: "projectId",
+              label: "All projects",
+              options: projects.map((p) => ({ value: p.id, label: p.name })),
+            },
+          ]}
+          onClearAll={() => {
+            setSearch("");
+            setRoleFilter("");
+            setActiveFilter("");
+            setProjectFilter("");
+          }}
+        />
+      </div>
+
       <div className="space-y-3 lg:hidden">
         {users.map((u) => {
           const badge = roleBadge(u.role);
@@ -372,7 +323,11 @@ export default function UsersPage() {
                 <p className={`text-sm ${u.isActive ? "text-emerald-600" : "text-gray-400"}`}>
                   {u.isActive ? "Active" : "Inactive"}
                 </p>
-                <UserActions user={u} />
+                <UserActions
+                  onEdit={() => openEdit(u)}
+                  onToggleActive={() => toggleActive(u)}
+                  isActive={u.isActive}
+                />
               </CardContent>
             </Card>
           );
@@ -414,7 +369,11 @@ export default function UsersPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <UserActions user={u} />
+                      <UserActions
+                  onEdit={() => openEdit(u)}
+                  onToggleActive={() => toggleActive(u)}
+                  isActive={u.isActive}
+                />
                     </td>
                   </tr>
                 );
@@ -426,7 +385,12 @@ export default function UsersPage() {
 
       <Modal open={showCreate} onOpenChange={setShowCreate} title="Create User">
         <div className="space-y-3">
-          <UserFormFields />
+          <UserFormFields
+            form={form}
+            onChange={setForm}
+            projects={projects}
+            isSuperAdmin={isSuperAdmin}
+          />
           <Button className="w-full" disabled={submitting} onClick={handleCreate}>
             {submitting ? "Creating..." : "Create"}
           </Button>
@@ -434,69 +398,24 @@ export default function UsersPage() {
       </Modal>
 
       <Modal open={showAddAdmin} onOpenChange={setShowAddAdmin} title="Add Admin">
-        <div className="space-y-3">
-          <p className="text-sm text-gray-500">
-            Admin accounts can access the Admin Panel. Choose Super Admin for full access or Project
-            Admin for assigned projects only.
-          </p>
-          <div>
-            <Label>Name</Label>
-            <Input
-              value={adminForm.name}
-              onChange={(e) => setAdminForm({ ...adminForm, name: e.target.value })}
-            />
-          </div>
-          <div>
-            <Label>Email</Label>
-            <Input
-              type="email"
-              value={adminForm.email}
-              onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })}
-            />
-          </div>
-          <div>
-            <Label>Password</Label>
-            <Input
-              type="password"
-              value={adminForm.password}
-              placeholder="Min 8 characters"
-              onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })}
-            />
-          </div>
-          <div>
-            <Label>Role</Label>
-            <select
-              className="w-full rounded-lg border p-2"
-              value={adminForm.role}
-              onChange={(e) =>
-                setAdminForm({
-                  ...adminForm,
-                  role: e.target.value as "PROJECT_ADMIN" | "SUPER_ADMIN",
-                })
-              }
-            >
-              <option value="PROJECT_ADMIN">Project Admin</option>
-              <option value="SUPER_ADMIN">Super Admin</option>
-            </select>
-          </div>
-          {adminForm.role === "PROJECT_ADMIN" && (
-            <div>
-              <Label>Assigned Projects</Label>
-              <ProjectCheckboxes
-                selectedIds={adminForm.projectIds}
-                onChange={(projectIds) => setAdminForm({ ...adminForm, projectIds })}
-              />
-            </div>
-          )}
-          <Button className="w-full" disabled={submitting} onClick={handleCreateAdmin}>
-            {submitting ? "Creating..." : "Create Admin"}
-          </Button>
-        </div>
+        <AddAdminForm
+          form={adminForm}
+          onChange={setAdminForm}
+          projects={projects}
+          submitting={submitting}
+          onSubmit={handleCreateAdmin}
+        />
       </Modal>
 
       <Modal open={showEdit} onOpenChange={setShowEdit} title="Edit User">
         <div className="space-y-3">
-          <UserFormFields includePasswordDefault={false} />
+          <UserFormFields
+            form={form}
+            onChange={setForm}
+            projects={projects}
+            isSuperAdmin={isSuperAdmin}
+            includePasswordDefault={false}
+          />
           <Button className="w-full" disabled={submitting} onClick={handleEdit}>
             {submitting ? "Saving..." : "Save Changes"}
           </Button>
@@ -511,6 +430,7 @@ export default function UsersPage() {
           <div>
             <Label>Assign to Projects</Label>
             <ProjectCheckboxes
+              projects={projects}
               selectedIds={importProjectIds}
               onChange={setImportProjectIds}
             />
