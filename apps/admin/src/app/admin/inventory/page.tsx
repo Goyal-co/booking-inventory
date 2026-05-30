@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   UnitGrid,
   Button,
@@ -118,6 +118,11 @@ function InventoryContent() {
       setMetaLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (loading || selectedProjectId || projects.length === 0) return;
+    setSelectedProjectId(projects[0].id);
+  }, [loading, selectedProjectId, projects, setSelectedProjectId]);
 
   useEffect(() => {
     if (loading) return;
@@ -337,9 +342,5 @@ function InventoryContent() {
 }
 
 export default function InventoryPage() {
-  return (
-    <Suspense fallback={<div className="p-6">Loading inventory...</div>}>
-      <InventoryContent />
-    </Suspense>
-  );
+  return <InventoryContent />;
 }

@@ -8,7 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const STORAGE_KEY = "admin-selected-project";
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -57,6 +57,11 @@ async function fetchProjectsCached(force = false): Promise<AdminProject[]> {
   return inflightFetch;
 }
 
+function readUrlProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("projectId");
+}
+
 function resolveSelectedId(
   list: AdminProject[],
   urlProjectId: string | null
@@ -74,14 +79,17 @@ function resolveSelectedId(
 }
 
 export function AdminProjectsProvider({ children }: { children: React.ReactNode }) {
-  const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const [projects, setProjects] = useState<AdminProject[]>(() => cachedProjects ?? []);
   const [selectedProjectId, setSelectedProjectIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(() => !cachedProjects);
+  const [urlProjectId, setUrlProjectId] = useState<string | null>(null);
 
-  const urlProjectId = searchParams.get("projectId");
+  // Sync projectId from URL without useSearchParams (avoids layout-wide Suspense hang)
+  useEffect(() => {
+    setUrlProjectId(readUrlProjectId());
+  }, [pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,15 +120,18 @@ export function AdminProjectsProvider({ children }: { children: React.ReactNode 
       const storageValue = projectId ?? "all";
       localStorage.setItem(STORAGE_KEY, storageValue);
 
-      const params = new URLSearchParams(searchParams.toString());
+      const params = new URLSearchParams(
+        typeof window !== "undefined" ? window.location.search : ""
+      );
       if (projectId) {
         params.set("projectId", projectId);
       } else {
         params.set("projectId", "all");
       }
       router.replace(`${pathname}?${params.toString()}`);
+      setUrlProjectId(projectId ?? "all");
     },
-    [pathname, router, searchParams]
+    [pathname, router]
   );
 
   const refreshProjects = useCallback(async () => {

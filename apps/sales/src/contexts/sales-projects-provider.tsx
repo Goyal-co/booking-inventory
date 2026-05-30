@@ -8,7 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const STORAGE_KEY = "sales-selected-project";
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -62,6 +62,11 @@ async function fetchProjectsCached(force = false): Promise<SelectedProjectInfo[]
   return inflightFetch;
 }
 
+function readUrlProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("projectId");
+}
+
 function resolveSelected(
   list: SelectedProjectInfo[],
   urlProjectId: string | null
@@ -77,14 +82,16 @@ function resolveSelected(
 }
 
 export function SalesProjectsProvider({ children }: { children: React.ReactNode }) {
-  const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const [projects, setProjects] = useState<SelectedProjectInfo[]>(() => cachedProjects ?? []);
   const [selectedProject, setSelectedProjectState] = useState<SelectedProjectInfo | null>(null);
   const [loading, setLoading] = useState(() => !cachedProjects);
+  const [urlProjectId, setUrlProjectId] = useState<string | null>(null);
 
-  const urlProjectId = searchParams.get("projectId");
+  useEffect(() => {
+    setUrlProjectId(readUrlProjectId());
+  }, [pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,11 +123,14 @@ export function SalesProjectsProvider({ children }: { children: React.ReactNode 
       setSelectedProjectState(match);
       localStorage.setItem(STORAGE_KEY, projectId);
 
-      const params = new URLSearchParams(searchParams.toString());
+      const params = new URLSearchParams(
+        typeof window !== "undefined" ? window.location.search : ""
+      );
       params.set("projectId", projectId);
       router.replace(`${pathname}?${params.toString()}`);
+      setUrlProjectId(projectId);
     },
-    [projects, pathname, router, searchParams]
+    [projects, pathname, router]
   );
 
   const refetchProjects = useCallback(async () => {
