@@ -1,7 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { Button, formatPrice, ClientDateTime, Modal, Label, FilterBar, PageHeader, Card, CardContent } from "@booking/ui";
+import { BookOpen, Clock, CheckCircle, IndianRupee } from "lucide-react";
+import { Button, formatPrice, ClientDateTime, Modal, Label, FilterBar, PageHeader, Card, CardContent, KpiGrid, StatCard, BookingCard, SegmentedTabs, TablePagination } from "@booking/ui";
 import { toast, Toaster } from "sonner";
 import { AdminProjectSelect } from "@/components/admin-project-select";
 import { useAdminProject } from "@/hooks/use-admin-project";
@@ -42,6 +43,15 @@ function AdminBookingsContent() {
   const [dateTo, setDateTo] = useState("");
   const [filterConfigs, setFilterConfigs] = useState<Array<{ dimension: string; label: string; options: Array<{ value: string; label: string }> }>>([]);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [bookingStats, setBookingStats] = useState<{
+    total: number;
+    pending: number;
+    confirmed: number;
+    totalRevenue: number;
+    rejected?: number;
+  } | null>(null);
   const [cancelling, setCancelling] = useState<BookingRow | null>(null);
   const [rejecting, setRejecting] = useState<BookingRow | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -58,10 +68,24 @@ function AdminBookingsContent() {
     if (filterValues.bhk) params.set("bhk", filterValues.bhk);
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
+    params.set("page", String(page));
+    params.set("limit", "12");
     fetch(`/api/bookings?${params}`)
       .then((r) => r.json().catch(() => ({})))
-      .then((d) => setBookings(d.bookings ?? []));
+      .then((d) => {
+        setBookings(d.bookings ?? []);
+        setTotal(d.total ?? 0);
+      });
   };
+
+  useEffect(() => {
+    if (loading) return;
+    const params = new URLSearchParams();
+    params.set("projectId", selectedProjectId ?? "all");
+    fetch(`/api/bookings/stats?${params}`)
+      .then((r) => r.json())
+      .then((d) => setBookingStats(d.stats ?? null));
+  }, [selectedProjectId, loading]);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -75,7 +99,7 @@ function AdminBookingsContent() {
 
   useEffect(() => {
     loadBookings();
-  }, [selectedProjectId, loading, statusTab, search, filterValues, dateFrom, dateTo]);
+  }, [selectedProjectId, loading, statusTab, search, filterValues, dateFrom, dateTo, page]);
 
   const handleCancel = async () => {
     if (!cancelling) return;
@@ -197,6 +221,15 @@ function AdminBookingsContent() {
         }
       />
 
+      {bookingStats && (
+        <KpiGrid className="mb-6">
+          <StatCard label="Total Bookings" value={bookingStats.total} subtitle="All-time bookings" icon={<BookOpen className="h-5 w-5" />} />
+          <StatCard label="Pending" value={bookingStats.pending} subtitle="Awaiting confirmation" icon={<Clock className="h-5 w-5" />} iconClassName="bg-amber-50 text-amber-600" />
+          <StatCard label="Confirmed" value={bookingStats.confirmed} subtitle="Confirmed bookings" icon={<CheckCircle className="h-5 w-5" />} iconClassName="bg-emerald-50 text-emerald-600" />
+          <StatCard label="Total Revenue" value={formatPrice(bookingStats.totalRevenue)} subtitle="From confirmed bookings" icon={<IndianRupee className="h-5 w-5" />} />
+        </KpiGrid>
+      )}
+
       <div className="mb-4">
         <FilterBar
           filters={filterConfigs as import("@booking/ui").FilterConfig[]}
@@ -218,123 +251,52 @@ function AdminBookingsContent() {
         />
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setStatusTab(tab.id)}
-            className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-              statusTab === tab.id
-                ? "bg-brand-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedTabs
+        className="mb-4"
+        tabs={STATUS_TABS.map((t) => ({
+          id: t.id,
+          label: t.label,
+          count: t.id === "all" ? bookingStats?.total : t.id === "PENDING" ? bookingStats?.pending : t.id === "CONFIRMED" ? bookingStats?.confirmed : bookingStats?.rejected,
+        }))}
+        active={statusTab}
+        onChange={(id) => {
+          setStatusTab(id as StatusTab);
+          setPage(1);
+        }}
+      />
 
-      <div className="space-y-3 lg:hidden">
+      <div className="grid gap-4 sm:grid-cols-2">
         {bookings.map((b) => (
-          <Card key={b.id}>
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-bold">{b.unit.unitNumber}</p>
-                  <p className="text-sm text-gray-500">{b.unit.floor.tower.name}</p>
-                  {showProjectColumn && (
-                    <p className="text-sm text-gray-500">{b.unit.floor.tower.project?.name ?? "—"}</p>
-                  )}
-                </div>
-                <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${statusClass(b.status)}`}>
-                  {b.status.charAt(0) + b.status.slice(1).toLowerCase()}
-                </span>
-              </div>
-              <div>
-                <p className="text-sm">{b.customerName}</p>
-                <p className="text-xs text-gray-500">{b.customerPhone}</p>
-                {b.status === "REJECTED" && b.adminComment && (
-                  <p className="mt-1 text-xs text-red-600">{b.adminComment}</p>
-                )}
-              </div>
-              <p className="text-sm text-gray-600">Sales: {b.user.name}</p>
-              <div className="flex items-center justify-between">
-                <p className="font-semibold text-brand-600">{formatPrice(Number(b.totalPrice))}</p>
-                <ClientDateTime
-                  value={b.status === "PENDING" ? b.submittedAt : b.bookedAt}
-                  className="text-xs text-gray-400"
-                />
-              </div>
-              <BookingActions booking={b} />
-            </CardContent>
-          </Card>
+          <div key={b.id} className="space-y-2">
+            <BookingCard
+              booking={{
+                id: b.id,
+                unitNumber: b.unit.unitNumber,
+                towerName: b.unit.floor.tower.name,
+                customerName: b.customerName,
+                customerPhone: b.customerPhone,
+                totalPrice: b.totalPrice,
+                status: b.status,
+                bookedAt: b.status === "PENDING" ? b.submittedAt : b.bookedAt,
+                salesPerson: b.user.name,
+              }}
+            />
+            <BookingActions booking={b} />
+          </div>
         ))}
-        {bookings.length === 0 && !loading && (
-          <p className="text-gray-500">No bookings for this selection.</p>
-        )}
       </div>
 
-      <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white lg:block">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              {showProjectColumn && (
-                <th className="px-4 py-3 text-left font-semibold">Project</th>
-              )}
-              <th className="px-4 py-3 text-left font-semibold">Unit</th>
-              <th className="px-4 py-3 text-left font-semibold">Customer</th>
-              <th className="px-4 py-3 text-left font-semibold">Salesperson</th>
-              <th className="px-4 py-3 text-left font-semibold">Status</th>
-              <th className="px-4 py-3 text-left font-semibold">Price</th>
-              <th className="px-4 py-3 text-left font-semibold">Date</th>
-              <th className="px-4 py-3 text-left font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bookings.map((b) => (
-              <tr key={b.id} className="border-t border-gray-100">
-                {showProjectColumn && (
-                  <td className="px-4 py-3 text-gray-600">
-                    {b.unit.floor.tower.project?.name ?? "—"}
-                  </td>
-                )}
-                <td className="px-4 py-3 font-medium">
-                  {b.unit.unitNumber}
-                  <br />
-                  <span className="text-xs text-gray-500">{b.unit.floor.tower.name}</span>
-                </td>
-                <td className="px-4 py-3">
-                  {b.customerName}
-                  <br />
-                  <span className="text-xs text-gray-500">{b.customerPhone}</span>
-                  {b.status === "REJECTED" && b.adminComment && (
-                    <p className="mt-1 text-xs text-red-600">{b.adminComment}</p>
-                  )}
-                </td>
-                <td className="px-4 py-3">{b.user.name}</td>
-                <td className="px-4 py-3">
-                  <span className={`rounded px-2 py-0.5 text-xs font-medium ${statusClass(b.status)}`}>
-                    {b.status.charAt(0) + b.status.slice(1).toLowerCase()}
-                  </span>
-                </td>
-                <td className="px-4 py-3 font-semibold text-brand-600">
-                  {formatPrice(Number(b.totalPrice))}
-                </td>
-                <td className="px-4 py-3 text-gray-500">
-                  <ClientDateTime value={b.status === "PENDING" ? b.submittedAt : b.bookedAt} />
-                </td>
-                <td className="px-4 py-3">
-                  <BookingActions booking={b} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {bookings.length === 0 && !loading && (
-          <p className="hidden p-4 text-gray-500 lg:block">No bookings for this selection.</p>
-        )}
-      </div>
+      {bookings.length === 0 && !loading && (
+        <p className="py-8 text-center text-gray-500">No bookings for this selection.</p>
+      )}
+
+      <TablePagination
+        className="mt-6"
+        page={page}
+        pageSize={12}
+        total={total}
+        onPageChange={setPage}
+      />
 
       <Modal
         open={!!cancelling}

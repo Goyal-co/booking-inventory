@@ -1,8 +1,9 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { BlockTimer, Button, Card, CardContent, FilterBar, type FilterConfig } from "@booking/ui";
-import { TopBar } from "@/components/top-bar";
+import { BlockTimer, Button, Card, CardContent, FilterBar, PageHeader, KpiGrid, StatCard, type FilterConfig } from "@booking/ui";
+import { Lock, Clock, Timer } from "lucide-react";
+import Link from "next/link";
 import { SalesProjectScopeSelect } from "@/components/sales-project-scope-select";
 import { useSelectedProject } from "@/hooks/use-selected-project";
 import { toast, Toaster } from "sonner";
@@ -97,18 +98,27 @@ function BlockedUnitsContent() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-y-auto p-4 md:p-6">
       <Toaster position="top-right" richColors />
-      <TopBar activeBlocks={blocks.length}>
-        <SalesProjectScopeSelect
-          projects={projects}
-          scopeProjectId={scopeProjectId}
-          onChange={setScopeProjectId}
-        />
-      </TopBar>
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        <h1 className="mb-4 text-xl font-bold">My Blocked Units</h1>
-        <div className="mb-4">
+      <PageHeader
+        title="My Blocked Units"
+        description="Units currently reserved by you. They will expire automatically if not booked."
+        actions={
+          <SalesProjectScopeSelect
+            projects={projects}
+            scopeProjectId={scopeProjectId}
+            onChange={setScopeProjectId}
+          />
+        }
+      />
+
+      <KpiGrid className="mb-6 max-w-3xl">
+        <StatCard label="Active Blocks" value={blocks.length} subtitle="Units blocked by you" icon={<Lock className="h-5 w-5" />} />
+        <StatCard label="Expiring Soon" value={blocks.filter((b) => new Date(b.expiresAt).getTime() - Date.now() < 3600000).length} subtitle="Within next hour" icon={<Clock className="h-5 w-5" />} iconClassName="bg-amber-50 text-amber-600" />
+        <StatCard label="Avg Time Left" value={blocks.length ? `${Math.floor(blocks.reduce((s, b) => s + Math.max(0, new Date(b.expiresAt).getTime() - Date.now()), 0) / blocks.length / 60000)} min` : "—"} icon={<Timer className="h-5 w-5" />} />
+      </KpiGrid>
+
+      <div className="mb-4">
           <FilterBar
             filters={filters}
             values={filterValues}
@@ -152,22 +162,25 @@ function BlockedUnitsContent() {
                       <p className="mt-1 text-xs font-medium text-blue-700">Pending approval</p>
                     )}
                     <BlockTimer expiresAt={block.expiresAt} className="mt-2" />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      disabled={block.pendingApproval}
-                      onClick={() => handleRelease(block.id)}
-                    >
-                      Release
-                    </Button>
+                    <div className="mt-3 flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={block.pendingApproval}
+                        onClick={() => handleRelease(block.id)}
+                      >
+                        Release
+                      </Button>
+                      <Button size="sm" asChild>
+                        <Link href={`/app/live?projectId=${block.projectId}`}>Proceed to Booking</Link>
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               );
             })}
           </div>
         )}
-      </div>
     </div>
   );
 }

@@ -69,6 +69,15 @@ enum FilterDimension {
   SUPER_BUILT_UP
 }
 
+enum NotificationType {
+  ANNOUNCEMENT
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  UNIT_RELEASED
+  SYSTEM
+  ADMIN_MESSAGE
+}
+
 model Organization {
   id        String    @id @default(cuid())
   name      String
@@ -80,22 +89,28 @@ model Organization {
 }
 
 model User {
-  id             String               @id @default(cuid())
-  email          String               @unique
-  name           String
-  passwordHash   String
-  role           UserRole             @default(SALES_EXEC)
-  isActive       Boolean              @default(true)
-  organizationId String
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  id               String               @id @default(cuid())
+  email            String               @unique
+  name             String
+  passwordHash     String
+  role             UserRole             @default(SALES_EXEC)
+  isActive         Boolean              @default(true)
+  mobile           String?
+  employeeId       String?
+  joiningDate      DateTime?
+  notificationPrefs Json?
+  lastLoginAt      DateTime?
+  organizationId   String
+  organization     Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
   projectAccess    UserProjectAccess[]
   blocks           Block[]
   bookings         Booking[]
-  reviewedBookings Booking[]           @relation("BookingReviewer")
+  reviewedBookings Booking[]            @relation("BookingReviewer")
   auditLogs        AuditLog[]
   activities       ActivityEvent[]
+  notifications    Notification[]
 }
 
 model UserProjectAccess {
@@ -328,4 +343,19 @@ model ActivityEvent {
   createdAt DateTime @default(now())
 
   @@index([projectId, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  metadata  Json?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }

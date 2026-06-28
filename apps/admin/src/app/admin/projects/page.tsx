@@ -15,6 +15,8 @@ import {
   formatBlockDuration,
   canBlockUnits,
   FilterBar,
+  PageHeader,
+  TablePagination,
 } from "@booking/ui";
 import { toast, Toaster } from "sonner";
 import { useAdminSession } from "@/hooks/use-admin-session";
@@ -41,6 +43,8 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState("");
   const [lifecycleFilter, setLifecycleFilter] = useState("");
   const [publishedFilter, setPublishedFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 12;
 
   const load = async () => {
     const params = new URLSearchParams();
@@ -80,14 +84,17 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <Toaster position="top-right" richColors />
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Projects</h1>
-        {isSuperAdmin && (
-          <Button onClick={() => setShowCreate(true)}>New Project</Button>
-        )}
-      </div>
+      <PageHeader
+        title="Projects"
+        description="Manage all your projects and their lifecycle."
+        actions={
+          isSuperAdmin ? (
+            <Button onClick={() => setShowCreate(true)}>+ New Project</Button>
+          ) : undefined
+        }
+      />
 
       <div className="mb-4">
         <FilterBar
@@ -128,7 +135,7 @@ export default function ProjectsPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {projects.map((p) => (
+        {projects.slice((page - 1) * pageSize, page * pageSize).map((p) => (
           <Link key={p.id} href={`/admin/projects/${p.id}`}>
             <Card className="transition-shadow hover:shadow-md">
               <CardHeader>
@@ -152,6 +159,14 @@ export default function ProjectsPage() {
           </Link>
         ))}
       </div>
+
+      <TablePagination
+        className="mt-6"
+        page={page}
+        pageSize={pageSize}
+        total={projects.length}
+        onPageChange={setPage}
+      />
 
       <Modal open={showCreate} onOpenChange={setShowCreate} title="Create Project">
         <div className="space-y-4">

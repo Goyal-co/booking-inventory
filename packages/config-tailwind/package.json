@@ -1,0 +1,6 @@
+{
+  "name": "@booking/config-tailwind",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./presets.js"
+}

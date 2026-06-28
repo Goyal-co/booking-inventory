@@ -32,7 +32,6 @@ import {
 } from "@booking/ui";
 import { useRealtime } from "@booking/realtime";
 import { REALTIME_EVENTS } from "@booking/realtime";
-import { TopBar } from "@/components/top-bar";
 import { useSelectedProject } from "@/hooks/use-selected-project";
 
 function LiveBookingContent() {
@@ -294,13 +293,29 @@ function LiveBookingContent() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Toaster position="top-right" richColors />
-      <TopBar activeBlocks={myBlocks.length} maxBlocks={project.maxBlocksPerUser}>
-        <ProjectSwitcher
-          projects={projects}
-          selectedId={project.id}
-          onChange={setSelectedProject}
-        />
-        <div className="flex w-full flex-col gap-2 lg:w-auto">
+      <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 md:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="flex items-center gap-2 text-lg font-bold text-gray-900">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Live Booking
+            </h1>
+            <p className="text-sm text-gray-500">
+              Project: {project.name}
+              {project.lifecycleStatus === "LAUNCH_DAY" && (
+                <span className="ml-2 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
+                  Launch Day
+                </span>
+              )}
+            </p>
+          </div>
+          <ProjectSwitcher
+            projects={projects}
+            selectedId={project.id}
+            onChange={setSelectedProject}
+          />
+        </div>
+        <div className="mt-3 flex w-full flex-col gap-2 lg:flex-row lg:items-center">
           <FilterBar
             filters={isLgUp ? filters : []}
             values={filterValues}
@@ -364,7 +379,7 @@ function LiveBookingContent() {
         <span className={`text-xs ${isConnected ? "text-emerald-600" : "text-gray-400"}`}>
           {isConnected ? "● Live" : "○ Offline"}
         </span>
-      </TopBar>
+      </div>
 
       {project.lifecycleStatus === "UPCOMING" && (
         <div className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-800">

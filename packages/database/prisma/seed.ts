@@ -208,9 +208,9 @@ async function main() {
 
   const org = await prisma.organization.upsert({
     where: { slug: "demo-realty" },
-    update: {},
+    update: { name: "Goyal Hariyana Sales" },
     create: {
-      name: "Demo Realty Group",
+      name: "Goyal Hariyana Sales",
       slug: "demo-realty",
     },
   });
@@ -219,25 +219,37 @@ async function main() {
 
   const superAdmin = await prisma.user.upsert({
     where: { email: "admin@demo.com" },
-    update: { passwordHash },
+    update: { passwordHash, name: "Admin User", employeeId: "GH-1001" },
     create: {
       email: "admin@demo.com",
-      name: "Super Admin",
+      name: "Admin User",
       passwordHash,
       role: UserRole.SUPER_ADMIN,
       organizationId: org.id,
+      employeeId: "GH-1001",
+      joiningDate: new Date("2024-06-18"),
     },
   });
 
   const salesUser = await prisma.user.upsert({
     where: { email: "rahul@demo.com" },
-    update: { passwordHash },
+    update: { passwordHash, name: "Pratham S", employeeId: "GH-1023", mobile: "+91 98765 43210" },
     create: {
       email: "rahul@demo.com",
-      name: "Rahul Sharma",
+      name: "Pratham S",
       passwordHash,
       role: UserRole.SALES_EXEC,
       organizationId: org.id,
+      employeeId: "GH-1023",
+      mobile: "+91 98765 43210",
+      joiningDate: new Date("2026-01-02"),
+      notificationPrefs: {
+        bookingApproved: true,
+        unitRelease: true,
+        dailySummary: true,
+        bookingRejected: true,
+        systemAnnouncements: true,
+      },
     },
   });
 
@@ -377,6 +389,44 @@ async function main() {
 
   const totalUnits = await prisma.unit.count({
     where: { floor: { tower: { projectId: { in: allProjects.map((p) => p.id) } } } },
+  });
+
+  const { NotificationType } = await import("@prisma/client");
+  await prisma.notification.deleteMany({ where: { userId: salesUser.id } });
+  await prisma.notification.createMany({
+    data: [
+      {
+        userId: salesUser.id,
+        type: NotificationType.ANNOUNCEMENT,
+        title: "New pricing for Orchid South Park",
+        message:
+          "From: Vice President Sales — New pricing effective from 1 July 2026. Please stop sharing old cost sheets.",
+      },
+      {
+        userId: salesUser.id,
+        type: NotificationType.BOOKING_APPROVED,
+        title: "Booking approved — A-1-01",
+        message: "Your booking for Pratham has been approved.",
+      },
+      {
+        userId: salesUser.id,
+        type: NotificationType.BOOKING_REJECTED,
+        title: "Booking rejected — A-2-03",
+        message: "Reason: Cheque image missing.",
+      },
+      {
+        userId: salesUser.id,
+        type: NotificationType.UNIT_RELEASED,
+        title: "Unit A-3-06 available",
+        message: "Unit A-3-06 is available again.",
+      },
+      {
+        userId: salesUser.id,
+        type: NotificationType.ADMIN_MESSAGE,
+        title: "Monthly review meeting",
+        message: "Monthly review meeting tomorrow at 11:00 AM. Attendance mandatory.",
+      },
+    ],
   });
 
   console.log("Seed completed successfully:");

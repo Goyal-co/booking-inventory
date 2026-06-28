@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Label, Modal, PageHeader, Card, CardContent, FilterBar } from "@booking/ui";
+import { Button, Label, Modal, PageHeader, Card, CardContent, FilterBar, KpiGrid, StatCard, RoleBadge, Avatar, DataTable, TablePagination } from "@booking/ui";
 import {
   UserFormFields,
   AddAdminForm,
@@ -12,6 +12,7 @@ import { toast, Toaster } from "sonner";
 import { formatApiError } from "@/lib/format-api-error";
 import { useAdminSession } from "@/hooks/use-admin-session";
 import { useAdminProject } from "@/hooks/use-admin-project";
+import { Users, UserCheck, UserX, Shield } from "lucide-react";
 
 interface UserRow {
   id: string;
@@ -69,6 +70,18 @@ export default function UsersPage() {
   const [roleFilter, setRoleFilter] = useState("");
   const [activeFilter, setActiveFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
+  const [userStats, setUserStats] = useState<{
+    total: number;
+    active: number;
+    inactive: number;
+    admins: number;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/users/stats")
+      .then((r) => r.json())
+      .then((d) => setUserStats(d.stats ?? null));
+  }, []);
 
   const load = async () => {
     const params = new URLSearchParams();
@@ -255,6 +268,15 @@ export default function UsersPage() {
           </>
         }
       />
+
+      {userStats && (
+        <KpiGrid className="mb-6">
+          <StatCard label="Total Users" value={userStats.total} subtitle="All users in system" icon={<Users className="h-5 w-5" />} />
+          <StatCard label="Active Users" value={userStats.active} subtitle={`${userStats.total ? Math.round((userStats.active / userStats.total) * 100) : 0}% of total`} icon={<UserCheck className="h-5 w-5" />} iconClassName="bg-emerald-50 text-emerald-600" />
+          <StatCard label="Inactive Users" value={userStats.inactive} icon={<UserX className="h-5 w-5" />} iconClassName="bg-red-50 text-red-600" />
+          <StatCard label="Admin Users" value={userStats.admins} icon={<Shield className="h-5 w-5" />} iconClassName="bg-purple-50 text-purple-600" />
+        </KpiGrid>
+      )}
 
       <div className="mb-4">
         <FilterBar

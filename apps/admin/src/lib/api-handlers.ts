@@ -30,6 +30,17 @@ import {
   getOrganizationDashboardStats,
   getAdminAnalyticsCharts,
   getProjectFilters,
+  getBookingStats,
+  getUserStats,
+  getAuditStats,
+  getNotifications,
+  getUnreadNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  getNotificationStats,
+  getUserProfile,
+  updateUserProfile,
+  changeUserPassword,
 } from "@booking/database";
 import {
   createProjectSchema,
@@ -920,14 +931,16 @@ export async function GET_bookings(req: NextRequest) {
   const userId = req.nextUrl.searchParams.get("userId") ?? undefined;
   const dateFrom = req.nextUrl.searchParams.get("dateFrom") ?? undefined;
   const dateTo = req.nextUrl.searchParams.get("dateTo") ?? undefined;
-  const extra = { tower, bhk, userId, dateFrom, dateTo };
+  const page = parseInt(req.nextUrl.searchParams.get("page") ?? "1", 10);
+  const limit = parseInt(req.nextUrl.searchParams.get("limit") ?? "20", 10);
+  const extra = { tower, bhk, userId, dateFrom, dateTo, page, limit };
 
   if (projectId) {
     const denied = denyUnlessProjectAccess(user, projectId);
     if (denied) return denied;
   }
 
-  const bookings = isSuperAdmin(user)
+  const result = isSuperAdmin(user)
     ? await getAllBookings(
         projectId,
         projectId ? undefined : user.organizationId,
@@ -941,7 +954,7 @@ export async function GET_bookings(req: NextRequest) {
       : await getAllBookings(undefined, undefined, status, search, user.projectIds, extra);
 
   return NextResponse.json({
-    bookings: bookings.map((b) => ({
+    bookings: result.bookings.map((b) => ({
       id: b.id,
       customerName: b.customerName,
       customerPhone: b.customerPhone,
@@ -961,6 +974,9 @@ export async function GET_bookings(req: NextRequest) {
         },
       },
     })),
+    total: result.total,
+    page: result.page,
+    limit: result.limit,
   });
 }
 
@@ -1211,4 +1227,113 @@ export async function GET_dashboard(req: NextRequest) {
   const [stats, charts] = await Promise.all([statsPromise, chartsPromise]);
 
   return NextResponse.json({ stats, charts });
+}
+
+export async function GET_booking_stats(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const projectIdParam = req.nextUrl.searchParams.get("projectId");
+  const projectId =
+    projectIdParam && projectIdParam !== "all" ? projectIdParam : undefined;
+
+  const stats = await getBookingStats({
+    organizationId: projectId ? undefined : user.organizationId,
+    projectId,
+    projectIds: !projectId && !isSuperAdmin(user) ? user.projectIds : undefined,
+  });
+
+  return NextResponse.json({ stats });
+}
+
+export async function GET_user_stats() {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const stats = await getUserStats(user.organizationId);
+  return NextResponse.json({ stats });
+}
+
+export async function GET_audit_stats() {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const denied = denyUnlessSuperAdmin(user);
+  if (denied) return denied;
+
+  const stats = await getAuditStats(user.organizationId);
+  return NextResponse.json({ stats });
+}
+
+export async function GET_notifications(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const tab = req.nextUrl.searchParams.get("tab") ?? undefined;
+  const page = parseInt(req.nextUrl.searchParams.get("page") ?? "1", 10);
+  const limit = parseInt(req.nextUrl.searchParams.get("limit") ?? "20", 10);
+
+  const result = await getNotifications(user.id, { tab, page, limit });
+  return NextResponse.json(result);
+}
+
+export async function GET_notifications_unread_count() {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const count = await getUnreadNotificationCount(user.id);
+  return NextResponse.json({ count });
+}
+
+export async function POST_notifications_read_all() {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  await markAllNotificationsRead(user.id);
+  return NextResponse.json({ ok: true });
+}
+
+export async function PATCH_notification_read(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  await markNotificationRead(id, user.id);
+  return NextResponse.json({ ok: true });
+}
+
+export async function GET_profile() {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const profile = await getUserProfile(user.id);
+  return NextResponse.json({ profile });
+}
+
+export async function PATCH_profile(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json();
+  const profile = await updateUserProfile(user.id, {
+    name: body.name,
+    mobile: body.mobile,
+    notificationPrefs: body.notificationPrefs,
+  });
+  return NextResponse.json({ profile });
+}
+
+export async function POST_profile_password(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json();
+  try {
+    await changeUserPassword(user.id, body.currentPassword, body.newPassword);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Failed" },
+      { status: 400 }
+    );
+  }
 }

@@ -3,11 +3,13 @@ import {
   UnitStatus,
   AuditAction,
   BookingStatus,
+  NotificationType,
   Prisma,
 } from "../index";
 import { BlockError } from "./blocks";
 import { createAuditLog } from "./audit";
 import { createActivity } from "./activity";
+import { createNotification } from "./notifications";
 
 export class BookingError extends Error {
   constructor(message: string, public code: string) {
@@ -253,6 +255,17 @@ export async function approveBooking(bookingId: string, adminUserId: string) {
       tx
     );
 
+    await createNotification(
+      {
+        userId: booking.userId,
+        type: NotificationType.BOOKING_APPROVED,
+        title: `Booking approved — ${booking.unit.unitNumber}`,
+        message: `Your booking for ${booking.customerName} has been approved.`,
+        metadata: { bookingId, unitNumber: booking.unit.unitNumber, projectId },
+      },
+      tx
+    );
+
     return {
       booking: updated,
       unitId: booking.unitId,
@@ -323,6 +336,17 @@ export async function rejectBooking(
         userId: adminUserId,
         message: `Booking rejected for ${booking.unit.unitNumber} (${booking.customerName})`,
         unitId: booking.unitId,
+      },
+      tx
+    );
+
+    await createNotification(
+      {
+        userId: booking.userId,
+        type: NotificationType.BOOKING_REJECTED,
+        title: `Booking rejected — ${booking.unit.unitNumber}`,
+        message: `Reason: ${comment}`,
+        metadata: { bookingId, unitNumber: booking.unit.unitNumber, projectId, comment },
       },
       tx
     );
@@ -414,6 +438,8 @@ export async function getAllBookings(
     userId?: string;
     dateFrom?: string;
     dateTo?: string;
+    page?: number;
+    limit?: number;
   }
 ) {
   const trimmed = search?.trim();
@@ -433,51 +459,64 @@ export async function getAllBookings(
     dateFilter.lte = end;
   }
 
-  return prisma.booking.findMany({
-    where: {
-      ...(status ? { status } : {}),
-      ...projectFilter,
-      ...(extra?.userId ? { userId: extra.userId } : {}),
-      ...(Object.keys(dateFilter).length ? { bookedAt: dateFilter } : {}),
-      ...(extra?.tower || extra?.bhk
-        ? {
-            unit: {
-              ...(extra.bhk ? { bhkType: extra.bhk } : {}),
-              floor: {
-                tower: {
-                  ...(projectId ? { projectId } : {}),
-                  ...(extra.tower ? { code: extra.tower } : {}),
-                },
+  const page = extra?.page ?? 1;
+  const limit = extra?.limit ?? 50;
+  const skip = (page - 1) * limit;
+
+  const where = {
+    ...(status ? { status } : {}),
+    ...projectFilter,
+    ...(extra?.userId ? { userId: extra.userId } : {}),
+    ...(Object.keys(dateFilter).length ? { bookedAt: dateFilter } : {}),
+    ...(extra?.tower || extra?.bhk
+      ? {
+          unit: {
+            ...(extra.bhk ? { bhkType: extra.bhk } : {}),
+            floor: {
+              tower: {
+                ...(projectId ? { projectId } : {}),
+                ...(extra.tower ? { code: extra.tower } : {}),
               },
             },
-          }
-        : {}),
-      ...(trimmed
-        ? {
-            OR: [
-              { customerName: { contains: trimmed, mode: "insensitive" } },
-              { customerPhone: { contains: trimmed, mode: "insensitive" } },
-              { unit: { unitNumber: { contains: trimmed, mode: "insensitive" } } },
-            ],
-          }
-        : {}),
-    },
-    include: {
-      unit: {
-        include: {
-          floor: {
-            include: {
-              tower: {
-                include: { project: { select: { id: true, name: true } } },
+          },
+        }
+      : {}),
+    ...(trimmed
+      ? {
+          OR: [
+            { customerName: { contains: trimmed, mode: "insensitive" as const } },
+            { customerPhone: { contains: trimmed, mode: "insensitive" as const } },
+            { unit: { unitNumber: { contains: trimmed, mode: "insensitive" as const } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [bookings, total] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      include: {
+        unit: {
+          include: {
+            floor: {
+              include: {
+                tower: {
+                  include: { project: { select: { id: true, name: true } } },
+                },
               },
             },
           },
         },
+        user: { select: { id: true, name: true, email: true } },
       },
-      user: { select: { id: true, name: true, email: true } },
-    },
-    orderBy: { submittedAt: "desc" },
-  });
+      orderBy: { submittedAt: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.booking.count({ where }),
+  ]);
+
+  return { bookings, total, page, limit };
 }
 
 export async function countPendingBookings(

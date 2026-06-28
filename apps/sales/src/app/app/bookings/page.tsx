@@ -1,8 +1,8 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Card, CardContent, formatPrice, ClientDateTime, FilterBar, type FilterConfig } from "@booking/ui";
-import { TopBar } from "@/components/top-bar";
+import { Card, CardContent, formatPrice, ClientDateTime, FilterBar, PageHeader, KpiGrid, StatCard, Badge, Button, type FilterConfig } from "@booking/ui";
+import { BookOpen, IndianRupee, Calendar } from "lucide-react";
 import { SalesProjectScopeSelect } from "@/components/sales-project-scope-select";
 import { useSelectedProject } from "@/hooks/use-selected-project";
 
@@ -40,6 +40,11 @@ function BookingsDoneContent() {
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [bookingStats, setBookingStats] = useState<{ total: number; totalRevenue: number; thisMonth: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/bookings/stats").then((r) => r.json()).then((d) => setBookingStats(d.stats ?? null));
+  }, []);
 
   const filterProjectId = scopeProjectId ?? projects[0]?.id ?? null;
 
@@ -109,17 +114,28 @@ function BookingsDoneContent() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <TopBar>
-        <SalesProjectScopeSelect
-          projects={projects}
-          scopeProjectId={scopeProjectId}
-          onChange={setScopeProjectId}
-        />
-      </TopBar>
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        <h1 className="mb-4 text-xl font-bold">Bookings Done</h1>
-        <div className="mb-4">
+    <div className="flex h-full flex-col overflow-y-auto p-4 md:p-6">
+      <PageHeader
+        title="Bookings Done"
+        description="Completed and approved bookings across all projects."
+        actions={
+          <SalesProjectScopeSelect
+            projects={projects}
+            scopeProjectId={scopeProjectId}
+            onChange={setScopeProjectId}
+          />
+        }
+      />
+
+      {bookingStats && (
+        <KpiGrid className="mb-6 max-w-3xl">
+          <StatCard label="Total Bookings" value={bookingStats.total} icon={<BookOpen className="h-5 w-5" />} />
+          <StatCard label="Total Sales Value" value={formatPrice(bookingStats.totalRevenue)} icon={<IndianRupee className="h-5 w-5" />} />
+          <StatCard label="This Month" value={bookingStats.thisMonth} icon={<Calendar className="h-5 w-5" />} />
+        </KpiGrid>
+      )}
+
+      <div className="mb-4">
           <FilterBar
             filters={filters}
             values={filterValues}
@@ -206,7 +222,6 @@ function BookingsDoneContent() {
             })}
           </div>
         )}
-      </div>
     </div>
   );
 }

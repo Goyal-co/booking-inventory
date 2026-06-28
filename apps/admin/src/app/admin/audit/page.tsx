@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClientDateTime, PageHeader, Card, CardContent, FilterBar } from "@booking/ui";
+import { ClientDateTime, PageHeader, Card, CardContent, FilterBar, KpiGrid, StatCard, ActionBadge, DataTable, TablePagination } from "@booking/ui";
+import { FileText, CheckCircle, XCircle, Users } from "lucide-react";
 
 const AUDIT_ACTIONS = [
   "UNIT_BLOCKED", "UNIT_RELEASED", "UNIT_BOOKED", "USER_CREATED", "USER_UPDATED",
@@ -24,6 +25,20 @@ export default function AuditPage() {
   const [entityType, setEntityType] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [auditStats, setAuditStats] = useState<{
+    total: number;
+    successful: number;
+    failed: number;
+    uniqueAdmins: number;
+  } | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    fetch("/api/audit/stats")
+      .then((r) => r.json())
+      .then((d) => setAuditStats(d.stats ?? null));
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -40,6 +55,15 @@ export default function AuditPage() {
   return (
     <div className="p-4 md:p-6">
       <PageHeader title="Audit Log" description="Recent admin and system activity" />
+
+      {auditStats && (
+        <KpiGrid className="mb-6">
+          <StatCard label="Total Activities" value={auditStats.total} subtitle="All time" icon={<FileText className="h-5 w-5" />} />
+          <StatCard label="Successful Actions" value={auditStats.successful} subtitle={`${auditStats.total ? Math.round((auditStats.successful / auditStats.total) * 100) : 0}% of total`} icon={<CheckCircle className="h-5 w-5" />} iconClassName="bg-emerald-50 text-emerald-600" />
+          <StatCard label="Blocked/Failed" value={auditStats.failed} icon={<XCircle className="h-5 w-5" />} iconClassName="bg-amber-50 text-amber-600" />
+          <StatCard label="Unique Admins" value={auditStats.uniqueAdmins} subtitle="Active admins" icon={<Users className="h-5 w-5" />} iconClassName="bg-purple-50 text-purple-600" />
+        </KpiGrid>
+      )}
 
       <div className="mb-4">
         <FilterBar
@@ -71,6 +95,41 @@ export default function AuditPage() {
           }}
         />
       </div>
+
+      <DataTable
+        className="hidden lg:block"
+        data={logs.slice((page - 1) * pageSize, page * pageSize)}
+        columns={[
+          {
+            key: "time",
+            header: "Time",
+            cell: (log) => <ClientDateTime value={log.createdAt} />,
+          },
+          {
+            key: "user",
+            header: "User",
+            cell: (log) => log.user?.name ?? "System",
+          },
+          {
+            key: "action",
+            header: "Action",
+            cell: (log) => <ActionBadge action={log.action} />,
+          },
+          {
+            key: "entity",
+            header: "Entity",
+            cell: (log) => `${log.entityType}: ${log.entityId.slice(0, 12)}`,
+          },
+        ]}
+      />
+
+      <TablePagination
+        className="mt-4 hidden lg:flex"
+        page={page}
+        pageSize={pageSize}
+        total={logs.length}
+        onPageChange={setPage}
+      />
 
       <div className="space-y-3 lg:hidden">
         {logs.map((log) => (

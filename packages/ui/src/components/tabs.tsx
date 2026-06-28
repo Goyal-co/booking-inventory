@@ -25,7 +25,7 @@ export function TabsTrigger({ value, children }: { value: string; children: Reac
       value={value}
       className={cn(
         "px-4 py-2 text-sm font-medium text-gray-500 border-b-2 border-transparent",
-        "data-[state=active]:border-blue-600 data-[state=active]:text-blue-600"
+        "data-[state=active]:border-brand-600 data-[state=active]:text-brand-600"
       )}
     >
       {children}
