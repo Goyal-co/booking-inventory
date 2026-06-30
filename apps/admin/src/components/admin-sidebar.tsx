@@ -11,6 +11,7 @@ import {
   BookOpen,
   LogOut,
   Settings,
+  Megaphone,
 } from "lucide-react";
 import { cn, MobileNavSheet, GhcLogo, type MobileNavItem } from "@booking/ui";
 import { signOut } from "next-auth/react";
@@ -22,6 +23,7 @@ export const adminNavItems = [
   { href: "/admin/inventory", label: "Inventory", icon: Grid3X3 },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
+  { href: "/admin/communications", label: "Communications", icon: Megaphone },
   { href: "/admin/audit", label: "Audit Log", icon: FileText },
 ];
 
@@ -149,7 +151,18 @@ export function AdminMobileNav({
       title="Goyal Hariyana Sales"
       subtitle="Admin Portal"
       items={items}
-      footer={<SignOutButton />}
+      footer={
+        <div className="space-y-1">
+          <Link
+            href="/admin/settings"
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            <Settings className="h-4 w-4" />
+            Settings
+          </Link>
+          <SignOutButton />
+        </div>
+      }
     />
   );
 }

@@ -57,6 +57,7 @@ export async function getActiveBlocksForUser(
     include: {
       unit: {
         include: {
+          floorPlanType: { select: { carpetArea: true, superArea: true } },
           floor: {
             include: {
               tower: {
@@ -88,6 +89,8 @@ export async function getActiveBlocksForUser(
       unitNumber: b.unit.unitNumber,
       towerName: b.unit.floor.tower.name,
       bhkType: b.unit.bhkType,
+      carpetArea: b.unit.carpetArea ?? b.unit.floorPlanType?.carpetArea ?? null,
+      superArea: b.unit.floorPlanType?.superArea ?? null,
       price: b.unit.costSheetTemplate ? Number(b.unit.costSheetTemplate.totalPrice) : null,
     },
   }));

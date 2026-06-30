@@ -41,6 +41,12 @@ import {
   getUserProfile,
   updateUserProfile,
   changeUserPassword,
+  getAnnouncements,
+  getAnnouncementStats,
+  createAnnouncement,
+  updateAnnouncement,
+  publishAnnouncement,
+  deleteAnnouncement,
 } from "@booking/database";
 import {
   createProjectSchema,
@@ -1336,4 +1342,99 @@ export async function POST_profile_password(req: NextRequest) {
       { status: 400 }
     );
   }
+}
+
+export async function GET_announcements(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const search = req.nextUrl.searchParams.get("search") ?? undefined;
+  const status = req.nextUrl.searchParams.get("status") as import("@booking/database").AnnouncementStatus | null;
+  const priority = req.nextUrl.searchParams.get("priority") as import("@booking/database").AnnouncementPriority | null;
+  const projectId = req.nextUrl.searchParams.get("projectId") ?? undefined;
+  const page = Number(req.nextUrl.searchParams.get("page") ?? "1");
+  const limit = Number(req.nextUrl.searchParams.get("limit") ?? "20");
+
+  const [result, stats] = await Promise.all([
+    getAnnouncements(user.organizationId, {
+      search,
+      status: status ?? undefined,
+      priority: priority ?? undefined,
+      projectId,
+      page,
+      limit,
+      projectIds: user.projectIds,
+    }),
+    getAnnouncementStats(user.organizationId, user.projectIds),
+  ]);
+
+  return NextResponse.json({
+    announcements: result.announcements,
+    total: result.total,
+    page: result.page,
+    limit: result.limit,
+    stats,
+  });
+}
+
+export async function POST_announcements(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json();
+  if (!body.title?.trim() || !body.message?.trim()) {
+    return NextResponse.json({ error: "Title and message required" }, { status: 400 });
+  }
+
+  const announcement = await createAnnouncement(user.organizationId, user.id, {
+    title: body.title.trim(),
+    message: body.message.trim(),
+    type: body.type,
+    priority: body.priority,
+    audience: body.audience,
+    projectId: body.projectId,
+    scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
+    expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+    publishNow: body.publishNow === true,
+  });
+
+  return NextResponse.json({ announcement }, { status: 201 });
+}
+
+export async function PATCH_announcement(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  const body = await req.json();
+
+  if (body.action === "publish") {
+    const announcement = await publishAnnouncement(id, user.organizationId);
+    if (!announcement) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ announcement });
+  }
+
+  const announcement = await updateAnnouncement(id, user.organizationId, {
+    title: body.title,
+    message: body.message,
+    type: body.type,
+    priority: body.priority,
+    audience: body.audience,
+    projectId: body.projectId,
+    scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : body.scheduledAt,
+    expiresAt: body.expiresAt ? new Date(body.expiresAt) : body.expiresAt,
+  });
+
+  if (!announcement) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ announcement });
+}
+
+export async function DELETE_announcement(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  const ok = await deleteAnnouncement(id, user.organizationId);
+  if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ ok: true });
 }

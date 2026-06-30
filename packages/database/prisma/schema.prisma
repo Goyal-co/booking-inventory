@@ -78,6 +78,25 @@ enum NotificationType {
   ADMIN_MESSAGE
 }
 
+enum AnnouncementStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  EXPIRED
+}
+
+enum AnnouncementPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AnnouncementAudience {
+  ALL_SALES
+  PROJECT_SALES
+}
+
 model Organization {
   id        String    @id @default(cuid())
   name      String
@@ -86,6 +105,7 @@ model Organization {
   updatedAt DateTime  @updatedAt
   users     User[]
   projects  Project[]
+  announcements Announcement[]
 }
 
 model User {
@@ -111,6 +131,7 @@ model User {
   auditLogs        AuditLog[]
   activities       ActivityEvent[]
   notifications    Notification[]
+  announcements    Announcement[]
 }
 
 model UserProjectAccess {
@@ -150,6 +171,7 @@ model Project {
   filterConfigs   FilterConfig[]
   userAccess      UserProjectAccess[]
   activities      ActivityEvent[]
+  announcements   Announcement[]
 
   @@unique([organizationId, slug])
 }
@@ -358,4 +380,28 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
+}
+
+model Announcement {
+  id             String               @id @default(cuid())
+  title          String
+  message        String
+  type           String               @default("GENERAL")
+  priority       AnnouncementPriority @default(MEDIUM)
+  status         AnnouncementStatus   @default(DRAFT)
+  audience       AnnouncementAudience @default(ALL_SALES)
+  projectId      String?
+  project        Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  scheduledAt    DateTime?
+  expiresAt      DateTime?
+  publishedAt    DateTime?
+  createdById    String
+  createdBy      User                 @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  @@index([organizationId, status])
+  @@index([projectId])
 }

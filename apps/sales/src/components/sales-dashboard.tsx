@@ -63,10 +63,10 @@ export function SalesDashboard() {
       />
 
       <KpiGrid className="mb-6">
-        <StatCard label="Total Bookings" value={totalBookings} trend={{ value: "25% vs last 30 days", positive: true }} icon={<BookOpen className="h-5 w-5" />} />
-        <StatCard label="Total Sales Value" value={formatPrice(bookingStats?.totalRevenue ?? 0)} trend={{ value: "18% vs last 30 days", positive: true }} icon={<IndianRupee className="h-5 w-5" />} />
-        <StatCard label="Active Projects" value={projects.length} subtitle="No change vs last 30 days" icon={<Building2 className="h-5 w-5" />} />
-        <StatCard label="This Month" value={bookingStats?.thisMonth ?? 0} trend={{ value: "12% vs last 30 days", positive: true }} icon={<TrendingUp className="h-5 w-5" />} />
+        <StatCard label="Total Bookings" value={totalBookings} subtitle="All confirmed bookings" icon={<BookOpen className="h-5 w-5" />} />
+        <StatCard label="Total Sales Value" value={formatPrice(bookingStats?.totalRevenue ?? 0)} subtitle="From confirmed bookings" icon={<IndianRupee className="h-5 w-5" />} />
+        <StatCard label="Active Projects" value={projects.length} subtitle="Assigned to you" icon={<Building2 className="h-5 w-5" />} />
+        <StatCard label="This Month" value={bookingStats?.thisMonth ?? 0} subtitle="Bookings this month" icon={<TrendingUp className="h-5 w-5" />} />
       </KpiGrid>
 
       <div className="mb-6 grid gap-6 lg:grid-cols-2">

@@ -412,6 +412,7 @@ export async function getBookingsForUser(
     include: {
       unit: {
         include: {
+          floorPlanType: { select: { carpetArea: true, superArea: true } },
           floor: {
             include: {
               tower: {

@@ -1,7 +1,18 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Card, CardContent, formatPrice, ClientDateTime, FilterBar, PageHeader, KpiGrid, StatCard, Badge, Button, type FilterConfig } from "@booking/ui";
+import {
+  formatPrice,
+  ClientDateTime,
+  FilterBar,
+  PageHeader,
+  KpiGrid,
+  StatCard,
+  Badge,
+  Button,
+  TablePagination,
+  type FilterConfig,
+} from "@booking/ui";
 import { BookOpen, IndianRupee, Calendar } from "lucide-react";
 import { SalesProjectScopeSelect } from "@/components/sales-project-scope-select";
 import { useSelectedProject } from "@/hooks/use-selected-project";
@@ -19,7 +30,13 @@ interface BookingRow {
   adminComment: string | null;
   projectId: string;
   projectName: string;
-  unit: { unitNumber: string; floor: { tower: { name: string } } };
+  unit: {
+    unitNumber: string;
+    bhkType: string | null;
+    carpetArea: number | null;
+    superArea: number | null;
+    floor: { tower: { name: string } };
+  };
 }
 
 const STATUS_LABELS: Record<BookingStatus, { label: string; className: string }> = {
@@ -41,14 +58,14 @@ function BookingsDoneContent() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [bookingStats, setBookingStats] = useState<{ total: number; totalRevenue: number; thisMonth: number } | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 5;
 
   useEffect(() => {
     fetch("/api/bookings/stats").then((r) => r.json()).then((d) => setBookingStats(d.stats ?? null));
   }, []);
 
   const filterProjectId = scopeProjectId ?? projects[0]?.id ?? null;
-
-  const assignedProjectIds = new Set(projects.map((p) => p.id));
   const showProjectColumn = scopeProjectId === null;
 
   useEffect(() => {
@@ -56,7 +73,7 @@ function BookingsDoneContent() {
       setFilters([]);
       return;
     }
-    setFilterValues((prev) => (prev.status ? { status: prev.status } : {} as Record<string, string>));
+    setFilterValues((prev) => (prev.status ? { status: prev.status } : ({} as Record<string, string>)));
     fetch(`/api/filters?projectId=${filterProjectId}`)
       .then((r) => r.json())
       .then((d) => setFilters(d.filters ?? []));
@@ -109,6 +126,8 @@ function BookingsDoneContent() {
     [search, filterValues, dateFrom, dateTo]
   );
 
+  const pagedBookings = bookings.slice((page - 1) * pageSize, page * pageSize);
+
   if (loading) {
     return <div className="flex h-full items-center justify-center">Loading...</div>;
   }
@@ -129,99 +148,150 @@ function BookingsDoneContent() {
 
       {bookingStats && (
         <KpiGrid className="mb-6 max-w-3xl">
-          <StatCard label="Total Bookings" value={bookingStats.total} icon={<BookOpen className="h-5 w-5" />} />
-          <StatCard label="Total Sales Value" value={formatPrice(bookingStats.totalRevenue)} icon={<IndianRupee className="h-5 w-5" />} />
-          <StatCard label="This Month" value={bookingStats.thisMonth} icon={<Calendar className="h-5 w-5" />} />
+          <StatCard label="Total Bookings" value={bookingStats.total} subtitle="All confirmed bookings" icon={<BookOpen className="h-5 w-5" />} />
+          <StatCard label="Total Sales Value" value={formatPrice(bookingStats.totalRevenue)} subtitle="From confirmed bookings" icon={<IndianRupee className="h-5 w-5" />} />
+          <StatCard label="This Month" value={bookingStats.thisMonth} subtitle="Bookings this month" icon={<Calendar className="h-5 w-5" />} />
         </KpiGrid>
       )}
 
       <div className="mb-4">
-          <FilterBar
-            filters={filters}
-            values={filterValues}
-            onChange={(key, value) => setFilterValues((prev) => ({ ...prev, [key]: value }))}
-            search={search}
-            onSearchChange={setSearch}
-            searchPlaceholder="Search customer name or unit number..."
-            extraSelects={[
-              {
-                key: "status",
-                label: "All statuses",
-                options: [
-                  { value: "PENDING", label: "Pending" },
-                  { value: "CONFIRMED", label: "Confirmed" },
-                  { value: "REJECTED", label: "Rejected" },
-                  { value: "CANCELLED", label: "Cancelled" },
-                ],
-              },
-            ]}
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            onDateFromChange={setDateFrom}
-            onDateToChange={setDateTo}
-            onClearAll={hasActiveFilters ? clearFilters : undefined}
-          />
-        </div>
-        {projects.length === 0 ? (
-          <p className="text-gray-500">No projects assigned. Contact your admin.</p>
-        ) : fetchError ? (
-          <p className="text-red-600">{fetchError}</p>
-        ) : fetching ? (
-          <p className="text-gray-500">Loading bookings...</p>
-        ) : bookings.length === 0 ? (
-          <p className="text-gray-500">No bookings yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {bookings.map((b) => {
-              const revoked = !assignedProjectIds.has(b.projectId);
-              const statusInfo = STATUS_LABELS[b.status] ?? STATUS_LABELS.CONFIRMED;
-              return (
-                <Card key={b.id}>
-                  <CardContent className="flex items-start justify-between gap-4 p-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <p className="font-bold text-gray-900">{b.unit.unitNumber}</p>
-                        <span
-                          className={`rounded px-2 py-0.5 text-xs font-medium ${statusInfo.className}`}
-                        >
-                          {statusInfo.label}
-                        </span>
-                      </div>
-                      {showProjectColumn && (
-                        <div className="mb-1 flex flex-wrap items-center gap-2">
-                          <span className="text-sm text-gray-500">{b.projectName}</span>
-                          {revoked && (
-                            <span className="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-700">
-                              No longer assigned
-                            </span>
+        <FilterBar
+          filters={filters}
+          values={filterValues}
+          onChange={(key, value) => setFilterValues((prev) => ({ ...prev, [key]: value }))}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search booking or unit..."
+          extraSelects={[
+            {
+              key: "status",
+              label: "All statuses",
+              options: [
+                { value: "PENDING", label: "Pending" },
+                { value: "CONFIRMED", label: "Confirmed" },
+                { value: "REJECTED", label: "Rejected" },
+                { value: "CANCELLED", label: "Cancelled" },
+              ],
+            },
+          ]}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+          onClearAll={hasActiveFilters ? clearFilters : undefined}
+        />
+      </div>
+
+      {projects.length === 0 ? (
+        <p className="text-gray-500">No projects assigned. Contact your admin.</p>
+      ) : fetchError ? (
+        <p className="text-red-600">{fetchError}</p>
+      ) : fetching ? (
+        <p className="text-gray-500">Loading bookings...</p>
+      ) : bookings.length === 0 ? (
+        <p className="text-gray-500">No bookings yet.</p>
+      ) : (
+        <>
+          <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white text-sm md:block">
+            <table className="w-full">
+              <thead className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-4 py-3">Booking Details</th>
+                  <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Booking Date</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pagedBookings.map((b) => {
+                  const statusInfo = STATUS_LABELS[b.status] ?? STATUS_LABELS.CONFIRMED;
+                  const specs = [
+                    b.unit.floor.tower.name,
+                    b.unit.bhkType,
+                    b.unit.carpetArea ? `Carpet: ${b.unit.carpetArea} sqft` : null,
+                    b.unit.superArea ? `SBA: ${b.unit.superArea} sqft` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <tr key={b.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold">{b.unit.unitNumber}</span>
+                          {b.status === "CONFIRMED" && (
+                            <Badge className="bg-emerald-100 text-emerald-800">Confirmed</Badge>
                           )}
                         </div>
-                      )}
-                      <p className="text-sm text-gray-500">{b.unit.floor.tower.name}</p>
-                      <p className="text-sm">
-                        {b.customerName} · {b.customerPhone}
-                      </p>
-                      {b.status === "REJECTED" && b.adminComment && (
-                        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-800">
-                          <strong>Admin note:</strong> {b.adminComment}
-                        </p>
-                      )}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="font-semibold text-brand-600">
+                        {showProjectColumn && <p className="text-sm text-gray-500">{b.projectName}</p>}
+                        <p className="text-xs text-gray-500">{specs}</p>
+                      </td>
+                      <td className="px-4 py-4">
+                        <p className="font-medium">{b.customerName}</p>
+                        <p className="text-xs text-gray-500">{b.customerPhone}</p>
+                      </td>
+                      <td className="px-4 py-4 text-gray-600">
+                        <ClientDateTime value={b.status === "PENDING" ? b.submittedAt : b.bookedAt} />
+                      </td>
+                      <td className="px-4 py-4 font-semibold text-brand-600">
                         {formatPrice(Number(b.totalPrice))}
-                      </p>
-                      <ClientDateTime
-                        value={b.status === "PENDING" ? b.submittedAt : b.bookedAt}
-                        className="text-xs text-gray-400"
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge className={statusInfo.className}>{statusInfo.label}</Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm">View Details</Button>
+                          {b.status === "CONFIRMED" && (
+                            <Button variant="outline" size="sm" asChild>
+                              <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">
+                                Download Receipt
+                              </a>
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-3 md:hidden">
+            {pagedBookings.map((b) => {
+              const statusInfo = STATUS_LABELS[b.status] ?? STATUS_LABELS.CONFIRMED;
+              return (
+                <div key={b.id} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="font-bold">{b.unit.unitNumber}</span>
+                    <Badge className={statusInfo.className}>{statusInfo.label}</Badge>
+                  </div>
+                  <p className="text-sm text-gray-500">{b.projectName}</p>
+                  <p className="text-sm">{b.customerName} · {b.customerPhone}</p>
+                  <p className="mt-2 font-semibold text-brand-600">{formatPrice(Number(b.totalPrice))}</p>
+                  {b.status === "CONFIRMED" && (
+                    <Button variant="outline" size="sm" className="mt-3" asChild>
+                      <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">
+                        Download Receipt
+                      </a>
+                    </Button>
+                  )}
+                </div>
               );
             })}
           </div>
-        )}
+
+          <TablePagination
+            className="mt-6"
+            page={page}
+            pageSize={pageSize}
+            total={bookings.length}
+            onPageChange={setPage}
+          />
+        </>
+      )}
     </div>
   );
 }

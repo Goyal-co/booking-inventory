@@ -10,7 +10,6 @@ import {
   Settings,
   LogOut,
   FolderKanban,
-  Bell,
 } from "lucide-react";
 import { cn, MobileNavSheet, GhcLogo, type MobileNavItem } from "@booking/ui";
 import { signOut } from "next-auth/react";
@@ -21,8 +20,6 @@ export const salesNavItems = [
   { href: "/app/blocked", label: "My Blocked Units", icon: Lock },
   { href: "/app/bookings", label: "Bookings Done", icon: CheckCircle },
   { href: "/app/projects", label: "My Projects", icon: FolderKanban },
-  { href: "/app/notifications", label: "Notifications", icon: Bell, badge: true },
-  { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 
 function SignOutButton({ className }: { className?: string }) {
@@ -80,16 +77,23 @@ export function Sidebar({
             >
               <Icon className="h-4 w-4 shrink-0" />
               <span className="flex-1">{item.label}</span>
-              {item.badge && unreadCount > 0 && (
-                <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-white">
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </span>
-              )}
             </Link>
           );
         })}
       </nav>
-      <div className="border-t border-gray-200 p-3">
+      <div className="space-y-1 border-t border-gray-200 p-3">
+        <Link
+          href="/app/settings"
+          className={cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+            pathname === "/app/settings" || pathname.startsWith("/app/settings/")
+              ? "border-l-4 border-brand-500 bg-brand-50 pl-2 text-brand-700"
+              : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+          )}
+        >
+          <Settings className="h-4 w-4" />
+          Settings
+        </Link>
         <SignOutButton />
       </div>
     </aside>
@@ -109,7 +113,7 @@ export function SalesMobileNav({
 
   const items: MobileNavItem[] = salesNavItems.map((item) => ({
     href: item.href,
-    label: item.badge && unreadCount > 0 ? `${item.label} (${unreadCount})` : item.label,
+    label: item.label,
     icon: item.icon,
     active:
       pathname === item.href ||
@@ -123,7 +127,18 @@ export function SalesMobileNav({
       title="Goyal Hariyana Sales"
       subtitle="Sales Portal"
       items={items}
-      footer={<SignOutButton />}
+      footer={
+        <div className="space-y-1">
+          <Link
+            href="/app/settings"
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            <Settings className="h-4 w-4" />
+            Settings
+          </Link>
+          <SignOutButton />
+        </div>
+      }
     />
   );
 }

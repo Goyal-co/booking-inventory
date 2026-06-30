@@ -10,5 +10,6 @@ export * from "./organization-stats";
 export * from "./dashboard-analytics";
 export * from "./project-filters";
 export * from "./notifications";
+export * from "./announcements";
 export * from "./stats";
 export * from "./profile";

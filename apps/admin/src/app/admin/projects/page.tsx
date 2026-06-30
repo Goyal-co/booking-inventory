@@ -6,8 +6,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
   Input,
   Label,
   Modal,
@@ -17,7 +15,9 @@ import {
   FilterBar,
   PageHeader,
   TablePagination,
+  ClientDateTime,
 } from "@booking/ui";
+import { Building2, Layers, Clock, MoreHorizontal } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { useAdminSession } from "@/hooks/use-admin-session";
 
@@ -25,11 +25,12 @@ interface Project {
   id: string;
   name: string;
   slug: string;
+  logoUrl: string | null;
   isPublished: boolean;
+  createdAt: string;
   lifecycleStatus: "UPCOMING" | "LAUNCH_DAY" | "ONGOING";
   blockDurationMs: number;
   maxBlocksPerUser: number;
-  statusAutoManage: boolean;
   _count: { towers: number; floorPlanTypes: number };
 }
 
@@ -39,12 +40,11 @@ export default function ProjectsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-
   const [search, setSearch] = useState("");
   const [lifecycleFilter, setLifecycleFilter] = useState("");
   const [publishedFilter, setPublishedFilter] = useState("");
   const [page, setPage] = useState(1);
-  const pageSize = 12;
+  const pageSize = 10;
 
   const load = async () => {
     const params = new URLSearchParams();
@@ -82,6 +82,8 @@ export default function ProjectsPage() {
     if (!canBlockUnits(p.lifecycleStatus)) return "No blocking";
     return `${formatBlockDuration(p.blockDurationMs)} blocks`;
   };
+
+  const paged = projects.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div className="p-4 md:p-6">
@@ -134,29 +136,63 @@ export default function ProjectsPage() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {projects.slice((page - 1) * pageSize, page * pageSize).map((p) => (
-          <Link key={p.id} href={`/admin/projects/${p.id}`}>
-            <Card className="transition-shadow hover:shadow-md">
-              <CardHeader>
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle>{p.name}</CardTitle>
+      <div className="space-y-4">
+        {paged.map((p) => (
+          <Card key={p.id} className="overflow-hidden transition-shadow hover:shadow-md">
+            <CardContent className="flex flex-col gap-4 p-0 sm:flex-row">
+              <Link href={`/admin/projects/${p.id}`} className="relative shrink-0 sm:w-48">
+                <div className="flex h-36 w-full items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 sm:h-full sm:min-h-[140px]">
+                  {p.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.logoUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Building2 className="h-12 w-12 text-gray-400" />
+                  )}
+                </div>
+              </Link>
+              <div className="flex min-w-0 flex-1 flex-col justify-between p-4 sm:py-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <Link href={`/admin/projects/${p.id}`} className="text-lg font-bold text-gray-900 hover:text-brand-600">
+                      {p.name}
+                    </Link>
+                    <p className="text-sm text-gray-500">{p.slug}</p>
+                  </div>
                   <ProjectStatusBadge status={p.lifecycleStatus} />
                 </div>
-                <p className="text-sm text-gray-500">{p.slug}</p>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
-                  <span>{p._count.towers} towers</span>
-                  <span>{p._count.floorPlanTypes} floor plans</span>
-                  <span>{blockSummary(p)}</span>
-                  <span className={p.isPublished ? "text-emerald-600" : "text-gray-400"}>
-                    {p.isPublished ? "Published" : "Draft"}
+                <div className="mt-3 flex flex-wrap gap-6 text-sm text-gray-600">
+                  <span className="flex items-center gap-1.5">
+                    <Building2 className="h-4 w-4 text-gray-400" />
+                    {p._count.towers} Towers
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Layers className="h-4 w-4 text-gray-400" />
+                    {p._count.floorPlanTypes} Floor Plans
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="h-4 w-4 text-gray-400" />
+                    {blockSummary(p)}
                   </span>
                 </div>
-              </CardContent>
-            </Card>
-          </Link>
+                <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`h-2 w-2 rounded-full ${p.isPublished ? "bg-emerald-500" : "bg-gray-300"}`} />
+                      {p.isPublished ? "Published" : "Draft"}
+                    </span>
+                    <span>
+                      Created on <ClientDateTime value={p.createdAt} />
+                    </span>
+                  </div>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0" asChild>
+                    <Link href={`/admin/projects/${p.id}`}>
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         ))}
       </div>
 

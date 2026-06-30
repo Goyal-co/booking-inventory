@@ -9,6 +9,7 @@ export interface ProjectAnalytics {
   myBookingsTotal: number;
   totalBlocksEver: number;
   conversionRate: number;
+  totalValue: number;
 }
 
 export async function getSalesAnalytics(
@@ -24,7 +25,7 @@ export async function getSalesAnalytics(
   });
   const unitIdList = unitIds.map((u) => u.id);
 
-  const [activeBlocks, bookingsToday, bookingsTotal, pendingBookings, totalBlocksEver] =
+  const [activeBlocks, bookingsToday, bookingsTotal, pendingBookings, totalBlocksEver, revenueAgg] =
     await Promise.all([
     prisma.block.count({
       where: {
@@ -64,6 +65,14 @@ export async function getSalesAnalytics(
           },
         })
       : Promise.resolve(0),
+    prisma.booking.aggregate({
+      where: {
+        userId,
+        status: BookingStatus.CONFIRMED,
+        unit: { floor: { tower: { projectId } } },
+      },
+      _sum: { totalPrice: true },
+    }),
   ]);
 
   const conversionRate =
@@ -77,6 +86,7 @@ export async function getSalesAnalytics(
     myBookingsTotal: bookingsTotal,
     totalBlocksEver,
     conversionRate,
+    totalValue: Number(revenueAgg._sum.totalPrice ?? 0),
   };
 }
 

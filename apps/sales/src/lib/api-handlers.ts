@@ -238,6 +238,9 @@ export async function GET_bookings(req: NextRequest) {
     projectName: b.unit.floor.tower.project.name,
     unit: {
       unitNumber: b.unit.unitNumber,
+      bhkType: b.unit.bhkType,
+      carpetArea: b.unit.carpetArea ?? b.unit.floorPlanType?.carpetArea ?? null,
+      superArea: b.unit.floorPlanType?.superArea ?? null,
       floor: { tower: { name: b.unit.floor.tower.name } },
     },
   }));
@@ -332,6 +335,8 @@ export async function GET_dashboard(req: NextRequest) {
       id: true,
       name: true,
       slug: true,
+      description: true,
+      logoUrl: true,
       primaryColor: true,
       maxBlocksPerUser: true,
       blockDurationMs: true,
@@ -368,6 +373,7 @@ export async function GET_dashboard(req: NextRequest) {
       myBookingsTotal: 0,
       totalBlocksEver: 0,
       conversionRate: 0,
+      totalValue: 0,
     },
     charts: chartsMap[p.id],
   }));
@@ -480,4 +486,52 @@ export async function POST_profile_password(req: NextRequest) {
       { status: 400 }
     );
   }
+}
+
+export async function GET_booking_receipt(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  const booking = await prisma.booking.findFirst({
+    where: { id, userId: user.id, status: "CONFIRMED" },
+    include: {
+      unit: {
+        include: {
+          floor: { include: { tower: { include: { project: true } } } },
+          floorPlanType: true,
+        },
+      },
+    },
+  });
+
+  if (!booking) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Booking Receipt - ${booking.unit.unitNumber}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:600px;margin:40px auto;padding:24px;color:#111}
+h1{color:#b8860b;border-bottom:2px solid #b8860b;padding-bottom:8px}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee}
+.label{color:#666}.value{font-weight:600}</style></head><body>
+<h1>Goyal Hariyana Sales</h1>
+<h2>Booking Receipt</h2>
+<div class="row"><span class="label">Unit</span><span class="value">${booking.unit.unitNumber}</span></div>
+<div class="row"><span class="label">Project</span><span class="value">${booking.unit.floor.tower.project.name}</span></div>
+<div class="row"><span class="label">Tower</span><span class="value">${booking.unit.floor.tower.name}</span></div>
+<div class="row"><span class="label">Customer</span><span class="value">${booking.customerName}</span></div>
+<div class="row"><span class="label">Phone</span><span class="value">${booking.customerPhone}</span></div>
+<div class="row"><span class="label">Amount</span><span class="value">₹${Number(booking.totalPrice).toLocaleString("en-IN")}</span></div>
+<div class="row"><span class="label">Booked On</span><span class="value">${booking.bookedAt.toLocaleString()}</span></div>
+<p style="margin-top:32px;font-size:12px;color:#888">This is a computer-generated receipt.</p>
+<script>window.onload=function(){window.print()}</script>
+</body></html>`;
+
+  return new NextResponse(html, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Disposition": `inline; filename="receipt-${booking.unit.unitNumber}.html"`,
+    },
+  });
 }
