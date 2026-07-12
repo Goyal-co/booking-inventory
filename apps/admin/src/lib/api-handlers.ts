@@ -972,6 +972,8 @@ export async function GET_bookings(req: NextRequest) {
       submittedAt: b.submittedAt.toISOString(),
       status: b.status,
       adminComment: b.adminComment,
+      hasForm: b.formSnapshot != null || b.digitalFormStatus === "SUBMITTED",
+      digitalFormStatus: b.digitalFormStatus,
       user: b.user,
       unit: {
         unitNumber: b.unit.unitNumber,
@@ -986,6 +988,85 @@ export async function GET_bookings(req: NextRequest) {
     total: result.total,
     page: result.page,
     limit: result.limit,
+  });
+}
+
+export async function GET_booking_printPdf(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id },
+    include: {
+      digitalForm: true,
+      unit: { include: { floor: { include: { tower: { include: { project: true } } } } } },
+    },
+  });
+  if (!booking) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const projectId = booking.unit.floor.tower.project.id;
+  const denied = denyUnlessProjectAccess(user, projectId);
+  if (denied) return denied;
+
+  const snapshot = booking.formSnapshot as {
+    page1Snapshot?: Record<string, unknown>;
+    formData?: Record<string, unknown> | null;
+    branding?: Record<string, unknown>;
+  } | null;
+
+  const page1Snapshot =
+    snapshot?.page1Snapshot ??
+    (booking.digitalForm?.page1Snapshot as Record<string, unknown> | undefined) ??
+    (booking.costSheetSnapshot as Record<string, unknown>);
+  const formData =
+    snapshot?.formData ?? (booking.digitalForm?.formData as Record<string, unknown> | null) ?? null;
+
+  if (!page1Snapshot || (!formData && !snapshot)) {
+    return NextResponse.json(
+      { error: "Booking form not submitted yet — nothing to download" },
+      { status: 404 }
+    );
+  }
+
+  let branding = snapshot?.branding as Record<string, unknown> | undefined;
+  if (!branding) {
+    const project = booking.unit.floor.tower.project;
+    const template = await prisma.bookingFormTemplate.findFirst({
+      where: { projectId: project.id, isActive: true },
+      orderBy: { version: "desc" },
+    });
+    branding = {
+      logoUrl: template?.logoUrl ?? project.logoUrl,
+      companyName: template?.companyName,
+      tagline: template?.tagline,
+      formTitle: template?.formTitle,
+      supportEmail: template?.supportEmail,
+      primaryColor: template?.primaryColor ?? project.primaryColor,
+      projectName: project.name,
+      unitNumber: booking.unit.unitNumber,
+      content: (template?.fieldMapping as Record<string, unknown>) ?? {},
+    };
+  }
+
+  const { digitalFormToPrintHtml } = await import("@booking/pdf");
+  const html = digitalFormToPrintHtml(
+    { page1Snapshot, formData },
+    {
+      branding: branding as import("@booking/pdf").PrintBranding,
+      customerName: booking.customerName,
+      customerPhone: booking.customerPhone,
+      customerEmail: booking.customerEmail ?? undefined,
+    }
+  );
+  return new NextResponse(html, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Disposition": `inline; filename="booking-form-${booking.unit.unitNumber}.html"`,
+    },
   });
 }
 

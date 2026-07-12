@@ -28,6 +28,7 @@ interface BookingRow {
   submittedAt: string;
   status: BookingStatus;
   adminComment: string | null;
+  hasForm?: boolean;
   projectId: string;
   projectName: string;
   unit: {
@@ -277,22 +278,26 @@ function BookingsDoneContent() {
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setDetailBookingId(b.id)}
-                          >
-                            View Form Data
-                          </Button>
-                          <Button variant="outline" size="sm" asChild>
-                            <a
-                              href={`/api/bookings/${b.id}/print-pdf`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Download Booking Form
-                            </a>
-                          </Button>
+                          {b.hasForm && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setDetailBookingId(b.id)}
+                              >
+                                View Form Data
+                              </Button>
+                              <Button variant="outline" size="sm" asChild>
+                                <a
+                                  href={`/api/bookings/${b.id}/print-pdf`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Download Booking Form
+                                </a>
+                              </Button>
+                            </>
+                          )}
                           {b.status === "CONFIRMED" && (
                             <Button variant="outline" size="sm" asChild>
                               <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">
@@ -322,14 +327,18 @@ function BookingsDoneContent() {
                   <p className="text-sm">{b.customerName} · {b.customerPhone}</p>
                   <p className="mt-2 font-semibold text-brand-600">{formatPrice(Number(b.totalPrice))}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setDetailBookingId(b.id)}>
-                      View Form Data
-                    </Button>
-                    <Button variant="outline" size="sm" asChild>
-                      <a href={`/api/bookings/${b.id}/print-pdf`} target="_blank" rel="noreferrer">
-                        Download Booking Form
-                      </a>
-                    </Button>
+                    {b.hasForm && (
+                      <>
+                        <Button variant="outline" size="sm" onClick={() => setDetailBookingId(b.id)}>
+                          View Form Data
+                        </Button>
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={`/api/bookings/${b.id}/print-pdf`} target="_blank" rel="noreferrer">
+                            Download Booking Form
+                          </a>
+                        </Button>
+                      </>
+                    )}
                     {b.status === "CONFIRMED" && (
                       <Button variant="outline" size="sm" asChild>
                         <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">

@@ -459,12 +459,43 @@ export async function GET_bookingDigitalForm(_req: NextRequest, { params }: { pa
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  const form = await prisma.digitalBookingForm.findFirst({
-    where: { bookingId: id },
-    include: { documents: true, block: true },
+
+  const booking = await prisma.booking.findFirst({
+    where: { id },
+    include: {
+      digitalForm: { include: { documents: true } },
+      unit: { include: { floor: { include: { tower: { include: { project: true } } } } } },
+    },
   });
-  if (!form) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ form });
+  if (!booking) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const projectId = booking.unit.floor.tower.project.id;
+  const denied = denyUnlessProjectAccess(user, projectId);
+  if (denied) return denied;
+
+  return NextResponse.json({
+    booking: {
+      id: booking.id,
+      status: booking.status,
+      customerName: booking.customerName,
+      customerPhone: booking.customerPhone,
+      customerEmail: booking.customerEmail,
+      projectName: booking.unit.floor.tower.project.name,
+      unitNumber: booking.unit.unitNumber,
+      towerName: booking.unit.floor.tower.name,
+    },
+    form: booking.digitalForm
+      ? {
+          id: booking.digitalForm.id,
+          status: booking.digitalForm.status,
+          page1Snapshot: booking.digitalForm.page1Snapshot,
+          formData: booking.digitalForm.formData,
+          submittedAt: booking.digitalForm.submittedAt,
+          documents: booking.digitalForm.documents,
+        }
+      : null,
+    formSnapshot: booking.formSnapshot,
+  });
 }
 
 export async function GET_orgBookingFormTemplates(_req: NextRequest) {

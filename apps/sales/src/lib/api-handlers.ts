@@ -279,6 +279,8 @@ export async function GET_bookings(req: NextRequest) {
     submittedAt: b.submittedAt.toISOString(),
     status: b.status,
     adminComment: b.adminComment,
+    hasForm: b.formSnapshot != null || b.digitalFormStatus === "SUBMITTED",
+    digitalFormStatus: b.digitalFormStatus,
     projectId: b.unit.floor.tower.project.id,
     projectName: b.unit.floor.tower.project.name,
     unit: {

@@ -19,6 +19,7 @@ interface BookingRow {
   submittedAt: string;
   status: BookingStatus;
   adminComment: string | null;
+  hasForm?: boolean;
   user: { name: string };
   unit: {
     unitNumber: string;
@@ -185,6 +186,13 @@ function AdminBookingsContent() {
 
   const BookingActions = ({ booking }: { booking: BookingRow }) => (
     <div className="flex flex-wrap gap-2">
+      {booking.hasForm && (
+        <Button size="sm" variant="outline" asChild>
+          <a href={`/api/bookings/${booking.id}/print-pdf`} target="_blank" rel="noreferrer">
+            Download Booking Form
+          </a>
+        </Button>
+      )}
       {booking.status === "PENDING" && (
         <>
           <Button size="sm" disabled={submitting} onClick={() => handleApprove(booking)}>

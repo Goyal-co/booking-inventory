@@ -13,6 +13,7 @@ const nextConfig = {
     "@booking/database",
     "@booking/validators",
     "@booking/realtime",
+    "@booking/pdf",
     "@goyal/ecosystem-contracts",
     "@goyal/integration-hub",
   ],

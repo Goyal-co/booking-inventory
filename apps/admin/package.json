@@ -13,6 +13,7 @@
     "@booking/realtime": "workspace:*",
     "@booking/ui": "workspace:*",
     "@booking/validators": "workspace:*",
+    "@booking/pdf": "workspace:*",
     "@goyal/ecosystem-contracts": "workspace:*",
     "@goyal/integration-hub": "workspace:*",
     "bcryptjs": "^2.4.3",
