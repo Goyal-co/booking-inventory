@@ -24,26 +24,58 @@ function looksLikeLocalhost(url: string) {
   return /localhost|127\.0\.0\.1/i.test(url);
 }
 
+/** Strip whitespace and accidental wrapping quotes from Render/dashboard env values. */
+function readEnvUrl(...keys: string[]): string {
+  for (const key of keys) {
+    const raw = process.env[key];
+    if (raw == null) continue;
+    let v = raw.trim();
+    if (
+      (v.startsWith('"') && v.endsWith('"')) ||
+      (v.startsWith("'") && v.endsWith("'"))
+    ) {
+      v = v.slice(1, -1).trim();
+    }
+    if (v) return v.replace(/\/$/, "");
+  }
+  return "";
+}
+
 /**
  * Public base URL for the customer booking app (no trailing slash).
- * In production, CUSTOMER_URL must be set to a non-localhost HTTPS URL
- * or booking emails will contain broken localhost links.
+ * Must be set on the **sales** Render service (emails are sent from sales).
  */
 export function getCustomerBaseUrl(): string {
-  const raw =
-    process.env.CUSTOMER_URL?.trim() ||
-    process.env.NEXT_PUBLIC_CUSTOMER_URL?.trim() ||
-    "";
+  const base = readEnvUrl("CUSTOMER_URL", "NEXT_PUBLIC_CUSTOMER_URL");
   const fallback = "http://localhost:3003";
-  const base = (raw || fallback).replace(/\/$/, "");
 
-  if (process.env.NODE_ENV === "production" && (!raw || looksLikeLocalhost(base))) {
+  if (process.env.NODE_ENV === "production" && (!base || looksLikeLocalhost(base))) {
+    const seen = base
+      ? `got "${base}"`
+      : "CUSTOMER_URL is empty/missing on this service";
     throw new Error(
-      "CUSTOMER_URL must be set to your deployed customer app URL (e.g. https://booking-inventory-customer.onrender.com). Localhost links cannot be emailed in production."
+      `CUSTOMER_URL must be set on the sales service to your deployed customer app URL (e.g. https://booking-inventory-customer.onrender.com). ${seen}. After saving in Render → Environment, click Manual Deploy (or Restart) on sales.`
     );
   }
 
-  return base;
+  return base || fallback;
+}
+
+export function getCustomerUrlStatus() {
+  const base = readEnvUrl("CUSTOMER_URL", "NEXT_PUBLIC_CUSTOMER_URL");
+  let host: string | null = null;
+  if (base) {
+    try {
+      host = new URL(base).host;
+    } catch {
+      host = null;
+    }
+  }
+  return {
+    configured: Boolean(base) && !looksLikeLocalhost(base),
+    host,
+    isLocalhost: !base || looksLikeLocalhost(base),
+  };
 }
 
 export function getCustomerBookingUrl(bookingToken: string): string {
