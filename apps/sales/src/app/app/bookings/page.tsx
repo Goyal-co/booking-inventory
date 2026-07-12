@@ -60,6 +60,41 @@ function BookingsDoneContent() {
   const [bookingStats, setBookingStats] = useState<{ total: number; totalRevenue: number; thisMonth: number } | null>(null);
   const [page, setPage] = useState(1);
   const pageSize = 5;
+  const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detail, setDetail] = useState<{
+    booking?: {
+      customerName: string;
+      customerPhone: string;
+      customerEmail?: string | null;
+      projectName: string;
+      unitNumber: string;
+      towerName: string;
+      status: string;
+    };
+    form?: { formData?: Record<string, Record<string, unknown>> | null; status?: string } | null;
+    formSnapshot?: {
+      formData?: Record<string, Record<string, unknown>> | null;
+    } | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!detailBookingId) {
+      setDetail(null);
+      return;
+    }
+    setDetailLoading(true);
+    fetch(`/api/bookings/${detailBookingId}/digital-form`)
+      .then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => ({})) }))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          setDetail(null);
+          return;
+        }
+        setDetail(data);
+      })
+      .finally(() => setDetailLoading(false));
+  }, [detailBookingId]);
 
   useEffect(() => {
     fetch("/api/bookings/stats").then((r) => r.json()).then((d) => setBookingStats(d.stats ?? null));
@@ -241,8 +276,23 @@ function BookingsDoneContent() {
                         <Badge className={statusInfo.className}>{statusInfo.label}</Badge>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm">View Details</Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDetailBookingId(b.id)}
+                          >
+                            View Form Data
+                          </Button>
+                          <Button variant="outline" size="sm" asChild>
+                            <a
+                              href={`/api/bookings/${b.id}/print-pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Download Booking Form
+                            </a>
+                          </Button>
                           {b.status === "CONFIRMED" && (
                             <Button variant="outline" size="sm" asChild>
                               <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">
@@ -271,13 +321,23 @@ function BookingsDoneContent() {
                   <p className="text-sm text-gray-500">{b.projectName}</p>
                   <p className="text-sm">{b.customerName} · {b.customerPhone}</p>
                   <p className="mt-2 font-semibold text-brand-600">{formatPrice(Number(b.totalPrice))}</p>
-                  {b.status === "CONFIRMED" && (
-                    <Button variant="outline" size="sm" className="mt-3" asChild>
-                      <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">
-                        Download Receipt
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setDetailBookingId(b.id)}>
+                      View Form Data
+                    </Button>
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={`/api/bookings/${b.id}/print-pdf`} target="_blank" rel="noreferrer">
+                        Download Booking Form
                       </a>
                     </Button>
-                  )}
+                    {b.status === "CONFIRMED" && (
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={`/api/bookings/${b.id}/receipt`} target="_blank" rel="noreferrer">
+                          Download Receipt
+                        </a>
+                      </Button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -292,6 +352,65 @@ function BookingsDoneContent() {
           />
         </>
       )}
+
+      {detailBookingId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-navy-600">Customer booking form data</h2>
+                {detail?.booking ? (
+                  <p className="text-sm text-gray-500">
+                    {detail.booking.projectName} · {detail.booking.towerName} · Unit{" "}
+                    {detail.booking.unitNumber}
+                  </p>
+                ) : null}
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setDetailBookingId(null)}>
+                Close
+              </Button>
+            </div>
+            {detailLoading ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : (
+              <>
+                <div className="mb-4 rounded-xl border bg-gray-50 p-4 text-sm">
+                  <p>
+                    <strong>Customer:</strong> {detail?.booking?.customerName}
+                  </p>
+                  <p>
+                    <strong>Phone:</strong> {detail?.booking?.customerPhone}
+                  </p>
+                  <p>
+                    <strong>Email:</strong> {detail?.booking?.customerEmail || "—"}
+                  </p>
+                  <p>
+                    <strong>Form status:</strong> {detail?.form?.status || "Snapshot"}
+                  </p>
+                </div>
+                <div className="mb-4">
+                  <Button variant="outline" size="sm" asChild>
+                    <a
+                      href={`/api/bookings/${detailBookingId}/print-pdf`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open printable form (for physical sign)
+                    </a>
+                  </Button>
+                </div>
+                <pre className="overflow-x-auto rounded-xl border bg-slate-950 p-4 text-xs text-slate-100">
+                  {JSON.stringify(
+                    detail?.form?.formData ?? detail?.formSnapshot?.formData ?? {},
+                    null,
+                    2
+                  )}
+                </pre>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

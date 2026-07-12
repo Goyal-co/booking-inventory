@@ -272,7 +272,7 @@ export async function approveBooking(bookingId: string, adminUserId: string) {
       unitNumber: booking.unit.unitNumber,
       projectId,
     };
-  });
+  }, { maxWait: 10_000, timeout: 60_000 });
 }
 
 export async function rejectBooking(
@@ -357,7 +357,7 @@ export async function rejectBooking(
       unitNumber: booking.unit.unitNumber,
       projectId,
     };
-  });
+  }, { maxWait: 10_000, timeout: 60_000 });
 }
 
 export async function getBookingsForUser(
@@ -596,5 +596,5 @@ export async function cancelBooking(
       unitNumber: booking.unit.unitNumber,
       projectId,
     };
-  });
+  }, { maxWait: 10_000, timeout: 60_000 });
 }

@@ -2,9 +2,21 @@ node_modules
 .next
 .turbo
 dist
+
+# Env / secrets — never commit real keys
 .env
+.env.*
+!.env.example
+!.env.production.example
+!.env.cloud.example
 .env.local
 .env*.local
+apps/*/.env
+apps/*/.env.local
+apps/*/.env.*.local
+packages/*/.env
+packages/*/.env.local
+
 *.log
 .DS_Store
 coverage

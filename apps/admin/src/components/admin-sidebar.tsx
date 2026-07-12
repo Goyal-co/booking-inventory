@@ -12,6 +12,7 @@ import {
   LogOut,
   Settings,
   Megaphone,
+  Files,
 } from "lucide-react";
 import { cn, MobileNavSheet, GhcLogo, type MobileNavItem } from "@booking/ui";
 import { signOut } from "next-auth/react";
@@ -20,10 +21,12 @@ import { useAdminSession } from "@/hooks/use-admin-session";
 export const adminNavItems = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/projects", label: "Projects", icon: Building2 },
+  { href: "/admin/templates", label: "Form Templates", icon: Files },
   { href: "/admin/inventory", label: "Inventory", icon: Grid3X3 },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
   { href: "/admin/communications", label: "Communications", icon: Megaphone },
+  { href: "/admin/integration", label: "Integrations", icon: Settings },
   { href: "/admin/audit", label: "Audit Log", icon: FileText },
 ];
 

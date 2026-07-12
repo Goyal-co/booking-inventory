@@ -14,6 +14,7 @@ export * from "./components/unit-grid";
 export * from "./components/modal";
 export * from "./components/tabs";
 export * from "./components/cost-sheet-table";
+export * from "./components/cost-sheet-engine-view";
 export * from "./components/floor-plan-viewer";
 export * from "./components/activity-feed";
 export * from "./components/filter-bar";

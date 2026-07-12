@@ -12,6 +12,59 @@ enum UserRole {
   PROJECT_ADMIN
   SALES_MANAGER
   SALES_EXEC
+  RECEPTION
+}
+
+enum DigitalFormStatus {
+  DRAFT
+  SUBMITTED
+  PRINT_READY
+  SIGNED
+}
+
+enum BookingDocumentType {
+  PAN
+  AADHAAR
+  SIGNATURE
+  OTHER
+}
+
+enum ChargeCalcMode {
+  FIXED
+  RATE_PER_AREA
+}
+
+enum PaymentStageType {
+  FIXED
+  PERCENTAGE
+  FORMULA
+}
+
+enum IntegrationSystem {
+  TITAN
+  POST_CRM
+  EOI_CP
+}
+
+enum IntegrationSyncStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum LeadSource {
+  CHANNEL_PARTNER
+  DIRECT_WALKIN
+  PRESALES
+  OTHER
+}
+
+enum SiteVisitStatus {
+  NOT_SCHEDULED
+  SCHEDULED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
 }
 
 enum UnitStatus {
@@ -106,6 +159,9 @@ model Organization {
   users     User[]
   projects  Project[]
   announcements Announcement[]
+  customers Customer[]
+  leads     LeadRegistry[]
+  bookingFormTemplates OrgBookingFormTemplate[]
 }
 
 model User {
@@ -132,6 +188,33 @@ model User {
   activities       ActivityEvent[]
   notifications    Notification[]
   announcements    Announcement[]
+  siteVisits       SiteVisit[]      @relation("SalesVisitAssignee")
+  registeredLeads  LeadRegistry[]   @relation("LeadRegisteredBy")
+  assignedLeads    LeadRegistry[]   @relation("LeadAssignee")
+}
+
+model Customer {
+  id          String    @id @default(cuid())
+  name        String
+  email       String
+  phone       String
+  leadId      String?
+  titanLeadId String?
+  postCrmId   String?
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  blocks      Block[]
+  bookings    Booking[]
+  documents   BookingDocument[]
+  digitalForms DigitalBookingForm[]
+  payments    PaymentRecord[]
+
+  @@unique([organizationId, email])
+  @@index([email])
+  @@index([phone])
+  @@index([leadId])
 }
 
 model UserProjectAccess {
@@ -172,6 +255,15 @@ model Project {
   userAccess      UserProjectAccess[]
   activities      ActivityEvent[]
   announcements   Announcement[]
+  bookingFormTemplates BookingFormTemplate[]
+  paymentScheduleTemplates PaymentScheduleTemplate[]
+  otherChargeTemplates OtherChargeTemplate[]
+  unitMasterRows  UnitMasterRow[]
+  constructionReports ConstructionReport[]
+  leads           LeadRegistry[]
+  defaultSaleablePricePerSqft Decimal? @db.Decimal(14, 2)
+  gstPercent      Decimal? @db.Decimal(5, 2) @default(5)
+  brochureUrl     String?
 
   @@unique([organizationId, slug])
 }
@@ -286,17 +378,30 @@ model Unit {
 }
 
 model Block {
-  id        String   @id @default(cuid())
-  unitId    String
-  unit      Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  isAdmin   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id                    String   @id @default(cuid())
+  unitId                String
+  unit                  Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerId            String?
+  customer              Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName          String?
+  customerEmail         String?
+  customerPhone         String?
+  saleablePricePerSqft  Decimal? @db.Decimal(14, 2)
+  costSheetSnapshot     Json?
+  bookingToken          String?  @unique
+  leadId                String?
+  lead                  LeadRegistry? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  expiresAt             DateTime
+  isAdmin               Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  digitalForm           DigitalBookingForm?
 
   @@index([userId, expiresAt])
   @@index([unitId])
+  @@index([bookingToken])
+  @@index([leadId])
 }
 
 model Booking {
@@ -305,11 +410,15 @@ model Booking {
   unit              Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
   userId            String
   user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerId        String?
+  customer          Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   customerName      String
   customerPhone     String
+  customerEmail     String?
   costSheetSnapshot Json
   totalPrice        Decimal       @db.Decimal(14, 2)
   status            BookingStatus @default(CONFIRMED)
+  digitalFormStatus DigitalFormStatus?
   adminComment      String?
   reviewedById      String?
   reviewedBy        User?         @relation("BookingReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
@@ -317,9 +426,245 @@ model Booking {
   submittedAt       DateTime      @default(now())
   bookedAt          DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+  leadId            String?
+  lead              LeadRegistry? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  titanCrmId        String?
+  postCrmId         String?
+  /// Snapshot of filled digital form + template branding for print/sign (survives block delete)
+  formSnapshot      Json?
+  digitalForm       DigitalBookingForm?
+  payments          PaymentRecord[]
 
   @@index([unitId, status])
   @@index([userId, status])
+  @@index([status])
+  @@index([leadId])
+}
+
+model OrgBookingFormTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  pdfUrl         String?
+  logoUrl        String?
+  companyName    String?
+  tagline        String?
+  formTitle      String?
+  formSubtitle   String?
+  footerText     String?
+  supportEmail   String?
+  primaryColor   String?
+  fieldMapping   Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model BookingFormTemplate {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name         String?
+  pdfUrl       String?
+  logoUrl      String?
+  companyName  String?
+  tagline      String?
+  formTitle    String?
+  formSubtitle String?
+  footerText   String?
+  supportEmail String?
+  primaryColor String?
+  fieldMapping Json?
+  version      Int      @default(1)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([projectId, isActive])
+}
+
+model DigitalBookingForm {
+  id            String            @id @default(cuid())
+  blockId       String?           @unique
+  block         Block?            @relation(fields: [blockId], references: [id], onDelete: SetNull)
+  bookingId     String?           @unique
+  booking       Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  customerId    String?
+  customer      Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status        DigitalFormStatus @default(DRAFT)
+  page1Snapshot Json
+  formData      Json?
+  submittedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  documents     BookingDocument[]
+
+  @@index([bookingId])
+  @@index([customerId])
+}
+
+model BookingDocument {
+  id             String              @id @default(cuid())
+  digitalFormId  String
+  digitalForm    DigitalBookingForm  @relation(fields: [digitalFormId], references: [id], onDelete: Cascade)
+  customerId     String?
+  customer       Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  type           BookingDocumentType
+  fileName       String
+  fileUrl        String
+  createdAt      DateTime            @default(now())
+
+  @@index([digitalFormId])
+}
+
+model PaymentScheduleTemplate {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stageName String
+  stageType PaymentStageType
+  percentage Decimal? @db.Decimal(5, 2)
+  fixedAmount Decimal? @db.Decimal(14, 2)
+  formulaKey String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, sortOrder])
+}
+
+model OtherChargeTemplate {
+  id         String         @id @default(cuid())
+  projectId  String
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  calcMode   ChargeCalcMode
+  amount     Decimal?       @db.Decimal(14, 2)
+  rate       Decimal?       @db.Decimal(14, 4)
+  areaField  String?
+  months     Int?
+  sortOrder  Int            @default(0)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([projectId, sortOrder])
+}
+
+model UnitMasterRow {
+  id                String   @id @default(cuid())
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tower             String
+  unitNo            String
+  floor             Int
+  configuration     String
+  saleableAreaSqft  Decimal  @db.Decimal(12, 2)
+  saleableAreaSqm   Decimal? @db.Decimal(12, 2)
+  carpetAreaSqft    Decimal? @db.Decimal(12, 2)
+  carpetAreaSqm     Decimal? @db.Decimal(12, 2)
+  balconyAreaSqft   Decimal? @db.Decimal(12, 2)
+  balconyAreaSqm    Decimal? @db.Decimal(12, 2)
+  unitId            String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, tower, unitNo])
+  @@index([projectId])
+}
+
+model ConstructionReport {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  fileUrl     String
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([projectId, publishedAt])
+}
+
+model LeadRegistry {
+  id              String         @id @default(cuid())
+  leadId          String         @unique
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId       String?
+  project         Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  customerName    String
+  customerEmail   String?
+  customerPhone   String
+  source          LeadSource     @default(OTHER)
+  intentType      String?
+  cpId            String?
+  titanCrmId      String?
+  eoiCpLeadId     String?
+  siteVisitStatus SiteVisitStatus @default(NOT_SCHEDULED)
+  registeredById  String?
+  registeredBy    User?          @relation("LeadRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
+  assignedSalesId String?
+  assignedSales   User?          @relation("LeadAssignee", fields: [assignedSalesId], references: [id], onDelete: SetNull)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  blocks          Block[]
+  bookings        Booking[]
+  siteVisits      SiteVisit[]
+
+  @@index([customerPhone])
+  @@index([leadId])
+  @@index([titanCrmId])
+}
+
+model SiteVisit {
+  id           String          @id @default(cuid())
+  leadId       String
+  lead         LeadRegistry    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  salesUserId  String?
+  salesUser    User?           @relation("SalesVisitAssignee", fields: [salesUserId], references: [id], onDelete: SetNull)
+  status       SiteVisitStatus @default(CHECKED_IN)
+  checkedInAt  DateTime        @default(now())
+  notes        String?
+  createdAt    DateTime        @default(now())
+
+  @@index([leadId])
+  @@index([checkedInAt])
+}
+
+model PaymentRecord {
+  id          String    @id @default(cuid())
+  bookingId   String
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  stageName   String
+  amountDue   Decimal   @db.Decimal(14, 2)
+  amountPaid  Decimal   @default(0) @db.Decimal(14, 2)
+  dueDate     DateTime?
+  paidAt      DateTime?
+  postCrmRef  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([bookingId])
+  @@index([customerId])
+}
+
+model IntegrationSyncLog {
+  id         String               @id @default(cuid())
+  system     IntegrationSystem
+  entityType String
+  entityId   String
+  externalId String?
+  payload    Json
+  status     IntegrationSyncStatus @default(PENDING)
+  error      String?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  @@index([system, entityType, entityId])
   @@index([status])
 }
 

@@ -101,6 +101,7 @@ export function UserFormFields({
         >
           <option value="SALES_EXEC">Sales Executive</option>
           <option value="SALES_MANAGER">Sales Manager</option>
+          <option value="RECEPTION">Reception</option>
           {isSuperAdmin && (
             <>
               <option value="PROJECT_ADMIN">Project Admin</option>

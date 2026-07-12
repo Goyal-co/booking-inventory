@@ -42,6 +42,12 @@ export default function SalesNotificationsPage() {
     load();
   }, [tab]);
 
+  useEffect(() => {
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [tab]);
+
   const markAllRead = async () => {
     await fetch("/api/notifications", { method: "POST" });
     toast.success("All notifications marked as read");

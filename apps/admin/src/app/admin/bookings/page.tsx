@@ -58,6 +58,19 @@ function AdminBookingsContent() {
   const [rejectComment, setRejectComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const parseJsonSafe = async (res: Response) => {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+
+  const getErrorMessage = (data: Record<string, unknown>, fallback: string) =>
+    typeof data.error === "string" ? data.error : fallback;
+
   const loadBookings = () => {
     if (loading) return;
     const params = new URLSearchParams();
@@ -102,7 +115,7 @@ function AdminBookingsContent() {
   }, [selectedProjectId, loading, statusTab, search, filterValues, dateFrom, dateTo, page]);
 
   const handleCancel = async () => {
-    if (!cancelling) return;
+    if (!cancelling || submitting) return;
     setSubmitting(true);
     const res = await fetch(`/api/bookings/${cancelling.id}`, {
       method: "DELETE",
@@ -116,12 +129,13 @@ function AdminBookingsContent() {
       setCancelReason("");
       loadBookings();
     } else {
-      const data = await res.json();
-      toast.error(data.error ?? "Failed to cancel booking");
+      const data = await parseJsonSafe(res);
+      toast.error(getErrorMessage(data, "Failed to cancel booking"));
     }
   };
 
   const handleApprove = async (booking: BookingRow) => {
+    if (submitting) return;
     setSubmitting(true);
     const res = await fetch(`/api/bookings/${booking.id}`, {
       method: "PATCH",
@@ -133,13 +147,13 @@ function AdminBookingsContent() {
       toast.success("Booking approved");
       loadBookings();
     } else {
-      const data = await res.json();
-      toast.error(data.error ?? "Failed to approve booking");
+      const data = await parseJsonSafe(res);
+      toast.error(getErrorMessage(data, "Failed to approve booking"));
     }
   };
 
   const handleReject = async () => {
-    if (!rejecting || !rejectComment.trim()) return;
+    if (!rejecting || !rejectComment.trim() || submitting) return;
     setSubmitting(true);
     const res = await fetch(`/api/bookings/${rejecting.id}`, {
       method: "PATCH",
@@ -153,8 +167,8 @@ function AdminBookingsContent() {
       setRejectComment("");
       loadBookings();
     } else {
-      const data = await res.json();
-      toast.error(data.error ?? "Failed to reject booking");
+      const data = await parseJsonSafe(res);
+      toast.error(getErrorMessage(data, "Failed to reject booking"));
     }
   };
 

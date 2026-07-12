@@ -20,6 +20,8 @@ export interface CreateAnnouncementInput {
   publishNow?: boolean;
 }
 
+export type AnnouncementWithMeta = Awaited<ReturnType<typeof createAnnouncement>>;
+
 function orgAnnouncementsWhere(organizationId: string, projectIds?: string[]) {
   return {
     organizationId,
@@ -46,18 +48,22 @@ export async function getAnnouncements(
   const skip = (page - 1) * limit;
 
   const where: Prisma.AnnouncementWhereInput = {
-    ...orgAnnouncementsWhere(organizationId, options?.projectIds),
-    ...(options?.status ? { status: options.status } : {}),
-    ...(options?.priority ? { priority: options.priority } : {}),
-    ...(options?.projectId ? { projectId: options.projectId } : {}),
-    ...(options?.search
-      ? {
-          OR: [
-            { title: { contains: options.search, mode: "insensitive" } },
-            { message: { contains: options.search, mode: "insensitive" } },
-          ],
-        }
-      : {}),
+    AND: [
+      orgAnnouncementsWhere(organizationId, options?.projectIds),
+      ...(options?.search
+        ? [
+            {
+              OR: [
+                { title: { contains: options.search, mode: "insensitive" as const } },
+                { message: { contains: options.search, mode: "insensitive" as const } },
+              ],
+            },
+          ]
+        : []),
+      ...(options?.status ? [{ status: options.status }] : []),
+      ...(options?.priority ? [{ priority: options.priority }] : []),
+      ...(options?.projectId ? [{ projectId: options.projectId }] : []),
+    ],
   };
 
   const [announcements, total] = await Promise.all([
@@ -132,17 +138,37 @@ async function fanOutAnnouncementNotifications(
     organizationId: string;
   },
   tx: Prisma.TransactionClient = prisma
-) {
+): Promise<{ count: number }> {
   const userIds = await getTargetUserIds(
     announcement.organizationId,
     announcement.audience,
     announcement.projectId
   );
 
-  if (userIds.length === 0) return;
+  if (userIds.length === 0) return { count: 0 };
+
+  const existing = await tx.notification.findMany({
+    where: {
+      userId: { in: userIds },
+      type: NotificationType.ANNOUNCEMENT,
+    },
+    select: { userId: true, metadata: true },
+  });
+
+  const alreadyNotified = new Set(
+    existing
+      .filter((n) => {
+        const meta = n.metadata as { announcementId?: string } | null;
+        return meta?.announcementId === announcement.id;
+      })
+      .map((n) => n.userId)
+  );
+
+  const newUserIds = userIds.filter((id) => !alreadyNotified.has(id));
+  if (newUserIds.length === 0) return { count: 0 };
 
   await tx.notification.createMany({
-    data: userIds.map((userId) => ({
+    data: newUserIds.map((userId) => ({
       userId,
       type: NotificationType.ANNOUNCEMENT,
       title: announcement.title,
@@ -153,6 +179,8 @@ async function fanOutAnnouncementNotifications(
       },
     })),
   });
+
+  return { count: newUserIds.length };
 }
 
 export async function createAnnouncement(
@@ -189,11 +217,13 @@ export async function createAnnouncement(
       },
     });
 
+    let notifiedCount = 0;
     if (publishNow) {
-      await fanOutAnnouncementNotifications(announcement, tx);
+      const result = await fanOutAnnouncementNotifications(announcement, tx);
+      notifiedCount = result.count;
     }
 
-    return announcement;
+    return { announcement, notifiedCount };
   });
 }
 
@@ -207,7 +237,7 @@ export async function updateAnnouncement(
   });
   if (!existing) return null;
 
-  return prisma.announcement.update({
+  const announcement = await prisma.announcement.update({
     where: { id },
     data: {
       ...(input.title !== undefined ? { title: input.title } : {}),
@@ -224,6 +254,8 @@ export async function updateAnnouncement(
       createdBy: { select: { id: true, name: true } },
     },
   });
+
+  return { announcement, notifiedCount: 0 };
 }
 
 export async function publishAnnouncement(id: string, organizationId: string) {
@@ -231,7 +263,18 @@ export async function publishAnnouncement(id: string, organizationId: string) {
     where: { id, organizationId },
   });
   if (!existing) return null;
-  if (existing.status === AnnouncementStatus.ACTIVE) return existing;
+  if (existing.status === AnnouncementStatus.ACTIVE) {
+    return {
+      announcement: await prisma.announcement.findFirst({
+        where: { id },
+        include: {
+          project: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, name: true } },
+        },
+      }),
+      notifiedCount: 0,
+    };
+  }
 
   return prisma.$transaction(async (tx) => {
     const announcement = await tx.announcement.update({
@@ -246,8 +289,8 @@ export async function publishAnnouncement(id: string, organizationId: string) {
       },
     });
 
-    await fanOutAnnouncementNotifications(announcement, tx);
-    return announcement;
+    const { count } = await fanOutAnnouncementNotifications(announcement, tx);
+    return { announcement, notifiedCount: count };
   });
 }
 

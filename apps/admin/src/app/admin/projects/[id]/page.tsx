@@ -2,6 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Modal, ProjectStatusBadge, formatBlockDuration } from "@booking/ui";
 import { toast, Toaster } from "sonner";
 import { useAdminSession } from "@/hooks/use-admin-session";
@@ -331,6 +332,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         {!project.isPublished && (
           <Button variant="success" onClick={publish}>Publish Project</Button>
         )}
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/admin/projects/${id}/cost-config`}>
+            <Button variant="outline">Cost Sheet Config</Button>
+          </Link>
+          <Link href={`/admin/projects/${id}/booking-form-template`}>
+            <Button variant="outline">Booking Form Template</Button>
+          </Link>
+        </div>
       </div>
 
       <Card className="mb-8">

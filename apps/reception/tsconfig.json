@@ -1,0 +1,20 @@
+{
+  "extends": "@booking/config-typescript/nextjs.json",
+  "compilerOptions": {
+    "declaration": false,
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "next-env.d.ts",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

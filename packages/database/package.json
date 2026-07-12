@@ -7,6 +7,8 @@
   "scripts": {
     "db:generate": "prisma generate",
     "db:push": "prisma db push && prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:push:schema": "prisma db push --skip-generate",
     "db:seed": "pnpm exec tsx prisma/seed.ts",
     "db:bootstrap": "pnpm exec tsx prisma/bootstrap.ts",
@@ -16,10 +18,14 @@
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
+    "@booking/email": "workspace:*",
+    "@booking/integrations": "workspace:*",
+    "@goyal/ecosystem-contracts": "workspace:*",
     "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "@booking/config-typescript": "workspace:*",
+    "@goyal/ecosystem-contracts": "workspace:*",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.2",
     "prisma": "^6.1.0",

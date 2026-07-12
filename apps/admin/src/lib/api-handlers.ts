@@ -70,6 +70,9 @@ import {
   importUserRowSchema,
   unitFiltersSchema,
   dashboardRangeSchema,
+  createAnnouncementSchema,
+  updateAnnouncementSchema,
+  publishAnnouncementSchema,
 } from "@booking/validators";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
@@ -1037,7 +1040,8 @@ export async function PATCH_booking(req: NextRequest, { params }: { params: Prom
     if (error instanceof BookingError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    throw error;
+    console.error("PATCH /api/bookings/[id] failed", error);
+    return NextResponse.json({ error: "Failed to update booking" }, { status: 500 });
   }
 }
 
@@ -1075,7 +1079,8 @@ export async function DELETE_booking(req: NextRequest, { params }: { params: Pro
     if (error instanceof BookingError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    throw error;
+    console.error("DELETE /api/bookings/[id] failed", error);
+    return NextResponse.json({ error: "Failed to cancel booking" }, { status: 500 });
   }
 }
 
@@ -1382,23 +1387,33 @@ export async function POST_announcements(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  if (!body.title?.trim() || !body.message?.trim()) {
-    return NextResponse.json({ error: "Title and message required" }, { status: 400 });
+  const parsed = createAnnouncementSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.errors[0]?.message ?? "Invalid input" }, { status: 400 });
   }
 
-  const announcement = await createAnnouncement(user.organizationId, user.id, {
-    title: body.title.trim(),
-    message: body.message.trim(),
-    type: body.type,
-    priority: body.priority,
-    audience: body.audience,
-    projectId: body.projectId,
-    scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
-    expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-    publishNow: body.publishNow === true,
+  const data = parsed.data;
+  if (data.projectId) {
+    const denied = denyUnlessProjectAccess(user, data.projectId);
+    if (denied) return denied;
+  }
+
+  const result = await createAnnouncement(user.organizationId, user.id, {
+    title: data.title,
+    message: data.message,
+    type: data.type,
+    priority: data.priority,
+    audience: data.audience ?? (data.projectId ? "PROJECT_SALES" : "ALL_SALES"),
+    projectId: data.projectId ?? null,
+    scheduledAt: data.scheduledAt ? new Date(data.scheduledAt) : null,
+    expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+    publishNow: data.publishNow === true,
   });
 
-  return NextResponse.json({ announcement }, { status: 201 });
+  return NextResponse.json(
+    { announcement: result.announcement, notifiedCount: result.notifiedCount },
+    { status: 201 }
+  );
 }
 
 export async function PATCH_announcement(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -1409,24 +1424,52 @@ export async function PATCH_announcement(req: NextRequest, { params }: { params:
   const body = await req.json();
 
   if (body.action === "publish") {
-    const announcement = await publishAnnouncement(id, user.organizationId);
-    if (!announcement) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ announcement });
+    const publishParsed = publishAnnouncementSchema.safeParse(body);
+    if (!publishParsed.success) {
+      return NextResponse.json({ error: "Invalid publish action" }, { status: 400 });
+    }
+
+    const result = await publishAnnouncement(id, user.organizationId);
+    if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({
+      announcement: result.announcement,
+      notifiedCount: result.notifiedCount,
+    });
   }
 
-  const announcement = await updateAnnouncement(id, user.organizationId, {
-    title: body.title,
-    message: body.message,
-    type: body.type,
-    priority: body.priority,
-    audience: body.audience,
-    projectId: body.projectId,
-    scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : body.scheduledAt,
-    expiresAt: body.expiresAt ? new Date(body.expiresAt) : body.expiresAt,
+  const parsed = updateAnnouncementSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.errors[0]?.message ?? "Invalid input" }, { status: 400 });
+  }
+
+  const data = parsed.data;
+  if (data.projectId) {
+    const denied = denyUnlessProjectAccess(user, data.projectId);
+    if (denied) return denied;
+  }
+
+  const result = await updateAnnouncement(id, user.organizationId, {
+    title: data.title,
+    message: data.message,
+    type: data.type,
+    priority: data.priority,
+    audience: data.audience,
+    projectId: data.projectId,
+    scheduledAt:
+      data.scheduledAt === undefined
+        ? undefined
+        : data.scheduledAt
+          ? new Date(data.scheduledAt)
+          : null,
+    expiresAt:
+      data.expiresAt === undefined ? undefined : data.expiresAt ? new Date(data.expiresAt) : null,
   });
 
-  if (!announcement) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ announcement });
+  if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({
+    announcement: result.announcement,
+    notifiedCount: result.notifiedCount,
+  });
 }
 
 export async function DELETE_announcement(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

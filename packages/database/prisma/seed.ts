@@ -265,6 +265,18 @@ async function main() {
     },
   });
 
+  const receptionUser = await prisma.user.upsert({
+    where: { email: "reception@demo.com" },
+    update: { passwordHash, name: "Reception Desk" },
+    create: {
+      email: "reception@demo.com",
+      name: "Reception Desk",
+      passwordHash,
+      role: UserRole.RECEPTION,
+      organizationId: org.id,
+    },
+  });
+
   const projectAdmin = await prisma.user.upsert({
     where: { email: "projectadmin@demo.com" },
     update: { passwordHash },
@@ -431,6 +443,7 @@ async function main() {
 
   console.log("Seed completed successfully:");
   console.log("  Admin: admin@demo.com / password123");
+  console.log("  Reception: reception@demo.com / password123");
   console.log("  Sales: rahul@demo.com / password123 (3 projects)");
   console.log("  Sales: priya@demo.com / password123 (2 projects)");
   console.log(`  Projects: Skyline Heights (LAUNCH_DAY), Green Valley (UPCOMING), Metro Residences (ONGOING)`);

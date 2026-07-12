@@ -18,7 +18,7 @@ import {
   TabsTrigger,
   TabsContent,
   FloorPlanViewer,
-  CostSheetTable,
+  CostSheetEngineView,
   BlockTimer,
   ProjectSwitcher,
   ProjectStatusBadge,
@@ -29,6 +29,7 @@ import {
   type UnitCardData,
   type FilterConfig,
   type ActivityItem,
+  type CostSheetEngineData,
 } from "@booking/ui";
 import { useRealtime } from "@booking/realtime";
 import { REALTIME_EVENTS } from "@booking/realtime";
@@ -62,7 +63,30 @@ function LiveBookingContent() {
   const [showBooking, setShowBooking] = useState(false);
   const [bookingBlockId, setBookingBlockId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  /** Actual price fixed into the booking form (not estimation). */
+  const [discountedPricePerSqft, setDiscountedPricePerSqft] = useState("");
+  const [defaultSaleablePricePerSqft, setDefaultSaleablePricePerSqft] = useState<number | null>(null);
+  const [defaultCostSheet, setDefaultCostSheet] = useState<CostSheetEngineData | null>(null);
+  const [bookingFormCostSheet, setBookingFormCostSheet] = useState<CostSheetEngineData | null>(null);
+  /** Preview-only estimate — never sent to booking form. */
+  const [estimatePrice, setEstimatePrice] = useState("");
+  const [estimatePreviewSheet, setEstimatePreviewSheet] = useState<CostSheetEngineData | null>(null);
+  const [estimating, setEstimating] = useState(false);
+  const [loadingDefaultSheet, setLoadingDefaultSheet] = useState(false);
+  const [unitDefaultPrice, setUnitDefaultPrice] = useState<number | null>(null);
+  const [unitDefaultSheet, setUnitDefaultSheet] = useState<CostSheetEngineData | null>(null);
+  const [unitEstimatePrice, setUnitEstimatePrice] = useState("");
+  const [unitEstimatePreview, setUnitEstimatePreview] = useState<CostSheetEngineData | null>(null);
+  const [unitEstimating, setUnitEstimating] = useState(false);
+  const [unitLoadingDefault, setUnitLoadingDefault] = useState(false);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [leadResults, setLeadResults] = useState<
+    Array<{ leadId: string; customerName: string; customerPhone: string }>
+  >([]);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
+  const [customerUrl, setCustomerUrl] = useState<string | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapData, setHeatmapData] = useState<Record<string, number>>({});
   const [mobilePanel, setMobilePanel] = useState<"units" | "blocks">("units");
@@ -76,6 +100,16 @@ function LiveBookingContent() {
     : "";
 
   const { subscribe, isConnected } = useRealtime(project?.id ?? null);
+
+  const parseJsonSafe = async (res: Response) => {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
 
   const fetchUnits = useCallback(async () => {
     if (!project) return;
@@ -164,7 +198,7 @@ function LiveBookingContent() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ unitId: unit.id, projectId: project.id }),
     });
-    const data = await res.json();
+    const data = await parseJsonSafe(res);
 
     if (data.code === "MAX_BLOCKS") {
       setShowMaxBlocks(true);
@@ -177,7 +211,9 @@ function LiveBookingContent() {
     }
 
     if (!res.ok) {
-      toast.error(data.error ?? "Failed to block unit");
+      toast.error(
+        typeof data.error === "string" ? data.error : "Failed to block unit"
+      );
       return;
     }
 
@@ -199,35 +235,179 @@ function LiveBookingContent() {
 
   const handleBooking = async () => {
     if (!bookingBlockId || !project) return;
-    const res = await fetch("/api/bookings", {
+    const discounted = discountedPricePerSqft.trim();
+    const res = await fetch(`/api/blocks/${bookingBlockId}/customer`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blockId: bookingBlockId, customerName, customerPhone }),
+      body: JSON.stringify({
+        customerName,
+        customerEmail,
+        customerPhone,
+        ...(discounted ? { saleablePricePerSqft: Number(discounted) } : {}),
+        ...(selectedLeadId ? { leadId: selectedLeadId } : {}),
+      }),
     });
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      toast.error(data.error ?? "Booking failed");
+      toast.error(data.error ?? "Failed to send booking link");
       return;
     }
 
-    if (project.requiresBookingApproval && !data.pending) {
-      toast.error(
-        "Booking was confirmed instantly — approval setting may not be saved for this project. Contact admin."
-      );
-    } else if (data.pending) {
-      toast.success("Submitted for approval — unit stays blocked until admin acts");
-    } else {
-      toast.success("Booking confirmed!");
+    setCustomerUrl(data.customerUrl ?? null);
+    if (data.costSheet) {
+      setBookingFormCostSheet(data.costSheet as CostSheetEngineData);
     }
-    setShowBooking(false);
-    setCustomerName("");
-    setCustomerPhone("");
-    setBookingBlockId(null);
-    fetchUnits();
+    if (data.emailSent) {
+      toast.success("Booking form link emailed to customer (Brevo)");
+    } else if (data.emailMocked) {
+      toast.message("Booking link ready — email mocked (add BREVO_API_KEY to sales .env.local)");
+      if (data.devBookingUrl || data.customerUrl) {
+        toast.message(`Dev link: ${data.devBookingUrl ?? data.customerUrl}`);
+      }
+    } else if (data.emailError) {
+      toast.error(String(data.emailError));
+      if (data.customerUrl) toast.message(`Share this link: ${data.customerUrl}`);
+    } else {
+      toast.success("Digital booking link sent — booking form uses the discounted price (not estimate)");
+    }
     fetchMyBlocks();
     fetchActivities();
-    refetchProjects();
+  };
+
+  const searchLeads = async (q: string) => {
+    setLeadSearch(q);
+    if (q.trim().length < 2) {
+      setLeadResults([]);
+      return;
+    }
+    const res = await fetch(`/api/leads/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json().catch(() => ({}));
+    setLeadResults(data.leads ?? []);
+  };
+
+  const loadUnitDefaultCostSheet = useCallback(async (unitId: string) => {
+    setUnitLoadingDefault(true);
+    try {
+      const res = await fetch(`/api/units/${unitId}/cost-sheet/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await parseJsonSafe(res);
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Unable to load default cost sheet");
+        return;
+      }
+      if (data.costSheet) {
+        setUnitDefaultSheet(data.costSheet as CostSheetEngineData);
+        const def =
+          typeof data.defaultSaleablePricePerSqft === "number"
+            ? data.defaultSaleablePricePerSqft
+            : Number((data.costSheet as CostSheetEngineData).saleablePricePerSqft) || null;
+        setUnitDefaultPrice(def);
+        setUnitEstimatePrice("");
+        setUnitEstimatePreview(null);
+      }
+    } finally {
+      setUnitLoadingDefault(false);
+    }
+  }, []);
+
+  const loadBlockDefaultCostSheet = useCallback(async (blockId: string) => {
+    setLoadingDefaultSheet(true);
+    try {
+      const res = await fetch(`/api/blocks/${blockId}/cost-sheet/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await parseJsonSafe(res);
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Unable to load default cost sheet");
+        return;
+      }
+      if (data.costSheet) {
+        setDefaultCostSheet(data.costSheet as CostSheetEngineData);
+        const def =
+          typeof data.defaultSaleablePricePerSqft === "number"
+            ? data.defaultSaleablePricePerSqft
+            : Number((data.costSheet as CostSheetEngineData).saleablePricePerSqft) || null;
+        setDefaultSaleablePricePerSqft(def);
+        // Prefill discounted booking price with admin default; user can change it.
+        setDiscountedPricePerSqft(def != null ? String(def) : "");
+        setEstimatePrice("");
+        setEstimatePreviewSheet(null);
+        setBookingFormCostSheet(null);
+      }
+    } finally {
+      setLoadingDefaultSheet(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedUnit) return;
+    void loadUnitDefaultCostSheet(selectedUnit.id);
+  }, [selectedUnit?.id, loadUnitDefaultCostSheet]);
+
+  useEffect(() => {
+    if (!showBooking || !bookingBlockId) return;
+    void loadBlockDefaultCostSheet(bookingBlockId);
+  }, [showBooking, bookingBlockId, loadBlockDefaultCostSheet]);
+
+  const estimateBlockCostSheet = async () => {
+    if (!bookingBlockId) return;
+    const entered = estimatePrice.trim();
+    if (!entered || Number(entered) <= 0) {
+      toast.error("Enter a price / sq.ft to estimate");
+      return;
+    }
+    setEstimating(true);
+    try {
+      const res = await fetch(`/api/blocks/${bookingBlockId}/cost-sheet/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saleablePricePerSqft: Number(entered) }),
+      });
+      const data = await parseJsonSafe(res);
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Unable to estimate cost sheet");
+        return;
+      }
+      if (data.costSheet) {
+        setEstimatePreviewSheet(data.costSheet as CostSheetEngineData);
+        toast.success("Estimate ready (preview only — not used for booking form)");
+      }
+    } finally {
+      setEstimating(false);
+    }
+  };
+
+  const estimateUnitCostSheet = async (unitId: string) => {
+    const entered = unitEstimatePrice.trim();
+    if (!entered || Number(entered) <= 0) {
+      toast.error("Enter a price / sq.ft to estimate");
+      return;
+    }
+    setUnitEstimating(true);
+    try {
+      const res = await fetch(`/api/units/${unitId}/cost-sheet/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saleablePricePerSqft: Number(entered) }),
+      });
+      const data = await parseJsonSafe(res);
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Unable to estimate cost sheet");
+        return;
+      }
+      if (data.costSheet) {
+        setUnitEstimatePreview(data.costSheet as CostSheetEngineData);
+        toast.success("Estimate ready (preview only)");
+      }
+    } finally {
+      setUnitEstimating(false);
+    }
   };
 
   if (projectLoading) {
@@ -454,10 +634,18 @@ function LiveBookingContent() {
 
       <Modal
         open={!!selectedUnit}
-        onOpenChange={(open) => !open && setSelectedUnit(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedUnit(null);
+            setUnitEstimatePrice("");
+            setUnitDefaultPrice(null);
+            setUnitDefaultSheet(null);
+            setUnitEstimatePreview(null);
+          }
+        }}
         title={selectedUnit?.unitNumber ?? ""}
         description={`${selectedUnit?.towerName} · ${selectedUnit?.bhkType}`}
-        className="max-w-2xl"
+        className="max-w-3xl"
       >
         {selectedUnit && (
           <TabsRoot defaultValue="overview">
@@ -508,32 +696,66 @@ function LiveBookingContent() {
               />
             </TabsContent>
             <TabsContent value="costsheet">
-              {selectedUnit &&
-              (
-                selectedUnit as UnitCardData & {
-                  costSheet?: {
-                    name: string;
-                    lineItems: Array<{ label: string; amount: number }>;
-                    totalPrice: number;
-                  };
-                }
-              ).costSheet ? (
-                <CostSheetTable
-                  costSheet={
-                    (
-                      selectedUnit as UnitCardData & {
-                        costSheet: {
-                          name: string;
-                          lineItems: Array<{ label: string; amount: number }>;
-                          totalPrice: number;
-                        };
-                      }
-                    ).costSheet
-                  }
-                />
-              ) : (
-                <p className="text-sm text-gray-400">No cost sheet assigned</p>
-              )}
+              <div className="space-y-4">
+                {unitDefaultPrice != null && (
+                  <p className="text-xs text-gray-500">
+                    Admin default: <strong>{formatPrice(unitDefaultPrice)}</strong> / sq.ft
+                  </p>
+                )}
+
+                {unitLoadingDefault && !unitDefaultSheet ? (
+                  <p className="text-sm text-gray-500">Loading default cost sheet…</p>
+                ) : unitDefaultSheet ? (
+                  <CostSheetEngineView
+                    costSheet={unitDefaultSheet}
+                    title="Cost Sheet (Admin Default)"
+                    compact
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    Default cost sheet is unavailable. Set a project default saleable price in Admin → Cost Sheet Config.
+                  </p>
+                )}
+
+                <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/60 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <Label htmlFor="unit-estimate-price">Estimate (preview only)</Label>
+                    <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                      Not used for booking
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <Input
+                      id="unit-estimate-price"
+                      type="number"
+                      value={unitEstimatePrice}
+                      onChange={(e) => setUnitEstimatePrice(e.target.value)}
+                      placeholder="Enter a rate to estimate"
+                      className="min-w-[160px] flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={unitEstimating}
+                      onClick={() => estimateUnitCostSheet(selectedUnit.id)}
+                    >
+                      {unitEstimating ? "Estimating..." : "Estimate"}
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-xs text-amber-800/80">
+                    Estimation is for reference only. Booking form cost is set later using the Discounted Price field.
+                  </p>
+                  {unitEstimatePreview && (
+                    <div className="mt-3">
+                      <CostSheetEngineView
+                        costSheet={unitEstimatePreview}
+                        title="Estimated Cost Sheet (Preview)"
+                        compact
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
             </TabsContent>
           </TabsRoot>
         )}
@@ -547,15 +769,59 @@ function LiveBookingContent() {
 
       <Modal
         open={showBooking}
-        onOpenChange={setShowBooking}
-        title={project.requiresBookingApproval ? "Submit for Approval" : "Confirm Booking"}
-        description={
-          project.requiresBookingApproval
-            ? "Enter customer details. An admin must approve before the unit is booked."
-            : "Enter customer details to complete the booking"
-        }
+        onOpenChange={(open) => {
+          setShowBooking(open);
+          if (!open) {
+            setCustomerName("");
+            setCustomerEmail("");
+            setCustomerPhone("");
+            setDiscountedPricePerSqft("");
+            setDefaultSaleablePricePerSqft(null);
+            setDefaultCostSheet(null);
+            setBookingFormCostSheet(null);
+            setEstimatePrice("");
+            setEstimatePreviewSheet(null);
+            setLeadSearch("");
+            setLeadResults([]);
+            setSelectedLeadId(undefined);
+            setCustomerUrl(null);
+            setBookingBlockId(null);
+          }
+        }}
+        title="Send Digital Booking Form"
+        description="Estimation is preview only. Use Discounted Price / sq.ft to fix the cost sheet on the booking form."
+        className="max-w-3xl"
       >
         <div className="space-y-4">
+          <div>
+            <Label htmlFor="lead-search">Search Lead (optional)</Label>
+            <Input
+              id="lead-search"
+              value={leadSearch}
+              onChange={(e) => searchLeads(e.target.value)}
+              placeholder="Lead ID, phone, or name"
+            />
+            {leadResults.length > 0 && (
+              <div className="mt-1 max-h-32 overflow-y-auto rounded border text-sm">
+                {leadResults.map((lead) => (
+                  <button
+                    key={lead.leadId}
+                    type="button"
+                    className={`block w-full px-3 py-2 text-left hover:bg-gray-50 ${
+                      selectedLeadId === lead.leadId ? "bg-brand-50" : ""
+                    }`}
+                    onClick={() => {
+                      setSelectedLeadId(lead.leadId);
+                      setCustomerName(lead.customerName);
+                      setCustomerPhone(lead.customerPhone);
+                    }}
+                  >
+                    {lead.leadId} — {lead.customerName}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div>
             <Label htmlFor="name">Customer Name</Label>
             <Input
@@ -563,6 +829,16 @@ function LiveBookingContent() {
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               placeholder="Full name"
+            />
+          </div>
+          <div>
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              value={customerEmail}
+              onChange={(e) => setCustomerEmail(e.target.value)}
+              placeholder="customer@email.com"
             />
           </div>
           <div>
@@ -574,12 +850,102 @@ function LiveBookingContent() {
               placeholder="10-digit phone"
             />
           </div>
+
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="discounted-price">Discounted Price / sq.ft (for booking form)</Label>
+              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                Fixed into booking form
+              </span>
+            </div>
+            {defaultSaleablePricePerSqft != null && (
+              <p className="mb-2 text-xs text-gray-500">
+                Admin default: <strong>{formatPrice(defaultSaleablePricePerSqft)}</strong> / sq.ft
+              </p>
+            )}
+            <Input
+              id="discounted-price"
+              type="number"
+              value={discountedPricePerSqft}
+              onChange={(e) => setDiscountedPricePerSqft(e.target.value)}
+              placeholder="Enter discounted saleable price / sq.ft"
+            />
+            <p className="mt-2 text-xs text-gray-500">
+              This value is saved on the block and used to generate the customer booking form cost sheet. Leave as admin default if no discount.
+            </p>
+          </div>
+
+          {loadingDefaultSheet && !defaultCostSheet ? (
+            <p className="text-sm text-gray-500">Loading default cost sheet…</p>
+          ) : defaultCostSheet ? (
+            <CostSheetEngineView
+              costSheet={defaultCostSheet}
+              title="Cost Sheet (Admin Default)"
+              compact
+            />
+          ) : null}
+
+          <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/60 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="estimate-price">Estimate (preview only)</Label>
+              <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                Not used for booking form
+              </span>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <Input
+                id="estimate-price"
+                type="number"
+                value={estimatePrice}
+                onChange={(e) => setEstimatePrice(e.target.value)}
+                placeholder="Enter a rate to estimate"
+                className="min-w-[160px] flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={estimating || !bookingBlockId}
+                onClick={estimateBlockCostSheet}
+              >
+                {estimating ? "Estimating..." : "Estimate"}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-amber-800/80">
+              Use Estimate only to compare scenarios. It does not change the booking form cost.
+            </p>
+            {estimatePreviewSheet && (
+              <div className="mt-3">
+                <CostSheetEngineView
+                  costSheet={estimatePreviewSheet}
+                  title="Estimated Cost Sheet (Preview)"
+                  compact
+                />
+              </div>
+            )}
+          </div>
+
+          {bookingFormCostSheet && (
+            <CostSheetEngineView
+              costSheet={bookingFormCostSheet}
+              title="Booking Form Cost Sheet (Locked)"
+              compact
+            />
+          )}
+
+          {customerUrl && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
+              <p className="font-medium text-emerald-800">Booking link ready</p>
+              <a href={customerUrl} target="_blank" rel="noreferrer" className="break-all text-brand-600 underline">
+                {customerUrl}
+              </a>
+            </div>
+          )}
           <Button
             className="w-full"
             onClick={handleBooking}
-            disabled={!customerName || customerPhone.length < 10}
+            disabled={!customerName || !customerEmail || customerPhone.length < 10}
           >
-            {project.requiresBookingApproval ? "Submit for Approval" : "Confirm Booking"}
+            {customerUrl ? "Resend Booking Link" : "Send Booking Link"}
           </Button>
         </div>
       </Modal>

@@ -83,6 +83,10 @@ export default function CommunicationsPage() {
 
     const res = await fetch(`/api/announcements?${params}`);
     const data = await res.json();
+    if (!res.ok) {
+      toast.error(data.error ?? "Failed to load announcements");
+      return;
+    }
     setAnnouncements(data.announcements ?? []);
     setStats(data.stats ?? { active: 0, scheduled: 0, drafts: 0, sentToday: 0 });
     setTotal(data.total ?? 0);
@@ -126,12 +130,23 @@ export default function CommunicationsPage() {
         }),
       });
       if (res.ok) {
-        toast.success(publishNow ? "Announcement published" : "Announcement saved");
+        const data = await res.json();
+        if (publishNow) {
+          const count = data.notifiedCount ?? 0;
+          if (count === 0) {
+            toast.warning("Announcement published but no sales users were notified");
+          } else {
+            toast.success(`Announcement published to ${count} sales user${count === 1 ? "" : "s"}`);
+          }
+        } else {
+          toast.success("Announcement saved");
+        }
         setDrawerOpen(false);
         resetForm();
         load();
       } else {
-        toast.error("Failed to create announcement");
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Failed to create announcement");
       }
     } finally {
       setSaving(false);
@@ -144,11 +159,17 @@ export default function CommunicationsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "publish" }),
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      toast.success("Announcement published");
+      const count = data.notifiedCount ?? 0;
+      if (count === 0) {
+        toast.warning("Announcement published but no sales users were notified");
+      } else {
+        toast.success(`Published to ${count} sales user${count === 1 ? "" : "s"}`);
+      }
       load();
     } else {
-      toast.error("Failed to publish");
+      toast.error(data.error ?? "Failed to publish");
     }
   };
 
@@ -258,7 +279,7 @@ export default function CommunicationsPage() {
                   {a.publishedAt ? <ClientDateTime value={a.publishedAt} /> : a.scheduledAt ? <ClientDateTime value={a.scheduledAt} /> : "—"}
                 </td>
                 <td className="px-4 py-3">
-                  {a.status === "DRAFT" && (
+                  {(a.status === "DRAFT" || a.status === "SCHEDULED") && (
                     <Button size="sm" variant="outline" onClick={() => handlePublish(a.id)}>
                       Publish
                     </Button>

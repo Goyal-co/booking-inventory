@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@booking/database": "workspace:*",
+    "@booking/integrations": "workspace:*",
+    "@booking/pdf": "workspace:*",
     "@booking/realtime": "workspace:*",
     "@booking/ui": "workspace:*",
     "@booking/validators": "workspace:*",

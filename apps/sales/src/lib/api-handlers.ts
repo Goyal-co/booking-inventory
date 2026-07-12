@@ -5,6 +5,11 @@ import {
   getUnits,
   getUnitById,
   createBlock,
+  createBlockWithCustomer,
+  attachCustomerToBlock,
+  updateBlockCustomer,
+  calculateCostSheet,
+  getUnitPricingContext,
   releaseBlock,
   submitBooking,
   getActiveBlocksForUser,
@@ -28,8 +33,11 @@ import {
   getUserProfile,
   updateUserProfile,
   changeUserPassword,
+  searchLeads,
+  getDigitalFormByToken,
+  sendBlockNotificationEmail,
 } from "@booking/database";
-import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema } from "@booking/validators";
+import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema, attachCustomerToBlockSchema } from "@booking/validators";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
 
@@ -82,6 +90,40 @@ export async function POST_blocks(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
   try {
+    const hasCustomer = Boolean(
+      parsed.data.customerName && parsed.data.customerEmail && parsed.data.customerPhone
+    );
+
+    if (hasCustomer) {
+      const result = await createBlockWithCustomer({
+        unitId: parsed.data.unitId,
+        userId: user.id,
+        customerName: parsed.data.customerName!,
+        customerEmail: parsed.data.customerEmail!,
+        customerPhone: parsed.data.customerPhone!,
+        saleablePricePerSqft: parsed.data.saleablePricePerSqft,
+        leadId: parsed.data.leadId,
+        organizationId: user.organizationId,
+      });
+
+      await emitRealtimeEvent(result.projectId, REALTIME_EVENTS.BLOCK_CREATED, {
+        unitId: parsed.data.unitId,
+        status: "BLOCKED",
+      });
+
+      return NextResponse.json({
+        block: result.block,
+        costSheet: result.costSheet,
+        bookingToken: result.bookingToken,
+        customerUrl: result.customerUrl,
+        emailSent: !!result.emailResult?.success && !result.emailResult?.mocked,
+        emailMocked: !!result.emailResult?.mocked,
+        emailError: result.emailResult?.success
+          ? undefined
+          : result.emailResult?.error || "Failed to send booking email",
+      });
+    }
+
     const result = await createBlock(parsed.data.unitId, user.id);
     const unit = await getUnitById(parsed.data.unitId);
 
@@ -102,7 +144,8 @@ export async function POST_blocks(req: NextRequest) {
       const status = error.code === "BLOCKING_DISABLED" ? 403 : 400;
       return NextResponse.json({ error: error.message, code: error.code }, { status });
     }
-    throw error;
+    console.error("POST /api/blocks failed", error);
+    return NextResponse.json({ error: "Failed to block unit" }, { status: 500 });
   }
 }
 
@@ -533,5 +576,322 @@ h1{color:#b8860b;border-bottom:2px solid #b8860b;padding-bottom:8px}
       "Content-Type": "text/html; charset=utf-8",
       "Content-Disposition": `inline; filename="receipt-${booking.unit.unitNumber}.html"`,
     },
+  });
+}
+
+export async function GET_block_detail(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const block = await prisma.block.findFirst({
+    where: { id, userId: user.id },
+    include: { digitalForm: true, customer: true, lead: true },
+  });
+  if (!block) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ block });
+}
+
+export async function POST_block_customer(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json();
+  const parsed = attachCustomerToBlockSchema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+  try {
+    const result = await attachCustomerToBlock({
+      blockId: id,
+      userId: user.id,
+      organizationId: user.organizationId,
+      ...parsed.data,
+    });
+
+    await emitRealtimeEvent(result.projectId, REALTIME_EVENTS.BOOKING_SUBMITTED, {
+      blockId: id,
+      customerUrl: result.customerUrl,
+    });
+
+    return NextResponse.json({
+      block: result.block,
+      costSheet: result.costSheet,
+      bookingToken: result.bookingToken,
+      customerUrl: result.customerUrl,
+      emailSent: !!result.emailResult?.success && !result.emailResult?.mocked,
+      emailMocked: !!result.emailResult?.mocked,
+      emailError:
+        result.emailResult?.success && !result.emailResult?.mocked
+          ? undefined
+          : result.emailResult?.mocked
+            ? "Email not sent — BREVO_API_KEY not loaded. Restart the sales app after saving .env.local"
+            : result.emailResult?.error || "Failed to send booking email",
+      ...(process.env.NODE_ENV !== "production"
+        ? { devBookingUrl: result.customerUrl }
+        : {}),
+    });
+  } catch (e) {
+    if (e instanceof BlockError) return NextResponse.json({ error: e.message, code: e.code }, { status: 400 });
+    throw e;
+  }
+}
+
+export async function PATCH_block_detail(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json();
+  try {
+    const block = await updateBlockCustomer(id, user.id, body);
+    return NextResponse.json({ block });
+  } catch (e) {
+    if (e instanceof BlockError) return NextResponse.json({ error: e.message }, { status: 400 });
+    throw e;
+  }
+}
+
+export async function POST_unit_costSheetPreview(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const unit = await getUnitById(id);
+  if (!unit) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const body = await req.json().catch(() => ({}));
+  const ctx = await getUnitPricingContext(id);
+  const fromBody = body.saleablePricePerSqft;
+  const price = Number(
+    fromBody !== undefined && fromBody !== null && fromBody !== ""
+      ? fromBody
+      : ctx?.saleablePricePerSqft ?? 0
+  );
+  if (!price || price <= 0) {
+    return NextResponse.json(
+      { error: "Enter a saleable price per sq.ft to estimate", defaultSaleablePricePerSqft: ctx?.saleablePricePerSqft ?? 0 },
+      { status: 400 }
+    );
+  }
+
+  const costSheet = await calculateCostSheet(id, price);
+  if (!costSheet) return NextResponse.json({ error: "Unable to calculate cost sheet" }, { status: 400 });
+  return NextResponse.json({
+    costSheet,
+    defaultSaleablePricePerSqft: ctx?.saleablePricePerSqft ?? 0,
+  });
+}
+
+export async function POST_block_costSheetPreview(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const block = await prisma.block.findFirst({ where: { id, userId: user.id } });
+  if (!block) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const body = await req.json().catch(() => ({}));
+  const ctx = await getUnitPricingContext(block.unitId);
+  const fromBody = body.saleablePricePerSqft;
+  const price = Number(
+    fromBody !== undefined && fromBody !== null && fromBody !== ""
+      ? fromBody
+      : block.saleablePricePerSqft ?? ctx?.saleablePricePerSqft ?? 0
+  );
+  if (!price || price <= 0) {
+    return NextResponse.json(
+      { error: "Enter a saleable price per sq.ft to estimate", defaultSaleablePricePerSqft: ctx?.saleablePricePerSqft ?? 0 },
+      { status: 400 }
+    );
+  }
+  const costSheet = await calculateCostSheet(block.unitId, price);
+  if (!costSheet) return NextResponse.json({ error: "Unable to calculate" }, { status: 400 });
+  return NextResponse.json({
+    costSheet,
+    defaultSaleablePricePerSqft: ctx?.saleablePricePerSqft ?? 0,
+  });
+}
+
+export async function GET_block_costSheetPdf(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const block = await prisma.block.findFirst({
+    where: { id, userId: user.id },
+    include: { unit: { include: { floor: { include: { tower: { include: { project: true } } } } } } },
+  });
+  if (!block?.costSheetSnapshot) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { costSheetToHtml } = await import("@booking/pdf");
+  const html = costSheetToHtml(block.costSheetSnapshot as import("@booking/pdf").CostSheetResult, {
+    projectName: block.unit.floor.tower.project.name,
+    unitNumber: block.unit.unitNumber,
+    towerName: block.unit.floor.tower.name,
+    customerName: block.customerName ?? undefined,
+  });
+  return new NextResponse(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+
+export async function GET_leads_search(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const q = req.nextUrl.searchParams.get("q") ?? "";
+  if (!q.trim()) return NextResponse.json({ leads: [] });
+  const leads = await searchLeads(user.organizationId, q);
+  return NextResponse.json({ leads });
+}
+
+export async function GET_booking_digitalForm(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id, userId: user.id },
+    include: {
+      digitalForm: { include: { documents: true } },
+      unit: { include: { floor: { include: { tower: { include: { project: true } } } } } },
+    },
+  });
+  if (!booking) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const snapshot = booking.formSnapshot as Record<string, unknown> | null;
+  const form = booking.digitalForm;
+
+  return NextResponse.json({
+    booking: {
+      id: booking.id,
+      status: booking.status,
+      customerName: booking.customerName,
+      customerPhone: booking.customerPhone,
+      customerEmail: booking.customerEmail,
+      totalPrice: booking.totalPrice,
+      submittedAt: booking.submittedAt,
+      projectName: booking.unit.floor.tower.project.name,
+      unitNumber: booking.unit.unitNumber,
+      towerName: booking.unit.floor.tower.name,
+    },
+    form: form
+      ? {
+          id: form.id,
+          status: form.status,
+          page1Snapshot: form.page1Snapshot,
+          formData: form.formData,
+          submittedAt: form.submittedAt,
+          documents: form.documents,
+        }
+      : null,
+    formSnapshot: snapshot,
+  });
+}
+
+export async function GET_booking_printPdf(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id, userId: user.id },
+    include: {
+      digitalForm: true,
+      unit: { include: { floor: { include: { tower: { include: { project: true } } } } } },
+    },
+  });
+  if (!booking) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const snapshot = booking.formSnapshot as {
+    page1Snapshot?: Record<string, unknown>;
+    formData?: Record<string, unknown> | null;
+    branding?: Record<string, unknown>;
+  } | null;
+
+  const page1Snapshot =
+    snapshot?.page1Snapshot ??
+    (booking.digitalForm?.page1Snapshot as Record<string, unknown> | undefined) ??
+    (booking.costSheetSnapshot as Record<string, unknown>);
+  const formData =
+    snapshot?.formData ?? (booking.digitalForm?.formData as Record<string, unknown> | null) ?? null;
+
+  if (!page1Snapshot) {
+    return NextResponse.json({ error: "No form data available for print" }, { status: 404 });
+  }
+
+  let branding = snapshot?.branding as Record<string, unknown> | undefined;
+  if (!branding) {
+    const project = booking.unit.floor.tower.project;
+    const template = await prisma.bookingFormTemplate.findFirst({
+      where: { projectId: project.id, isActive: true },
+      orderBy: { version: "desc" },
+    });
+    branding = {
+      logoUrl: template?.logoUrl ?? project.logoUrl,
+      companyName: template?.companyName,
+      tagline: template?.tagline,
+      formTitle: template?.formTitle,
+      supportEmail: template?.supportEmail,
+      primaryColor: template?.primaryColor ?? project.primaryColor,
+      projectName: project.name,
+      unitNumber: booking.unit.unitNumber,
+      content: (template?.fieldMapping as Record<string, unknown>) ?? {},
+    };
+  }
+
+  const { digitalFormToPrintHtml } = await import("@booking/pdf");
+  const html = digitalFormToPrintHtml(
+    { page1Snapshot, formData },
+    {
+      branding: branding as import("@booking/pdf").PrintBranding,
+      customerName: booking.customerName,
+      customerPhone: booking.customerPhone,
+      customerEmail: booking.customerEmail ?? undefined,
+    }
+  );
+  return new NextResponse(html, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Disposition": `inline; filename="booking-form-${booking.unit.unitNumber}.html"`,
+    },
+  });
+}
+
+export async function POST_block_resendBookingEmail(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+
+  const block = await prisma.block.findFirst({
+    where: { id, userId: user.id },
+    include: {
+      unit: { include: { floor: { include: { tower: { include: { project: true } } } } } },
+      digitalForm: true,
+    },
+  });
+  if (!block) return NextResponse.json({ error: "Block not found" }, { status: 404 });
+  if (!block.bookingToken || !block.customerEmail || !block.customerName) {
+    return NextResponse.json({ error: "Customer / booking link not attached yet" }, { status: 400 });
+  }
+
+  const customerBaseUrl = process.env.CUSTOMER_URL ?? "http://localhost:3003";
+  const customerUrl = `${customerBaseUrl}/booking/${block.bookingToken}`;
+  const dashboardUrl = `${customerBaseUrl}/dashboard?token=${block.bookingToken}`;
+  const project = block.unit.floor.tower.project;
+
+  const emailResult = await sendBlockNotificationEmail({
+    blockId: block.id,
+    customerEmail: block.customerEmail,
+    customerName: block.customerName,
+    projectName: project.name,
+    unitNumber: block.unit.unitNumber,
+    towerName: block.unit.floor.tower.name,
+    bookingUrl: customerUrl,
+    dashboardUrl,
+    brochureUrl: project.brochureUrl ?? undefined,
+  });
+
+  return NextResponse.json({
+    customerUrl,
+    emailSent: !!emailResult.success && !emailResult.mocked,
+    emailMocked: !!emailResult.mocked,
+    emailError: emailResult.success
+      ? undefined
+      : emailResult.error || "Failed to send booking email",
+    ...(process.env.NODE_ENV !== "production" ? { devBookingUrl: customerUrl } : {}),
   });
 }

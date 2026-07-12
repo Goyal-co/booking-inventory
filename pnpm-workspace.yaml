@@ -1,3 +1,6 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "../packages/ecosystem-contracts"
+  - "../packages/integration-hub"
+  - "../packages/storage"

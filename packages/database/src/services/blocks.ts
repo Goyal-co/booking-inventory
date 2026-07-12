@@ -13,6 +13,7 @@ export class BlockError extends Error {
       | "NOT_FOUND"
       | "BLOCKING_DISABLED"
       | "PENDING_BOOKING"
+      | "ALREADY_ATTACHED"
   ) {
     super(message);
   }
@@ -97,6 +98,8 @@ export async function getActiveBlocksForUser(
 }
 
 export async function createBlock(unitId: string, userId: string, isAdmin = false) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+
   return prisma.$transaction(async (tx) => {
     const unit = await tx.unit.findUnique({
       where: { id: unitId },
@@ -170,8 +173,6 @@ export async function createBlock(unitId: string, userId: string, isAdmin = fals
       data: { status: UnitStatus.BLOCKED },
     });
 
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
-
     await createAuditLog(
       {
         action: AuditAction.UNIT_BLOCKED,
@@ -194,7 +195,7 @@ export async function createBlock(unitId: string, userId: string, isAdmin = fals
     );
 
     return { block, projectId: project.id, unitNumber: unit.unitNumber, userName: user?.name };
-  });
+  }, { timeout: 15000, maxWait: 10000 });
 }
 
 export async function releaseBlock(blockId: string, userId: string, force = false) {

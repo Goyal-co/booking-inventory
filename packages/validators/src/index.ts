@@ -1,4 +1,29 @@
 import { z } from "zod";
+import {
+  blockCustomerSchema,
+  costSheetCalculateSchema,
+  digitalFormStepSchema,
+  walkInLeadSchema,
+  leadAssignSchema,
+  attachCustomerToBlockSchema,
+} from "@goyal/ecosystem-contracts";
+
+export {
+  blockCustomerSchema,
+  costSheetCalculateSchema,
+  digitalFormStepSchema,
+  walkInLeadSchema,
+  leadAssignSchema,
+  attachCustomerToBlockSchema,
+};
+
+export {
+  BOOKING_FORM_TEMPLATE_PRESETS,
+  mergeTemplateContent,
+  type BookingFormTemplateContent,
+  type BookingFormTemplateVariant,
+} from "./booking-form-presets";
+
 
 export const loginSchema = z.object({
   email: z.string().email(),
@@ -7,7 +32,12 @@ export const loginSchema = z.object({
 
 export const createBlockSchema = z.object({
   unitId: z.string().cuid(),
-  projectId: z.string().cuid(),
+  projectId: z.string().cuid().optional(),
+  customerName: z.string().min(2).max(100).optional(),
+  customerEmail: z.string().email().optional(),
+  customerPhone: z.string().min(10).max(15).optional(),
+  saleablePricePerSqft: z.number().positive().optional(),
+  leadId: z.string().optional(),
 });
 
 export const releaseBlockSchema = z.object({
@@ -165,7 +195,7 @@ export const createUserSchema = z.object({
   email: z.string().email(),
   name: z.string().min(2),
   password: z.string().min(6),
-  role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC"]),
+  role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC", "RECEPTION"]),
   projectIds: z.array(z.string().cuid()).default([]),
 });
 
@@ -244,7 +274,7 @@ export type UnitStackGenerateInput = z.infer<typeof unitStackGenerateSchema>;
 
 export const userFiltersSchema = z.object({
   search: z.string().optional(),
-  role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC"]).optional(),
+  role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC", "RECEPTION"]).optional(),
   isActive: z.enum(["true", "false"]).optional(),
   projectId: z.string().cuid().optional(),
 });
@@ -300,3 +330,140 @@ export const patchBookingSchema = z.discriminatedUnion("action", [
   approveBookingSchema,
   rejectBookingSchema,
 ]);
+
+export const createAnnouncementSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  message: z.string().trim().min(1).max(5000),
+  type: z.string().max(50).optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
+  audience: z.enum(["ALL_SALES", "PROJECT_SALES"]).optional(),
+  projectId: z.string().cuid().nullable().optional(),
+  scheduledAt: z.string().datetime().nullable().optional(),
+  expiresAt: z.string().datetime().nullable().optional(),
+  publishNow: z.boolean().optional(),
+});
+
+export const updateAnnouncementSchema = createAnnouncementSchema.partial();
+
+export const publishAnnouncementSchema = z.object({
+  action: z.literal("publish"),
+});
+
+/** @deprecated Use blockCustomerSchema from @goyal/ecosystem-contracts */
+export const blockWithCustomerSchema = blockCustomerSchema;
+
+export const costSheetPreviewSchema = costSheetCalculateSchema.omit({ unitId: true });
+
+export const paymentScheduleTemplateSchema = z.object({
+  stageName: z.string().min(1),
+  stageType: z.enum(["FIXED", "PERCENTAGE", "FORMULA"]),
+  percentage: z.number().min(0).max(100).optional().nullable(),
+  fixedAmount: z.number().positive().optional().nullable(),
+  formulaKey: z.string().optional().nullable(),
+  sortOrder: z.number().int().optional(),
+});
+
+export const otherChargeTemplateSchema = z.object({
+  name: z.string().min(1),
+  calcMode: z.enum(["FIXED", "RATE_PER_AREA"]),
+  amount: z.number().positive().optional().nullable(),
+  rate: z.number().positive().optional().nullable(),
+  areaField: z.enum(["saleable", "carpet", "balcony"]).optional().nullable(),
+  months: z.number().int().positive().optional().nullable(),
+  sortOrder: z.number().int().optional(),
+});
+
+export const constructionReportSchema = z.object({
+  title: z.string().min(1),
+  fileUrl: z.string().min(1),
+});
+
+export const pricingDefaultsSchema = z.object({
+  defaultSaleablePricePerSqft: z.number().positive().optional().nullable(),
+  gstPercent: z.number().min(0).max(100).optional().nullable(),
+  brochureUrl: z.string().url().optional().or(z.literal("")).nullable(),
+});
+
+export const unitMasterRowSchema = z.object({
+  tower: z.string().min(1),
+  unitNo: z.string().min(1),
+  floor: z.number().int(),
+  configuration: z.string().optional().default(""),
+  saleableAreaSqft: z.number().positive(),
+  saleableAreaSqm: z.number().positive().optional().nullable(),
+  carpetAreaSqft: z.number().positive().optional().nullable(),
+  carpetAreaSqm: z.number().positive().optional().nullable(),
+  balconyAreaSqft: z.number().positive().optional().nullable(),
+  balconyAreaSqm: z.number().positive().optional().nullable(),
+});
+
+const optionalUrlOrPath = z
+  .union([z.string().url(), z.string().startsWith("/"), z.literal(""), z.null()])
+  .optional();
+
+const optionalText = z.string().max(300).optional().nullable().or(z.literal(""));
+
+export const bookingFormTemplateSchema = z.object({
+  name: z.string().max(120).optional().nullable().or(z.literal("")),
+  logoUrl: optionalUrlOrPath,
+  companyName: z.string().max(120).optional().nullable().or(z.literal("")),
+  tagline: z.string().max(200).optional().nullable().or(z.literal("")),
+  formTitle: z.string().max(120).optional().nullable().or(z.literal("")),
+  formSubtitle: optionalText,
+  footerText: optionalText,
+  supportEmail: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
+  primaryColor: z.union([
+    z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+    z.literal(""),
+    z.null(),
+  ]).optional(),
+  pdfUrl: optionalUrlOrPath,
+  fieldMapping: z
+    .object({
+      templateVariant: z.enum(["example1", "example2"]).optional(),
+      projectDisplayName: z.string().max(120).optional(),
+      projectNameLine2: z.string().max(120).optional(),
+      landArea: z.string().max(120).optional(),
+      projectPhase: z.string().max(120).optional(),
+      sanctionBy: z.string().max(120).optional(),
+      planSanctionNo: z.string().max(200).optional(),
+      reraWebsite: z.string().max(200).optional(),
+      reraNumber: z.string().max(120).optional(),
+      landSurveyDetails: z.string().max(1000).optional(),
+      promoterName: z.string().max(200).optional(),
+      promoterAddress: z.string().max(400).optional(),
+      landOwnerNames: z.string().max(2000).optional(),
+      landOwnerAddress: z.string().max(2000).optional(),
+      collectionAccountName: z.string().max(300).optional(),
+      payableAt: z.string().max(120).optional(),
+      heroImageUrl: z.string().max(500).optional(),
+      projectLogoUrl: z.string().max(500).optional(),
+      secondaryLogoUrl: z.string().max(500).optional(),
+      secondaryCompanyName: z.string().max(120).optional(),
+      supportPhone: z.string().max(120).optional(),
+      officeAddress: z.string().max(400).optional(),
+      officeEmail: z.string().max(120).optional(),
+      accentTeal: z.string().max(20).optional(),
+      accentYellow: z.string().max(20).optional(),
+      accentNavy: z.string().max(20).optional(),
+      showCoverPhotos: z.boolean().optional(),
+      showApplicationNo: z.boolean().optional(),
+      showLandArea: z.boolean().optional(),
+      showLandOwners: z.boolean().optional(),
+      showConsentPage: z.boolean().optional(),
+      kycChecklist: z.string().max(2000).optional(),
+      agentDeclarationText: z.string().max(3000).optional(),
+      groupDisplayName: z.string().max(200).optional(),
+      jurisdiction: z.string().max(200).optional(),
+      declarationText: z.string().max(8000).optional(),
+      termsText: z.string().max(20000).optional(),
+      consentTo: z.string().max(300).optional(),
+      consentSubject: z.string().max(500).optional(),
+      consentIntroText: z.string().max(2000).optional(),
+      consentBodyText: z.string().max(5000).optional(),
+      consentDeclarationBox: z.string().max(8000).optional(),
+    })
+    .passthrough()
+    .optional()
+    .nullable(),
+});
