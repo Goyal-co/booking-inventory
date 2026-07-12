@@ -14,6 +14,7 @@ export class BlockError extends Error {
       | "BLOCKING_DISABLED"
       | "PENDING_BOOKING"
       | "ALREADY_ATTACHED"
+      | "CONFIG"
   ) {
     super(message);
   }

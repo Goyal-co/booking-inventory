@@ -18,6 +18,7 @@ export const digitalFormStepSchema = z.object({
   step: z.enum([
     "cover",
     "apartment",
+    "project",
     "applicant",
     "jointApplicant",
     "geographic",

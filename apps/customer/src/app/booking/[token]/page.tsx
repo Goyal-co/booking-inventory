@@ -145,7 +145,7 @@ export default function BookingFormPage() {
   const content = branding.content;
   const teal = content.accentTeal || FORM_TEAL;
 
-  const STEPS = useMemo(
+  const STEPS: StepDef[] = useMemo(
     () => ALL_STEPS.filter((s) => s.id !== "consent" || content.showConsentPage),
     [content.showConsentPage]
   );
@@ -227,7 +227,6 @@ export default function BookingFormPage() {
     return STEPS.map((s) => {
       const values = formData[s.id] ?? {};
       if (isViewOnly(s)) return true;
-      if (s.optional) return formData[s.id] != null;
       if (s.id === "applicant") {
         return ["firstName", "surname", "fatherHusbandName", "dateOfBirth"].every((k) =>
           isFilled(values[k])
@@ -245,6 +244,8 @@ export default function BookingFormPage() {
       if (s.id === "sourceOfEnquiry") {
         return isFilled(values.sources) || isFilled(values.sourceDetails);
       }
+      // Optional steps (other than consent) are done once visited/saved
+      if (s.optional) return formData[s.id] != null;
       return Object.values(values).some(isFilled);
     });
   }, [formData, STEPS]);

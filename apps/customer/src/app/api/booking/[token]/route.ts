@@ -7,9 +7,12 @@ import type { BookingFormTemplateContent } from "@booking/validators";
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const form = await getDigitalFormByToken(token);
-  if (!form) return NextResponse.json({ error: "Invalid or expired booking link" }, { status: 404 });
+  if (!form?.block) {
+    return NextResponse.json({ error: "Invalid or expired booking link" }, { status: 404 });
+  }
 
-  const project = form.block.unit.floor.tower.project;
+  const block = form.block;
+  const project = block.unit.floor.tower.project;
   const template = await prisma.bookingFormTemplate.findFirst({
     where: { projectId: project.id, isActive: true },
     orderBy: { version: "desc" },
@@ -25,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     page1Snapshot: form.page1Snapshot,
     formData: form.formData,
     projectName: project.name,
-    unitNumber: form.block.unit.unitNumber,
+    unitNumber: block.unit.unitNumber,
     documents: form.documents,
     branding: {
       logoUrl: template?.logoUrl ?? project.logoUrl ?? null,
@@ -38,7 +41,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       supportEmail: template?.supportEmail ?? content.officeEmail,
       primaryColor: template?.primaryColor ?? content.accentTeal,
       projectName: project.name,
-      unitNumber: form.block.unit.unitNumber,
+      unitNumber: block.unit.unitNumber,
       content,
     },
   });
