@@ -36,7 +36,7 @@ export async function getDigitalFormByToken(token: string) {
       documents: true,
     },
   });
-  if (!form) return null;
+  if (!form?.block) return null;
   if (form.block.expiresAt <= new Date()) return null;
   return form;
 }
@@ -77,16 +77,17 @@ export async function submitDigitalForm(token: string) {
     },
   });
 
-  if (!form || !form.block.customerName || !form.block.customerPhone) return null;
-  if (form.block.expiresAt <= new Date()) {
+  if (!form?.block || !form.block.customerName || !form.block.customerPhone) return null;
+  const block = form.block;
+  if (block.expiresAt <= new Date()) {
     throw new BookingError("Block has expired", "EXPIRED");
   }
   if (form.status !== DigitalFormStatus.DRAFT) {
     throw new BookingError("Form already submitted", "ALREADY_SUBMITTED");
   }
 
-  const projectId = form.block.unit.floor.tower.projectId;
-  const project = form.block.unit.floor.tower.project;
+  const projectId = block.unit.floor.tower.projectId;
+  const project = block.unit.floor.tower.project;
   const requiresApproval = project.requiresBookingApproval === true;
 
   const activeTemplate = await prisma.bookingFormTemplate.findFirst({
@@ -106,16 +107,16 @@ export async function submitDigitalForm(token: string) {
       supportEmail: activeTemplate?.supportEmail ?? null,
       primaryColor: activeTemplate?.primaryColor ?? project.primaryColor,
       projectName: project.name,
-      unitNumber: form.block.unit.unitNumber,
+      unitNumber: block.unit.unitNumber,
       content: activeTemplate?.fieldMapping ?? {},
     },
-    customerName: form.block.customerName,
-    customerEmail: form.block.customerEmail,
-    customerPhone: form.block.customerPhone,
+    customerName: block.customerName,
+    customerEmail: block.customerEmail,
+    customerPhone: block.customerPhone,
     capturedAt: new Date().toISOString(),
   };
 
-  const costSheet = form.block.costSheetSnapshot as {
+  const costSheet = block.costSheetSnapshot as {
     grossApartmentValue?: number;
     paymentSchedule?: Array<{ stageName: string; amount: number }>;
   };
@@ -124,7 +125,7 @@ export async function submitDigitalForm(token: string) {
   const booking = await prisma.$transaction(async (tx) => {
     const existingActive = await tx.booking.findFirst({
       where: {
-        unitId: form.block.unitId,
+        unitId: block.unitId,
         status: { in: ACTIVE_BOOKING_STATUSES },
       },
     });
@@ -134,19 +135,19 @@ export async function submitDigitalForm(token: string) {
 
     const b = await tx.booking.create({
       data: {
-        unitId: form.block.unitId,
-        userId: form.block.userId,
-        customerId: form.block.customerId,
-        customerName: form.block.customerName!,
-        customerPhone: form.block.customerPhone!,
-        customerEmail: form.block.customerEmail,
-        costSheetSnapshot: form.block.costSheetSnapshot ?? {},
+        unitId: block.unitId,
+        userId: block.userId,
+        customerId: block.customerId,
+        customerName: block.customerName!,
+        customerPhone: block.customerPhone!,
+        customerEmail: block.customerEmail,
+        costSheetSnapshot: block.costSheetSnapshot ?? {},
         formSnapshot: formSnapshot as object,
         totalPrice,
         status: requiresApproval ? BookingStatus.PENDING : BookingStatus.CONFIRMED,
         digitalFormStatus: "SUBMITTED",
         submittedAt: new Date(),
-        leadId: form.block.leadId,
+        leadId: block.leadId,
       },
     });
 
@@ -155,7 +156,7 @@ export async function submitDigitalForm(token: string) {
         await tx.paymentRecord.create({
           data: {
             bookingId: b.id,
-            customerId: form.block.customerId,
+            customerId: block.customerId,
             stageName: stage.stageName,
             amountDue: stage.amount,
             amountPaid: 0,
@@ -177,24 +178,24 @@ export async function submitDigitalForm(token: string) {
 
     if (requiresApproval) {
       await tx.block.update({
-        where: { id: form.block.id },
+        where: { id: block.id },
         data: { expiresAt: new Date(Date.now() + PENDING_BLOCK_EXTENSION_MS) },
       });
       // Re-attach form to block while pending approval so customer token still works
       await tx.digitalBookingForm.update({
         where: { id: form.id },
-        data: { blockId: form.block.id },
+        data: { blockId: block.id },
       });
       await tx.unit.update({
-        where: { id: form.block.unitId },
+        where: { id: block.unitId },
         data: { status: UnitStatus.BLOCKED },
       });
     } else {
       await tx.unit.update({
-        where: { id: form.block.unitId },
+        where: { id: block.unitId },
         data: { status: UnitStatus.BOOKED },
       });
-      await tx.block.deleteMany({ where: { unitId: form.block.unitId } });
+      await tx.block.deleteMany({ where: { unitId: block.unitId } });
     }
 
     await createAuditLog(
@@ -202,10 +203,10 @@ export async function submitDigitalForm(token: string) {
         action: requiresApproval ? AuditAction.BOOKING_SUBMITTED : AuditAction.UNIT_BOOKED,
         entityType: "Booking",
         entityId: b.id,
-        userId: form.block.userId,
+        userId: block.userId,
         metadata: {
-          unitId: form.block.unitId,
-          customerName: form.block.customerName,
+          unitId: block.unitId,
+          customerName: block.customerName,
           projectId,
           source: "digital_form",
         },
@@ -216,11 +217,11 @@ export async function submitDigitalForm(token: string) {
     await createActivity(
       {
         projectId,
-        userId: form.block.userId,
+        userId: block.userId,
         message: requiresApproval
-          ? `Customer submitted digital booking for ${form.block.unit.unitNumber} (pending approval)`
-          : `Customer completed digital booking for ${form.block.unit.unitNumber}`,
-        unitId: form.block.unitId,
+          ? `Customer submitted digital booking for ${block.unit.unitNumber} (pending approval)`
+          : `Customer completed digital booking for ${block.unit.unitNumber}`,
+        unitId: block.unitId,
       },
       tx
     );
@@ -229,10 +230,10 @@ export async function submitDigitalForm(token: string) {
   });
 
   await createNotification({
-    userId: form.block.userId,
+    userId: block.userId,
     type: NotificationType.SYSTEM,
     title: requiresApproval ? "Digital booking pending approval" : "Digital booking confirmed",
-    message: `${form.block.customerName} submitted the booking form for ${form.block.unit.unitNumber}`,
+    message: `${block.customerName} submitted the booking form for ${block.unit.unitNumber}`,
     metadata: { link: "/app/bookings" },
   });
 
@@ -247,7 +248,7 @@ export async function addBookingDocument(
   fileUrl: string
 ) {
   const form = await getDigitalFormByToken(token);
-  if (!form) return null;
+  if (!form?.block) return null;
   return prisma.bookingDocument.create({
     data: {
       digitalFormId: form.id,

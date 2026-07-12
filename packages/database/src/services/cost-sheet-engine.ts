@@ -266,7 +266,7 @@ export function buildPage1Snapshot(
     unitNumber: ctx.unitNumber,
     floor: ctx.floor,
     configuration: ctx.configuration,
-  };
+  } as unknown as Prisma.InputJsonValue;
 }
 
 export async function getUnitPricingContext(unitId: string) {

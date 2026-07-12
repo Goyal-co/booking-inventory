@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import {
   prisma,
   calculateCostSheet,
   retryIntegrationSync,
+  Prisma,
 } from "@booking/database";
 import {
   paymentScheduleTemplateSchema,

@@ -8,7 +8,13 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
-  transpilePackages: ["@booking/ui", "@booking/database", "@booking/validators", "@booking/realtime"],
+  transpilePackages: [
+    "@booking/ui",
+    "@booking/database",
+    "@booking/validators",
+    "@booking/realtime",
+    "@goyal/ecosystem-contracts",
+  ],
   serverExternalPackages: ["@prisma/client", "bcryptjs"],
   devIndicators: false,
   async headers() {

@@ -18,42 +18,6 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  ../packages/ecosystem-contracts:
-    dependencies:
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  ../packages/integration-hub:
-    dependencies:
-      '@goyal/ecosystem-contracts':
-        specifier: file:../ecosystem-contracts
-        version: link:../ecosystem-contracts
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  ../packages/storage:
-    dependencies:
-      '@aws-sdk/client-s3':
-        specifier: ^3.700.0
-        version: 3.1079.0
-      '@aws-sdk/s3-request-presigner':
-        specifier: ^3.700.0
-        version: 3.1079.0
-    devDependencies:
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
   apps/admin:
     dependencies:
       '@booking/database':
@@ -70,10 +34,10 @@ importers:
         version: link:../../packages/validators
       '@goyal/ecosystem-contracts':
         specifier: workspace:*
-        version: link:../../../packages/ecosystem-contracts
+        version: link:../../packages/ecosystem-contracts
       '@goyal/integration-hub':
         specifier: workspace:*
-        version: link:../../../packages/integration-hub
+        version: link:../../packages/integration-hub
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -149,7 +113,7 @@ importers:
         version: link:../../packages/validators
       '@goyal/storage':
         specifier: workspace:*
-        version: link:../../../packages/storage
+        version: link:../../packages/storage
       lucide-react:
         specifier: ^0.469.0
         version: 0.469.0(react@19.2.6)
@@ -385,7 +349,7 @@ importers:
         version: link:../integrations
       '@goyal/ecosystem-contracts':
         specifier: workspace:*
-        version: link:../../../packages/ecosystem-contracts
+        version: link:../ecosystem-contracts
       '@prisma/client':
         specifier: ^6.1.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -415,6 +379,16 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)
 
+  packages/ecosystem-contracts:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/email:
     devDependencies:
       '@booking/config-typescript':
@@ -423,6 +397,19 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.19
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/integration-hub:
+    dependencies:
+      '@goyal/ecosystem-contracts':
+        specifier: workspace:*
+        version: link:../ecosystem-contracts
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -466,6 +453,19 @@ importers:
       react:
         specifier: ^19.0.0
         version: 19.2.6
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/storage:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.700.0
+        version: 3.1079.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.700.0
+        version: 3.1079.0
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -535,7 +535,7 @@ importers:
     dependencies:
       '@goyal/ecosystem-contracts':
         specifier: workspace:*
-        version: link:../../../packages/ecosystem-contracts
+        version: link:../ecosystem-contracts
       zod:
         specifier: ^3.24.1
         version: 3.25.76

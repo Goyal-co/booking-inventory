@@ -717,7 +717,7 @@ export async function GET_block_costSheetPdf(_req: NextRequest, { params }: { pa
   });
   if (!block?.costSheetSnapshot) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const { costSheetToHtml } = await import("@booking/pdf");
-  const html = costSheetToHtml(block.costSheetSnapshot as import("@booking/pdf").CostSheetResult, {
+  const html = costSheetToHtml(block.costSheetSnapshot as unknown as import("@booking/pdf").CostSheetResult, {
     projectName: block.unit.floor.tower.project.name,
     unitNumber: block.unit.unitNumber,
     towerName: block.unit.floor.tower.name,

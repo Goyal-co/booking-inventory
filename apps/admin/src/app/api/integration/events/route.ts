@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { integrationEventSchema } from "@goyal/ecosystem-contracts";
 import { processEventLocally } from "@goyal/integration-hub";
-import { IntegrationSystem, IntegrationSyncStatus, Prisma } from "@prisma/client";
-import { prisma, upsertLeadFromEoiCp, logIntegrationSync } from "@booking/database";
+import {
+  prisma,
+  upsertLeadFromEoiCp,
+  logIntegrationSync,
+  IntegrationSystem,
+  IntegrationSyncStatus,
+  Prisma,
+} from "@booking/database";
 
 function verifySecret(req: Request) {
   const secret = req.headers.get("x-integration-secret");

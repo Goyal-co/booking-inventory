@@ -9,6 +9,8 @@ export const WEAK_SECRETS = new Set([
 
 export function assertNextAuthSecret() {
   if (process.env.NODE_ENV !== "production") return;
+  // next build imports auth modules while collecting page data; secret is enforced at runtime
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
 
   const secret = process.env.NEXTAUTH_SECRET?.trim();
   if (!secret || secret.length < 32 || WEAK_SECRETS.has(secret)) {
