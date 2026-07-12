@@ -3,6 +3,7 @@ import { prisma } from "../index";
 import { calculateCostSheet, buildPage1Snapshot } from "./cost-sheet-engine";
 import { createBlock as createBlockBase, BlockError } from "./blocks";
 import { sendBlockNotificationEmail } from "./integration";
+import { getCustomerBookingUrl, getCustomerDashboardUrl } from "../lib/production-env";
 
 const DIGITAL_BOOKING_WINDOW_MS = 48 * 60 * 60 * 1000;
 
@@ -25,6 +26,20 @@ function generateBookingToken() {
 function extendBookingWindow(from: Date) {
   const minimumExpiry = new Date(Date.now() + DIGITAL_BOOKING_WINDOW_MS);
   return from > minimumExpiry ? from : minimumExpiry;
+}
+
+function customerLinks(bookingToken: string) {
+  try {
+    return {
+      customerUrl: getCustomerBookingUrl(bookingToken),
+      dashboardUrl: getCustomerDashboardUrl(bookingToken),
+    };
+  } catch (e) {
+    throw new BlockError(
+      e instanceof Error ? e.message : "CUSTOMER_URL is not configured",
+      "CONFIG"
+    );
+  }
 }
 
 export async function createBlockWithCustomer(input: CreateBlockWithCustomerInput) {
@@ -104,9 +119,7 @@ export async function createBlockWithCustomer(input: CreateBlockWithCustomerInpu
     select: { name: true, brochureUrl: true },
   });
 
-  const customerBaseUrl = process.env.CUSTOMER_URL ?? process.env.SALES_URL ?? "http://localhost:3003";
-  const customerUrl = `${customerBaseUrl}/booking/${bookingToken}`;
-  const dashboardUrl = `${customerBaseUrl}/dashboard?token=${bookingToken}`;
+  const { customerUrl, dashboardUrl } = customerLinks(bookingToken);
 
   const emailResult = await sendBlockNotificationEmail({
     blockId: block.id,
@@ -182,9 +195,7 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
       select: { name: true, brochureUrl: true },
     });
 
-    const customerBaseUrl = process.env.CUSTOMER_URL ?? "http://localhost:3003";
-    const customerUrl = `${customerBaseUrl}/booking/${refreshedBlock.bookingToken}`;
-    const dashboardUrl = `${customerBaseUrl}/dashboard?token=${refreshedBlock.bookingToken}`;
+    const { customerUrl, dashboardUrl } = customerLinks(refreshedBlock.bookingToken!);
 
     const emailResult = await sendBlockNotificationEmail({
       blockId: block.id,
@@ -275,9 +286,7 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
     select: { name: true, brochureUrl: true },
   });
 
-  const customerBaseUrl = process.env.CUSTOMER_URL ?? "http://localhost:3003";
-  const customerUrl = `${customerBaseUrl}/booking/${bookingToken}`;
-  const dashboardUrl = `${customerBaseUrl}/dashboard?token=${bookingToken}`;
+  const { customerUrl, dashboardUrl } = customerLinks(bookingToken);
 
   const emailResult = await sendBlockNotificationEmail({
     blockId: block.id,

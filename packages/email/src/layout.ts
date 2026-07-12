@@ -5,8 +5,12 @@ const LIGHT_BG = "#F8F9FB";
 const BORDER = "#E8ECF1";
 
 export function getEmailBaseUrl(): string {
-  return (
+  const fromCustomer =
     process.env.CUSTOMER_URL?.replace(/\/$/, "") ||
+    process.env.NEXT_PUBLIC_CUSTOMER_URL?.replace(/\/$/, "") ||
+    "";
+  if (fromCustomer) return fromCustomer;
+  return (
     process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
     process.env.SALES_URL?.replace(/\/$/, "") ||
     "http://localhost:3003"

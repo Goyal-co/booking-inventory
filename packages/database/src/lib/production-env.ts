@@ -19,3 +19,37 @@ export function assertNextAuthSecret() {
     );
   }
 }
+
+function looksLikeLocalhost(url: string) {
+  return /localhost|127\.0\.0\.1/i.test(url);
+}
+
+/**
+ * Public base URL for the customer booking app (no trailing slash).
+ * In production, CUSTOMER_URL must be set to a non-localhost HTTPS URL
+ * or booking emails will contain broken localhost links.
+ */
+export function getCustomerBaseUrl(): string {
+  const raw =
+    process.env.CUSTOMER_URL?.trim() ||
+    process.env.NEXT_PUBLIC_CUSTOMER_URL?.trim() ||
+    "";
+  const fallback = "http://localhost:3003";
+  const base = (raw || fallback).replace(/\/$/, "");
+
+  if (process.env.NODE_ENV === "production" && (!raw || looksLikeLocalhost(base))) {
+    throw new Error(
+      "CUSTOMER_URL must be set to your deployed customer app URL (e.g. https://booking-inventory-customer.onrender.com). Localhost links cannot be emailed in production."
+    );
+  }
+
+  return base;
+}
+
+export function getCustomerBookingUrl(bookingToken: string): string {
+  return `${getCustomerBaseUrl()}/booking/${bookingToken}`;
+}
+
+export function getCustomerDashboardUrl(bookingToken: string): string {
+  return `${getCustomerBaseUrl()}/dashboard?token=${bookingToken}`;
+}

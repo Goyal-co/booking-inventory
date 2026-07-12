@@ -36,6 +36,8 @@ import {
   searchLeads,
   getDigitalFormByToken,
   sendBlockNotificationEmail,
+  getCustomerBookingUrl,
+  getCustomerDashboardUrl,
 } from "@booking/database";
 import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema, attachCustomerToBlockSchema } from "@booking/validators";
 import { emitRealtimeEvent } from "@booking/database";
@@ -868,30 +870,36 @@ export async function POST_block_resendBookingEmail(
     return NextResponse.json({ error: "Customer / booking link not attached yet" }, { status: 400 });
   }
 
-  const customerBaseUrl = process.env.CUSTOMER_URL ?? "http://localhost:3003";
-  const customerUrl = `${customerBaseUrl}/booking/${block.bookingToken}`;
-  const dashboardUrl = `${customerBaseUrl}/dashboard?token=${block.bookingToken}`;
-  const project = block.unit.floor.tower.project;
+  try {
+    const customerUrl = getCustomerBookingUrl(block.bookingToken);
+    const dashboardUrl = getCustomerDashboardUrl(block.bookingToken);
+    const project = block.unit.floor.tower.project;
 
-  const emailResult = await sendBlockNotificationEmail({
-    blockId: block.id,
-    customerEmail: block.customerEmail,
-    customerName: block.customerName,
-    projectName: project.name,
-    unitNumber: block.unit.unitNumber,
-    towerName: block.unit.floor.tower.name,
-    bookingUrl: customerUrl,
-    dashboardUrl,
-    brochureUrl: project.brochureUrl ?? undefined,
-  });
+    const emailResult = await sendBlockNotificationEmail({
+      blockId: block.id,
+      customerEmail: block.customerEmail,
+      customerName: block.customerName,
+      projectName: project.name,
+      unitNumber: block.unit.unitNumber,
+      towerName: block.unit.floor.tower.name,
+      bookingUrl: customerUrl,
+      dashboardUrl,
+      brochureUrl: project.brochureUrl ?? undefined,
+    });
 
-  return NextResponse.json({
-    customerUrl,
-    emailSent: !!emailResult.success && !emailResult.mocked,
-    emailMocked: !!emailResult.mocked,
-    emailError: emailResult.success
-      ? undefined
-      : emailResult.error || "Failed to send booking email",
-    ...(process.env.NODE_ENV !== "production" ? { devBookingUrl: customerUrl } : {}),
-  });
+    return NextResponse.json({
+      customerUrl,
+      emailSent: !!emailResult.success && !emailResult.mocked,
+      emailMocked: !!emailResult.mocked,
+      emailError: emailResult.success
+        ? undefined
+        : emailResult.error || "Failed to send booking email",
+      ...(process.env.NODE_ENV !== "production" ? { devBookingUrl: customerUrl } : {}),
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("CUSTOMER_URL")) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
+    throw e;
+  }
 }

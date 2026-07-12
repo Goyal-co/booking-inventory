@@ -1,11 +1,11 @@
-# Render Blueprint — free tier (Neon Postgres + 3 web services)
+# Render Blueprint — Neon Postgres + web services
 # Docs: https://render.com/docs/infrastructure-as-code
 #
 # Before first deploy:
 #   1. Create a Neon database and copy DATABASE_URL (with ?sslmode=require)
 #   2. From your machine: pnpm db:push && pnpm db:bootstrap (see DEPLOY-FREE-TIER.md)
 #   3. Apply this blueprint, then set env vars marked "manual" in the Render dashboard
-#   4. Redeploy after setting public URLs (NEXTAUTH_URL, CORS_ORIGINS, etc.)
+#   4. Redeploy after setting public URLs (NEXTAUTH_URL, CUSTOMER_URL, CORS_ORIGINS, etc.)
 
 services:
   - type: web
@@ -76,8 +76,42 @@ services:
         sync: false
       - key: WS_EMIT_URL
         sync: false
+      # Required for booking emails — set to customer service public URL after first deploy
+      - key: CUSTOMER_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        sync: false
       - key: WS_INTERNAL_SECRET
         fromService:
           type: web
           name: booking-inventory-ws
           envVarKey: WS_INTERNAL_SECRET
+
+  - type: web
+    name: booking-inventory-customer
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter customer build
+    startCommand: pnpm --filter customer start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CUSTOMER_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        sync: false
+      - key: STORAGE_PROVIDER
+        value: local
