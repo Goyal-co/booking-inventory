@@ -95,21 +95,19 @@ export async function submitDigitalForm(token: string) {
     orderBy: { version: "desc" },
   });
 
+  const { resolveFormBranding } = await import("../lib/booking-form-branding");
+  const branding = resolveFormBranding({
+    projectName: project.name,
+    unitNumber: block.unit.unitNumber,
+    projectLogoUrl: project.logoUrl,
+    projectPrimaryColor: project.primaryColor,
+    template: activeTemplate,
+  });
+
   const formSnapshot = {
     page1Snapshot: form.page1Snapshot,
     formData: form.formData,
-    branding: {
-      logoUrl: activeTemplate?.logoUrl ?? project.logoUrl ?? null,
-      companyName: activeTemplate?.companyName ?? "Goyal & Co.",
-      tagline: activeTemplate?.tagline ?? "creating landmarks since 1971",
-      formTitle:
-        activeTemplate?.formTitle ?? "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN",
-      supportEmail: activeTemplate?.supportEmail ?? null,
-      primaryColor: activeTemplate?.primaryColor ?? project.primaryColor,
-      projectName: project.name,
-      unitNumber: block.unit.unitNumber,
-      content: activeTemplate?.fieldMapping ?? {},
-    },
+    branding,
     customerName: block.customerName,
     customerEmail: block.customerEmail,
     customerPhone: block.customerPhone,

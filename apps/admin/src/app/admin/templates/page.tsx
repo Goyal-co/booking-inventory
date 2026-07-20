@@ -32,7 +32,7 @@ export default function AdminTemplatesPage() {
   const [tagline, setTagline] = useState("creating landmarks since 1971");
   const [supportEmail, setSupportEmail] = useState("info.bng@goyalco.com");
   const [content, setContent] = useState<BookingFormTemplateContent>(
-    BOOKING_FORM_TEMPLATE_PRESETS.example1
+    BOOKING_FORM_TEMPLATE_PRESETS.example2
   );
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
@@ -303,12 +303,21 @@ export default function AdminTemplatesPage() {
                 ))}
               </div>
               <div>
-                <Label>Terms & Conditions</Label>
+                <Label>Terms &amp; Conditions</Label>
                 <textarea
                   className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={8}
+                  rows={10}
                   value={content.termsText}
                   onChange={(e) => patch("termsText", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Declaration (under Terms)</Label>
+                <textarea
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  rows={4}
+                  value={content.declarationText}
+                  onChange={(e) => patch("declarationText", e.target.value)}
                 />
               </div>
               <div>
@@ -320,6 +329,48 @@ export default function AdminTemplatesPage() {
                   onChange={(e) => patch("landOwnerNames", e.target.value)}
                 />
               </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Consent — To</Label>
+                  <Input className="mt-1" value={content.consentTo} onChange={(e) => patch("consentTo", e.target.value)} />
+                </div>
+                <div>
+                  <Label>Consent — Subject</Label>
+                  <Input className="mt-1" value={content.consentSubject} onChange={(e) => patch("consentSubject", e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <Label>Consent intro</Label>
+                <textarea
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  rows={3}
+                  value={content.consentIntroText}
+                  onChange={(e) => patch("consentIntroText", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Consent body</Label>
+                <textarea
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  rows={5}
+                  value={content.consentBodyText}
+                  onChange={(e) => patch("consentBodyText", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Consent declaration box</Label>
+                <textarea
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  rows={4}
+                  value={content.consentDeclarationBox}
+                  onChange={(e) => patch("consentDeclarationBox", e.target.value)}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                After assigning to a project, open the project booking-form editor for the full field
+                set (RERA, KYC list, logos, colours, etc.). Each project keeps its own active template
+                version used by the customer form and printable document.
+              </p>
             </CardContent>
           </Card>
 

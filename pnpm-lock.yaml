@@ -353,6 +353,9 @@ importers:
       '@booking/pdf':
         specifier: workspace:*
         version: link:../pdf
+      '@booking/validators':
+        specifier: workspace:*
+        version: link:../validators
       '@goyal/ecosystem-contracts':
         specifier: workspace:*
         version: link:../ecosystem-contracts

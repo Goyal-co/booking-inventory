@@ -21,6 +21,7 @@
     "@booking/email": "workspace:*",
     "@booking/integrations": "workspace:*",
     "@booking/pdf": "workspace:*",
+    "@booking/validators": "workspace:*",
     "@goyal/ecosystem-contracts": "workspace:*",
     "bcryptjs": "^2.4.3"
   },

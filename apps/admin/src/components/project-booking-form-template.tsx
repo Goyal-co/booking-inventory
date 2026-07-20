@@ -134,8 +134,9 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
             Booking Form Template{projectName ? ` — ${projectName}` : ""}
           </h2>
           <p className="text-sm text-gray-500">
-            Editable for any project. Start from Template Example 1 or 2, then customize logos,
-            promoter, land owners, RERA, collection account, T&amp;C, and consent page.
+            Each project has its own editable booking form template (T&amp;Cs, consent, logos, RERA,
+            promoter, etc.). The customer booking form and the printable filled document both use this
+            project template with the applicant&apos;s submitted data.
             {version != null ? ` Active: v${version}` : ""}
           </p>
         </div>
@@ -392,21 +393,42 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base">Terms & Conditions</CardTitle>
+            <CardTitle className="text-base">Terms &amp; Conditions</CardTitle>
+            <p className="mt-1 text-xs text-gray-500">
+              Fully editable per project. This text appears on the customer form and on the printable
+              booking document.
+            </p>
           </CardHeader>
-          <CardContent>
-            <textarea
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              rows={12}
-              value={content.termsText}
-              onChange={(e) => patch("termsText", e.target.value)}
-            />
+          <CardContent className="space-y-3">
+            <div>
+              <Label>Terms &amp; Conditions body</Label>
+              <textarea
+                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                rows={14}
+                value={content.termsText}
+                onChange={(e) => patch("termsText", e.target.value)}
+                placeholder="Paste or write project-specific terms…"
+              />
+            </div>
+            <div>
+              <Label>Declaration (shown under Terms on the customer form &amp; printout)</Label>
+              <textarea
+                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                rows={5}
+                value={content.declarationText}
+                onChange={(e) => patch("declarationText", e.target.value)}
+              />
+            </div>
           </CardContent>
         </Card>
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base">Consent / Acknowledged & Agreed page</CardTitle>
+            <CardTitle className="text-base">Consent / Acknowledged &amp; Agreed page</CardTitle>
+            <p className="mt-1 text-xs text-gray-500">
+              Enable via “Consent / Acknowledged page” above. All fields below are editable and used
+              on the customer form and printable PDF.
+            </p>
           </CardHeader>
           <CardContent className="grid gap-3 lg:grid-cols-2">
             <div>
@@ -426,8 +448,8 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
               <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={5} value={content.consentBodyText} onChange={(e) => patch("consentBodyText", e.target.value)} />
             </div>
             <div className="lg:col-span-2">
-              <Label>Declaration box</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={6} value={content.consentDeclarationBox || content.declarationText} onChange={(e) => patch("consentDeclarationBox", e.target.value)} />
+              <Label>Consent declaration box</Label>
+              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={6} value={content.consentDeclarationBox} onChange={(e) => patch("consentDeclarationBox", e.target.value)} />
             </div>
           </CardContent>
         </Card>

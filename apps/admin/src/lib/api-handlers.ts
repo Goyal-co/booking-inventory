@@ -1033,23 +1033,21 @@ export async function GET_booking_printPdf(
   }
 
   let branding = snapshot?.branding as Record<string, unknown> | undefined;
-  if (!branding) {
+  {
     const project = booking.unit.floor.tower.project;
     const template = await prisma.bookingFormTemplate.findFirst({
       where: { projectId: project.id, isActive: true },
       orderBy: { version: "desc" },
     });
-    branding = {
-      logoUrl: template?.logoUrl ?? project.logoUrl,
-      companyName: template?.companyName,
-      tagline: template?.tagline,
-      formTitle: template?.formTitle,
-      supportEmail: template?.supportEmail,
-      primaryColor: template?.primaryColor ?? project.primaryColor,
+    const { resolveFormBranding } = await import("@booking/database");
+    branding = resolveFormBranding({
       projectName: project.name,
       unitNumber: booking.unit.unitNumber,
-      content: (template?.fieldMapping as Record<string, unknown>) ?? {},
-    };
+      projectLogoUrl: project.logoUrl,
+      projectPrimaryColor: project.primaryColor,
+      template,
+      existingBranding: branding ?? null,
+    }) as unknown as Record<string, unknown>;
   }
 
   const { digitalFormToPrintHtml } = await import("@booking/pdf");
