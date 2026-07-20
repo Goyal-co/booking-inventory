@@ -1102,18 +1102,12 @@ export async function GET_booking_costSheet(
   }
 
   const { costSheetToHtml } = await import("@booking/pdf");
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cost Sheet</title>
-<style>body{font-family:Segoe UI,Arial,sans-serif;padding:24px}table{width:100%;border-collapse:collapse}
-td,th{border:1px solid #CBD5E1;padding:7px 9px;font-size:12px}.total td,.gross td{font-weight:700}
-@media print{.no-print{display:none}}</style></head><body>
-<div class="no-print" style="margin-bottom:12px"><button onclick="window.print()">Print / Save as PDF</button></div>
-${costSheetToHtml(page1 as import("@booking/pdf").CostSheetResult, {
+  const html = costSheetToHtml(page1 as unknown as import("@booking/pdf").CostSheetResult, {
     projectName: booking.unit.floor.tower.project.name,
     unitNumber: booking.unit.unitNumber,
     towerName: booking.unit.floor.tower.name,
     customerName: booking.customerName,
-  })}
-</body></html>`;
+  });
 
   return new NextResponse(html, {
     headers: {

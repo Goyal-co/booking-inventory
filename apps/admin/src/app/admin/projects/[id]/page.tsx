@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Modal, ProjectStatusBadge, formatBlockDuration } from "@booking/ui";
 import { toast, Toaster } from "sonner";
 import { useAdminSession } from "@/hooks/use-admin-session";
+import { useAdminProject } from "@/hooks/use-admin-project";
 import { FloorPlanPanel } from "@/components/floor-plan-panel";
 import { UnitStackGenerator } from "@/components/unit-stack-generator";
 
@@ -93,6 +94,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const router = useRouter();
   const { isSuperAdmin } = useAdminSession();
+  const { setSelectedProjectId } = useAdminProject();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [step, setStep] = useState(1);
   const [showCostModal, setShowCostModal] = useState(false);
@@ -336,7 +338,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           <Link href={`/admin/projects/${id}/cost-config`}>
             <Button variant="outline">Cost Sheet Config</Button>
           </Link>
-          <Link href={`/admin/projects/${id}/booking-form-template`}>
+          <Link href="/admin/templates" onClick={() => setSelectedProjectId(id)}>
             <Button variant="outline">Booking Form Template</Button>
           </Link>
         </div>

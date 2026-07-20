@@ -4,11 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@booking/ui";
 import {
   BOOKING_FORM_TEMPLATE_PRESETS,
+  mergePrintLayout,
   mergeTemplateContent,
+  normalizeMediaUrl,
   type BookingFormTemplateContent,
   type BookingFormTemplateVariant,
+  type PrintLayout,
 } from "@booking/validators";
 import { toast } from "sonner";
+import { LogoSourceField } from "./logo-source-field";
+import { TemplateCanvasEditor } from "./template-canvas-editor";
+import { TemplatePrintPreview } from "./template-print-preview";
 
 type BrandForm = {
   logoUrl: string;
@@ -28,6 +34,8 @@ const EMPTY_BRAND: BrandForm = {
   primaryColor: "#2BB8C8",
 };
 
+type EditorTab = "content" | "canvas";
+
 export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: string }) {
   const [brand, setBrand] = useState<BrandForm>(EMPTY_BRAND);
   const [content, setContent] = useState<BookingFormTemplateContent>(
@@ -37,11 +45,36 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
   const [version, setVersion] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<EditorTab>("content");
+  const [showPreview, setShowPreview] = useState(true);
 
   const patch = <K extends keyof BookingFormTemplateContent>(
     key: K,
     value: BookingFormTemplateContent[K]
-  ) => setContent((prev) => ({ ...prev, [key]: value }));
+  ) =>
+    setContent((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "showLandOwners" || key === "showConsentPage") {
+        next.printLayout = mergePrintLayout(next.printLayout, {
+          showLandOwners: key === "showLandOwners" ? Boolean(value) : next.showLandOwners,
+          showConsentPage: key === "showConsentPage" ? Boolean(value) : next.showConsentPage,
+        });
+      }
+      return next;
+    });
+
+  const setPrintLayout = (printLayout: PrintLayout) => {
+    setContent((prev) => {
+      const land = printLayout.blocks.find((b) => b.id === "landOwners");
+      const consent = printLayout.blocks.find((b) => b.id === "consent");
+      return {
+        ...prev,
+        printLayout,
+        showLandOwners: land ? land.visible : prev.showLandOwners,
+        showConsentPage: consent ? consent.visible : prev.showConsentPage,
+      };
+    });
+  };
 
   const [library, setLibrary] = useState<Array<{ id: string; name: string }>>([]);
 
@@ -80,11 +113,14 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
   }, [load]);
 
   const applyPreset = (variant: BookingFormTemplateVariant) => {
-    const preset = {
-      ...BOOKING_FORM_TEMPLATE_PRESETS[variant],
-      projectDisplayName:
-        projectName || BOOKING_FORM_TEMPLATE_PRESETS[variant].projectDisplayName,
-    };
+    const preset = mergeTemplateContent(
+      {
+        ...BOOKING_FORM_TEMPLATE_PRESETS[variant],
+        projectDisplayName:
+          projectName || BOOKING_FORM_TEMPLATE_PRESETS[variant].projectDisplayName,
+      },
+      projectName
+    );
     setContent(preset);
     setBrand((b) => ({
       ...b,
@@ -102,14 +138,24 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
 
   const save = async () => {
     setSaving(true);
+    const logoUrl = normalizeMediaUrl(brand.logoUrl);
+    const projectLogoUrl = normalizeMediaUrl(content.projectLogoUrl || content.heroImageUrl);
+    const secondaryLogoUrl = normalizeMediaUrl(content.secondaryLogoUrl);
+    const fieldMapping = {
+      ...content,
+      projectLogoUrl,
+      heroImageUrl: projectLogoUrl,
+      secondaryLogoUrl,
+    };
     const res = await fetch(`/api/projects/${projectId}/booking-form-template`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: `${projectName || "Project"} booking form`,
         ...brand,
+        logoUrl,
         primaryColor: content.accentTeal || brand.primaryColor,
-        fieldMapping: content,
+        fieldMapping,
       }),
     });
     setSaving(false);
@@ -120,6 +166,8 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
     }
     const data = await res.json();
     setVersion(data.template?.version ?? null);
+    setBrand((b) => ({ ...b, logoUrl }));
+    setContent((c) => ({ ...c, ...fieldMapping }));
     toast.success("Project booking form template saved");
     load();
   };
@@ -127,16 +175,14 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
   if (loading) return <p className="text-sm text-gray-500">Loading template…</p>;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-navy-600">
             Booking Form Template{projectName ? ` — ${projectName}` : ""}
           </h2>
           <p className="text-sm text-gray-500">
-            Each project has its own editable booking form template (T&amp;Cs, consent, logos, RERA,
-            promoter, etc.). The customer booking form and the printable filled document both use this
-            project template with the applicant&apos;s submitted data.
+            Edit content and layout with a live sample preview of the downloadable form.
             {version != null ? ` Active: v${version}` : ""}
           </p>
         </div>
@@ -179,280 +225,458 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
               ))}
             </select>
           ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowPreview((v) => !v)}
+          >
+            {showPreview ? "Hide preview" : "Show preview"}
+          </Button>
           <Button onClick={save} disabled={saving}>
             {saving ? "Saving…" : "Save Template"}
           </Button>
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Layout variant</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          <label className="flex cursor-pointer gap-3 rounded-lg border p-3">
-            <input
-              type="radio"
-              checked={content.templateVariant === "example1"}
-              onChange={() => applyPreset("example1")}
-            />
-            <span>
-              <span className="font-semibold text-navy-600">Template Example 1</span>
-              <span className="mt-1 block text-xs text-gray-500">
-                Yellow photo strip cover, application no, full KYC, optional consent
-              </span>
-            </span>
-          </label>
-          <label className="flex cursor-pointer gap-3 rounded-lg border p-3">
-            <input
-              type="radio"
-              checked={content.templateVariant === "example2"}
-              onChange={() => applyPreset("example2")}
-            />
-            <span>
-              <span className="font-semibold text-navy-600">Template Example 2</span>
-              <span className="mt-1 block text-xs text-gray-500">
-                Minimal cover + dual logos, land owners, consent &amp; declaration page
-              </span>
-            </span>
-          </label>
-          <div className="sm:col-span-2 grid gap-3 sm:grid-cols-3">
-            {(
-              [
-                ["showCoverPhotos", "Cover photo boxes"],
-                ["showApplicationNo", "Application No. field"],
-                ["showLandArea", "Show land area"],
-                ["showLandOwners", "Show land owners"],
-                ["showConsentPage", "Consent / Acknowledged page"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={Boolean(content[key])}
-                  onChange={(e) => patch(key, e.target.checked)}
+      <div className="flex gap-2 border-b border-slate-200">
+        {(
+          [
+            ["content", "Content & branding"],
+            ["canvas", "Canvas layout"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`border-b-2 px-3 py-2 text-sm font-medium ${
+              tab === id
+                ? "border-teal-500 text-navy-600"
+                : "border-transparent text-slate-500 hover:text-navy-600"
+            }`}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className={`grid gap-4 ${showPreview ? "xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.95fr)]" : ""}`}>
+        <div className="min-w-0 space-y-6">
+          {tab === "canvas" ? (
+            <Card>
+              <CardContent className="pt-6">
+                <TemplateCanvasEditor
+                  layout={content.printLayout}
+                  onChange={setPrintLayout}
+                  showLandOwners={content.showLandOwners}
+                  showConsentPage={content.showConsentPage}
                 />
-                {label}
-              </label>
-            ))}
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Layout variant</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex cursor-pointer gap-3 rounded-lg border p-3">
+                    <input
+                      type="radio"
+                      checked={content.templateVariant === "example1"}
+                      onChange={() => applyPreset("example1")}
+                    />
+                    <span>
+                      <span className="font-semibold text-navy-600">Template Example 1</span>
+                      <span className="mt-1 block text-xs text-gray-500">
+                        Yellow photo strip cover, application no, full KYC, optional consent
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer gap-3 rounded-lg border p-3">
+                    <input
+                      type="radio"
+                      checked={content.templateVariant === "example2"}
+                      onChange={() => applyPreset("example2")}
+                    />
+                    <span>
+                      <span className="font-semibold text-navy-600">Template Example 2</span>
+                      <span className="mt-1 block text-xs text-gray-500">
+                        Minimal cover + dual logos, land owners, consent &amp; declaration page
+                      </span>
+                    </span>
+                  </label>
+                  <div className="sm:col-span-2 grid gap-3 sm:grid-cols-3">
+                    {(
+                      [
+                        ["showCoverPhotos", "Cover photo boxes"],
+                        ["showApplicationNo", "Application No. field"],
+                        ["showLandArea", "Show land area"],
+                        ["showLandOwners", "Show land owners"],
+                        ["showConsentPage", "Consent / Acknowledged page"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(content[key])}
+                          onChange={(e) => patch(key, e.target.checked)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Cover & logos</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <Label>Cover title</Label>
+                      <Input
+                        className="mt-1"
+                        value={brand.formTitle}
+                        onChange={(e) => setBrand({ ...brand, formTitle: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <Label>Project name (line 1)</Label>
+                        <Input
+                          className="mt-1"
+                          value={content.projectDisplayName}
+                          onChange={(e) => patch("projectDisplayName", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label>Project name (line 2)</Label>
+                        <Input
+                          className="mt-1"
+                          value={content.projectNameLine2}
+                          onChange={(e) => patch("projectNameLine2", e.target.value)}
+                          placeholder="e.g. SOUTH PARK"
+                        />
+                      </div>
+                    </div>
+                    <LogoSourceField
+                      label="Company logo"
+                      value={brand.logoUrl}
+                      onChange={(url) => setBrand({ ...brand, logoUrl: url })}
+                    />
+                    <LogoSourceField
+                      label="Project logo / hero"
+                      value={content.projectLogoUrl || content.heroImageUrl}
+                      onChange={(url) => {
+                        patch("projectLogoUrl", url);
+                        patch("heroImageUrl", url);
+                      }}
+                    />
+                    <LogoSourceField
+                      label="Secondary logo (e.g. Hariyana)"
+                      value={content.secondaryLogoUrl}
+                      onChange={(url) => patch("secondaryLogoUrl", url)}
+                    />
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <Label>Company name</Label>
+                        <Input
+                          className="mt-1"
+                          value={brand.companyName}
+                          onChange={(e) => setBrand({ ...brand, companyName: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label>Secondary company</Label>
+                        <Input
+                          className="mt-1"
+                          value={content.secondaryCompanyName}
+                          onChange={(e) => patch("secondaryCompanyName", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Tagline</Label>
+                      <Input
+                        className="mt-1"
+                        value={brand.tagline}
+                        onChange={(e) => setBrand({ ...brand, tagline: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <Label>Teal</Label>
+                        <Input
+                          className="mt-1"
+                          type="color"
+                          value={content.accentTeal}
+                          onChange={(e) => patch("accentTeal", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label>Yellow</Label>
+                        <Input
+                          className="mt-1"
+                          type="color"
+                          value={content.accentYellow}
+                          onChange={(e) => patch("accentYellow", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label>Navy</Label>
+                        <Input
+                          className="mt-1"
+                          type="color"
+                          value={content.accentNavy}
+                          onChange={(e) => patch("accentNavy", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Project / RERA details</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {(
+                      [
+                        ["landArea", "Land Area"],
+                        ["projectPhase", "Project Phase"],
+                        ["sanctionBy", "Sanction of Plan by"],
+                        ["planSanctionNo", "Plan Sanction / LP No."],
+                        ["reraWebsite", "RERA Website"],
+                        ["reraNumber", "RERA #"],
+                        ["landSurveyDetails", "Land survey / bearing details"],
+                        ["jurisdiction", "Jurisdiction"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key}>
+                        <Label>{label}</Label>
+                        <Input
+                          className="mt-1"
+                          value={content[key]}
+                          onChange={(e) => patch(key, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Promoter, land owners & account</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <Label>Promoter Name</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.promoterName}
+                        onChange={(e) => patch("promoterName", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Promoter Address</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={2}
+                        value={content.promoterAddress}
+                        onChange={(e) => patch("promoterAddress", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Land Owner Names</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={3}
+                        value={content.landOwnerNames}
+                        onChange={(e) => patch("landOwnerNames", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Land Owner Address</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={2}
+                        value={content.landOwnerAddress}
+                        onChange={(e) => patch("landOwnerAddress", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>RERA Collection Account</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.collectionAccountName}
+                        onChange={(e) => patch("collectionAccountName", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Payable At</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.payableAt}
+                        onChange={(e) => patch("payableAt", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Group display name (agent declaration)</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.groupDisplayName}
+                        onChange={(e) => patch("groupDisplayName", e.target.value)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Office, KYC & agent copy</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <Label>Office Address</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.officeAddress}
+                        onChange={(e) => patch("officeAddress", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Office / CRM Email</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.officeEmail}
+                        onChange={(e) => {
+                          patch("officeEmail", e.target.value);
+                          setBrand({ ...brand, supportEmail: e.target.value });
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <Label>Phone</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.supportPhone}
+                        onChange={(e) => patch("supportPhone", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>KYC checklist (one per line)</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={5}
+                        value={content.kycChecklist}
+                        onChange={(e) => patch("kycChecklist", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Real estate agent declaration</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={4}
+                        value={content.agentDeclarationText}
+                        onChange={(e) => patch("agentDeclarationText", e.target.value)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-base">Terms &amp; Conditions</CardTitle>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Fully editable per project. Appears on the customer form and printable document.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <Label>Terms &amp; Conditions body</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={14}
+                        value={content.termsText}
+                        onChange={(e) => patch("termsText", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Declaration</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={5}
+                        value={content.declarationText}
+                        onChange={(e) => patch("declarationText", e.target.value)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-base">Consent / Acknowledged &amp; Agreed page</CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-3 lg:grid-cols-2">
+                    <div>
+                      <Label>To (promoter / company)</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.consentTo}
+                        onChange={(e) => patch("consentTo", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Subject</Label>
+                      <Input
+                        className="mt-1"
+                        value={content.consentSubject}
+                        onChange={(e) => patch("consentSubject", e.target.value)}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <Label>Intro (use {"{{projectName}}"} and {"{{landSurveyDetails}}"})</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={3}
+                        value={content.consentIntroText}
+                        onChange={(e) => patch("consentIntroText", e.target.value)}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <Label>Consent body</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={5}
+                        value={content.consentBodyText}
+                        onChange={(e) => patch("consentBodyText", e.target.value)}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <Label>Consent declaration box</Label>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        rows={6}
+                        value={content.consentDeclarationBox}
+                        onChange={(e) => patch("consentDeclarationBox", e.target.value)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </>
+          )}
+        </div>
+
+        {showPreview ? (
+          <div className="xl:sticky xl:top-4 xl:self-start">
+            <TemplatePrintPreview brand={brand} content={content} projectName={projectName} />
           </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Cover & logos</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <Label>Cover title</Label>
-              <Input className="mt-1" value={brand.formTitle} onChange={(e) => setBrand({ ...brand, formTitle: e.target.value })} />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <Label>Project name (line 1)</Label>
-                <Input className="mt-1" value={content.projectDisplayName} onChange={(e) => patch("projectDisplayName", e.target.value)} />
-              </div>
-              <div>
-                <Label>Project name (line 2)</Label>
-                <Input className="mt-1" value={content.projectNameLine2} onChange={(e) => patch("projectNameLine2", e.target.value)} placeholder="e.g. SOUTH PARK" />
-              </div>
-            </div>
-            <div>
-              <Label>Company logo URL</Label>
-              <Input className="mt-1" value={brand.logoUrl} onChange={(e) => setBrand({ ...brand, logoUrl: e.target.value })} />
-            </div>
-            <div>
-              <Label>Project logo / hero URL</Label>
-              <Input className="mt-1" value={content.projectLogoUrl || content.heroImageUrl} onChange={(e) => { patch("projectLogoUrl", e.target.value); patch("heroImageUrl", e.target.value); }} />
-            </div>
-            <div>
-              <Label>Secondary logo URL (e.g. Hariyana)</Label>
-              <Input className="mt-1" value={content.secondaryLogoUrl} onChange={(e) => patch("secondaryLogoUrl", e.target.value)} />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <Label>Company name</Label>
-                <Input className="mt-1" value={brand.companyName} onChange={(e) => setBrand({ ...brand, companyName: e.target.value })} />
-              </div>
-              <div>
-                <Label>Secondary company</Label>
-                <Input className="mt-1" value={content.secondaryCompanyName} onChange={(e) => patch("secondaryCompanyName", e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <Label>Tagline</Label>
-              <Input className="mt-1" value={brand.tagline} onChange={(e) => setBrand({ ...brand, tagline: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <Label>Teal</Label>
-                <Input className="mt-1" type="color" value={content.accentTeal} onChange={(e) => patch("accentTeal", e.target.value)} />
-              </div>
-              <div>
-                <Label>Yellow</Label>
-                <Input className="mt-1" type="color" value={content.accentYellow} onChange={(e) => patch("accentYellow", e.target.value)} />
-              </div>
-              <div>
-                <Label>Navy</Label>
-                <Input className="mt-1" type="color" value={content.accentNavy} onChange={(e) => patch("accentNavy", e.target.value)} />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Project / RERA details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {(
-              [
-                ["landArea", "Land Area"],
-                ["projectPhase", "Project Phase"],
-                ["sanctionBy", "Sanction of Plan by"],
-                ["planSanctionNo", "Plan Sanction / LP No."],
-                ["reraWebsite", "RERA Website"],
-                ["reraNumber", "RERA #"],
-                ["landSurveyDetails", "Land survey / bearing details"],
-                ["jurisdiction", "Jurisdiction"],
-              ] as const
-            ).map(([key, label]) => (
-              <div key={key}>
-                <Label>{label}</Label>
-                <Input className="mt-1" value={content[key]} onChange={(e) => patch(key, e.target.value)} />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Promoter, land owners & account</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <Label>Promoter Name</Label>
-              <Input className="mt-1" value={content.promoterName} onChange={(e) => patch("promoterName", e.target.value)} />
-            </div>
-            <div>
-              <Label>Promoter Address</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={2} value={content.promoterAddress} onChange={(e) => patch("promoterAddress", e.target.value)} />
-            </div>
-            <div>
-              <Label>Land Owner Names</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={3} value={content.landOwnerNames} onChange={(e) => patch("landOwnerNames", e.target.value)} />
-            </div>
-            <div>
-              <Label>Land Owner Address</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={2} value={content.landOwnerAddress} onChange={(e) => patch("landOwnerAddress", e.target.value)} />
-            </div>
-            <div>
-              <Label>RERA Collection Account</Label>
-              <Input className="mt-1" value={content.collectionAccountName} onChange={(e) => patch("collectionAccountName", e.target.value)} />
-            </div>
-            <div>
-              <Label>Payable At</Label>
-              <Input className="mt-1" value={content.payableAt} onChange={(e) => patch("payableAt", e.target.value)} />
-            </div>
-            <div>
-              <Label>Group display name (agent declaration)</Label>
-              <Input className="mt-1" value={content.groupDisplayName} onChange={(e) => patch("groupDisplayName", e.target.value)} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Office, KYC & agent copy</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <Label>Office Address</Label>
-              <Input className="mt-1" value={content.officeAddress} onChange={(e) => patch("officeAddress", e.target.value)} />
-            </div>
-            <div>
-              <Label>Office / CRM Email</Label>
-              <Input className="mt-1" value={content.officeEmail} onChange={(e) => { patch("officeEmail", e.target.value); setBrand({ ...brand, supportEmail: e.target.value }); }} />
-            </div>
-            <div>
-              <Label>Phone</Label>
-              <Input className="mt-1" value={content.supportPhone} onChange={(e) => patch("supportPhone", e.target.value)} />
-            </div>
-            <div>
-              <Label>KYC checklist (one per line)</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={5} value={content.kycChecklist} onChange={(e) => patch("kycChecklist", e.target.value)} />
-            </div>
-            <div>
-              <Label>Real estate agent declaration</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={4} value={content.agentDeclarationText} onChange={(e) => patch("agentDeclarationText", e.target.value)} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">Terms &amp; Conditions</CardTitle>
-            <p className="mt-1 text-xs text-gray-500">
-              Fully editable per project. This text appears on the customer form and on the printable
-              booking document.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <Label>Terms &amp; Conditions body</Label>
-              <textarea
-                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                rows={14}
-                value={content.termsText}
-                onChange={(e) => patch("termsText", e.target.value)}
-                placeholder="Paste or write project-specific terms…"
-              />
-            </div>
-            <div>
-              <Label>Declaration (shown under Terms on the customer form &amp; printout)</Label>
-              <textarea
-                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                rows={5}
-                value={content.declarationText}
-                onChange={(e) => patch("declarationText", e.target.value)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">Consent / Acknowledged &amp; Agreed page</CardTitle>
-            <p className="mt-1 text-xs text-gray-500">
-              Enable via “Consent / Acknowledged page” above. All fields below are editable and used
-              on the customer form and printable PDF.
-            </p>
-          </CardHeader>
-          <CardContent className="grid gap-3 lg:grid-cols-2">
-            <div>
-              <Label>To (promoter / company)</Label>
-              <Input className="mt-1" value={content.consentTo} onChange={(e) => patch("consentTo", e.target.value)} />
-            </div>
-            <div>
-              <Label>Subject</Label>
-              <Input className="mt-1" value={content.consentSubject} onChange={(e) => patch("consentSubject", e.target.value)} />
-            </div>
-            <div className="lg:col-span-2">
-              <Label>Intro (use {"{{projectName}}"} and {"{{landSurveyDetails}}"})</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={3} value={content.consentIntroText} onChange={(e) => patch("consentIntroText", e.target.value)} />
-            </div>
-            <div className="lg:col-span-2">
-              <Label>Consent body</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={5} value={content.consentBodyText} onChange={(e) => patch("consentBodyText", e.target.value)} />
-            </div>
-            <div className="lg:col-span-2">
-              <Label>Consent declaration box</Label>
-              <textarea className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" rows={6} value={content.consentDeclarationBox} onChange={(e) => patch("consentDeclarationBox", e.target.value)} />
-            </div>
-          </CardContent>
-        </Card>
+        ) : null}
       </div>
     </div>
   );

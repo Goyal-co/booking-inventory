@@ -2,14 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@booking/ui";
-import {
-  BOOKING_FORM_TEMPLATE_PRESETS,
-  mergeTemplateContent,
-  type BookingFormTemplateContent,
-  type BookingFormTemplateVariant,
-} from "@booking/validators";
+import { Button, Card, CardContent, CardHeader, CardTitle } from "@booking/ui";
 import { toast, Toaster } from "sonner";
+import { useAdminProject } from "@/hooks/use-admin-project";
+import { ProjectBookingFormTemplatePanel } from "@/components/project-booking-form-template";
 
 type LibraryRow = {
   id: string;
@@ -17,395 +13,156 @@ type LibraryRow = {
   description: string | null;
   companyName: string | null;
   updatedAt: string;
-  fieldMapping: Partial<BookingFormTemplateContent> | null;
 };
 
+/**
+ * Side-menu "Form Templates" = same per-project booking form template editor.
+ * One source of truth per project (customer form + printable download).
+ */
 export default function AdminTemplatesPage() {
-  const [templates, setTemplates] = useState<LibraryRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [companyName, setCompanyName] = useState("Goyal & Co.");
-  const [logoUrl, setLogoUrl] = useState("");
-  const [formTitle, setFormTitle] = useState("APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN");
-  const [tagline, setTagline] = useState("creating landmarks since 1971");
-  const [supportEmail, setSupportEmail] = useState("info.bng@goyalco.com");
-  const [content, setContent] = useState<BookingFormTemplateContent>(
-    BOOKING_FORM_TEMPLATE_PRESETS.example2
-  );
-  const [saving, setSaving] = useState(false);
-  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
-  const [assignProjectId, setAssignProjectId] = useState("");
+  const { projects, selectedProjectId, setSelectedProjectId, loading: projectsLoading } =
+    useAdminProject();
+  const [library, setLibrary] = useState<LibraryRow[]>([]);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [tRes, pRes] = await Promise.all([
-      fetch("/api/templates"),
-      fetch("/api/projects"),
-    ]);
-    const tData = await tRes.json().catch(() => ({}));
-    const pData = await pRes.json().catch(() => ({}));
-    setTemplates(tData.templates ?? []);
-    setProjects((pData.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })));
-    setLoading(false);
+  const loadLibrary = useCallback(async () => {
+    const res = await fetch("/api/templates");
+    const data = await res.json().catch(() => ({}));
+    setLibrary(data.templates ?? []);
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadLibrary();
+  }, [loadLibrary]);
 
-  const applyPreset = (variant: BookingFormTemplateVariant) => {
-    setContent(BOOKING_FORM_TEMPLATE_PRESETS[variant]);
-    setName(variant === "example1" ? "Template Example 1" : "Template Example 2");
-    setDescription(
-      variant === "example1"
-        ? "Photo cover + full KYC (Orchid Life style)"
-        : "Minimal cover + land owners + consent (Orchid South Park style)"
+  const applyLibrary = async (orgTemplateId: string) => {
+    if (!selectedProjectId) {
+      toast.error("Select a project first");
+      return;
+    }
+    setAssigning(true);
+    const res = await fetch(
+      `/api/projects/${selectedProjectId}/booking-form-template/assign`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgTemplateId }),
+      }
     );
-    setCompanyName(variant === "example2" ? "Goyal & Co." : "Goyal & Co. | Hariyana Group");
-    setSupportEmail(BOOKING_FORM_TEMPLATE_PRESETS[variant].officeEmail);
-  };
-
-  const startNew = () => {
-    setEditingId(null);
-    setName("");
-    setDescription("");
-    applyPreset("example1");
-    setName("");
-  };
-
-  const openEdit = async (id: string) => {
-    const res = await fetch(`/api/templates/${id}`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.template) {
-      toast.error("Failed to load template");
-      return;
-    }
-    const t = data.template;
-    setEditingId(t.id);
-    setName(t.name ?? "");
-    setDescription(t.description ?? "");
-    setCompanyName(t.companyName ?? "Goyal & Co.");
-    setLogoUrl(t.logoUrl ?? "");
-    setFormTitle(t.formTitle ?? "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN");
-    setTagline(t.tagline ?? "creating landmarks since 1971");
-    setSupportEmail(t.supportEmail ?? "");
-    setContent(mergeTemplateContent(t.fieldMapping ?? {}, ""));
-  };
-
-  const save = async () => {
-    if (!name.trim()) {
-      toast.error("Template name is required");
-      return;
-    }
-    setSaving(true);
-    const payload = {
-      name,
-      description,
-      logoUrl,
-      companyName,
-      tagline,
-      formTitle,
-      supportEmail,
-      primaryColor: content.accentTeal,
-      fieldMapping: content,
-    };
-    const res = await fetch(editingId ? `/api/templates/${editingId}` : "/api/templates", {
-      method: editingId ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    setSaving(false);
+    setAssigning(false);
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      toast.error(typeof data.error === "string" ? data.error : "Save failed");
+      toast.error("Failed to apply library template");
       return;
     }
-    toast.success(editingId ? "Template updated" : "Template created");
-    const data = await res.json();
-    setEditingId(data.template?.id ?? editingId);
-    load();
+    toast.success("Library template applied to this project");
+    // Force remount of editor by briefly clearing selection
+    const id = selectedProjectId;
+    setSelectedProjectId(null);
+    requestAnimationFrame(() => setSelectedProjectId(id));
   };
-
-  const remove = async (id: string) => {
-    if (!confirm("Delete this library template?")) return;
-    const res = await fetch(`/api/templates/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast.error("Delete failed");
-      return;
-    }
-    toast.success("Deleted");
-    if (editingId === id) startNew();
-    load();
-  };
-
-  const assignToProject = async () => {
-    if (!editingId || !assignProjectId) {
-      toast.error("Save/select a template and choose a project");
-      return;
-    }
-    const res = await fetch(`/api/projects/${assignProjectId}/booking-form-template/assign`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orgTemplateId: editingId }),
-    });
-    if (!res.ok) {
-      toast.error("Assign failed");
-      return;
-    }
-    toast.success("Template assigned to project — customer form will use it");
-  };
-
-  const patch = <K extends keyof BookingFormTemplateContent>(
-    key: K,
-    value: BookingFormTemplateContent[K]
-  ) => setContent((prev) => ({ ...prev, [key]: value }));
 
   return (
-    <div className="space-y-6 p-6">
-      <Toaster richColors />
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="p-4 sm:p-6">
+      <Toaster position="top-right" />
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-navy-600">Booking Form Templates</h1>
-          <p className="text-sm text-gray-600">
-            Create and edit reusable templates (Example 1 / Example 2 / custom), then assign them to
-            any project.
+          <h1 className="text-xl font-bold text-navy-600">Booking Form Template</h1>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">
+            Same template for this project drives the customer booking form and the printable /
+            downloadable filled form. Edit once here — both use it.
           </p>
         </div>
-        <Button onClick={startNew}>New Template</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-sm text-gray-600">
+            Project{" "}
+            <select
+              className="ml-1 rounded-lg border px-3 py-2 text-sm"
+              value={selectedProjectId ?? ""}
+              disabled={projectsLoading}
+              onChange={(e) => setSelectedProjectId(e.target.value || null)}
+            >
+              <option value="">Select project…</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowLibrary((v) => !v)}
+          >
+            {showLibrary ? "Hide library" : "Org library"}
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <Card>
+      {showLibrary ? (
+        <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="text-base">Library</CardTitle>
+            <CardTitle className="text-base">Org template library</CardTitle>
+            <p className="text-xs text-gray-500">
+              Optional starters. Applying copies into the selected project&apos;s template (does not
+              create a second live template).
+            </p>
           </CardHeader>
           <CardContent className="space-y-2">
-            {loading ? (
-              <p className="text-sm text-gray-500">Loading…</p>
-            ) : templates.length === 0 ? (
-              <p className="text-sm text-gray-500">No templates yet. Create one from Example 1 or 2.</p>
+            {library.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                No library entries yet. Use Example 1 / Example 2 on the project editor, or create
+                presets from a project save.
+              </p>
             ) : (
-              templates.map((t) => (
+              library.map((t) => (
                 <div
                   key={t.id}
-                  className={`rounded-lg border p-3 ${editingId === t.id ? "border-brand-500 bg-brand-50" : ""}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2"
                 >
-                  <button type="button" className="w-full text-left" onClick={() => openEdit(t.id)}>
+                  <div>
                     <p className="font-medium text-navy-600">{t.name}</p>
-                    <p className="text-xs text-gray-500">{t.description || t.companyName || "—"}</p>
-                  </button>
-                  <button
+                    <p className="text-xs text-gray-500">
+                      {t.companyName || "—"}
+                      {t.description ? ` · ${t.description}` : ""}
+                    </p>
+                  </div>
+                  <Button
                     type="button"
-                    className="mt-2 text-xs text-rose-600"
-                    onClick={() => remove(t.id)}
+                    size="sm"
+                    variant="outline"
+                    disabled={!selectedProjectId || assigning}
+                    onClick={() => applyLibrary(t.id)}
                   >
-                    Delete
-                  </button>
+                    Apply to project
+                  </Button>
                 </div>
               ))
             )}
           </CardContent>
         </Card>
+      ) : null}
 
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                {editingId ? "Edit template" : "Create template"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => applyPreset("example1")}>
-                  Start from Example 1
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => applyPreset("example2")}>
-                  Start from Example 2
-                </Button>
-                <Button size="sm" onClick={save} disabled={saving}>
-                  {saving ? "Saving…" : "Save Template"}
-                </Button>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label>Template name</Label>
-                  <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Description</Label>
-                  <Input className="mt-1" value={description} onChange={(e) => setDescription(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Company name</Label>
-                  <Input className="mt-1" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Logo URL</Label>
-                  <Input className="mt-1" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} />
-                </div>
-                <div className="sm:col-span-2">
-                  <Label>Form title</Label>
-                  <Input className="mt-1" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Tagline</Label>
-                  <Input className="mt-1" value={tagline} onChange={(e) => setTagline(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Support email</Label>
-                  <Input className="mt-1" value={supportEmail} onChange={(e) => setSupportEmail(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Project display name</Label>
-                  <Input className="mt-1" value={content.projectDisplayName} onChange={(e) => patch("projectDisplayName", e.target.value)} />
-                </div>
-                <div>
-                  <Label>Project name line 2</Label>
-                  <Input className="mt-1" value={content.projectNameLine2} onChange={(e) => patch("projectNameLine2", e.target.value)} />
-                </div>
-                <div>
-                  <Label>Promoter</Label>
-                  <Input className="mt-1" value={content.promoterName} onChange={(e) => patch("promoterName", e.target.value)} />
-                </div>
-                <div>
-                  <Label>Collection account</Label>
-                  <Input className="mt-1" value={content.collectionAccountName} onChange={(e) => patch("collectionAccountName", e.target.value)} />
-                </div>
-                <div>
-                  <Label>RERA #</Label>
-                  <Input className="mt-1" value={content.reraNumber} onChange={(e) => patch("reraNumber", e.target.value)} />
-                </div>
-                <div>
-                  <Label>Office email</Label>
-                  <Input className="mt-1" value={content.officeEmail} onChange={(e) => patch("officeEmail", e.target.value)} />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-4 text-sm">
-                {(
-                  [
-                    ["showCoverPhotos", "Cover photos"],
-                    ["showLandOwners", "Land owners"],
-                    ["showConsentPage", "Consent page"],
-                    ["showApplicationNo", "Application No"],
-                    ["showLandArea", "Land area"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <label key={key} className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(content[key])}
-                      onChange={(e) => patch(key, e.target.checked)}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-              <div>
-                <Label>Terms &amp; Conditions</Label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={10}
-                  value={content.termsText}
-                  onChange={(e) => patch("termsText", e.target.value)}
-                />
-              </div>
-              <div>
-                <Label>Declaration (under Terms)</Label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={4}
-                  value={content.declarationText}
-                  onChange={(e) => patch("declarationText", e.target.value)}
-                />
-              </div>
-              <div>
-                <Label>Land owner names</Label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={3}
-                  value={content.landOwnerNames}
-                  onChange={(e) => patch("landOwnerNames", e.target.value)}
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label>Consent — To</Label>
-                  <Input className="mt-1" value={content.consentTo} onChange={(e) => patch("consentTo", e.target.value)} />
-                </div>
-                <div>
-                  <Label>Consent — Subject</Label>
-                  <Input className="mt-1" value={content.consentSubject} onChange={(e) => patch("consentSubject", e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <Label>Consent intro</Label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={3}
-                  value={content.consentIntroText}
-                  onChange={(e) => patch("consentIntroText", e.target.value)}
-                />
-              </div>
-              <div>
-                <Label>Consent body</Label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={5}
-                  value={content.consentBodyText}
-                  onChange={(e) => patch("consentBodyText", e.target.value)}
-                />
-              </div>
-              <div>
-                <Label>Consent declaration box</Label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  rows={4}
-                  value={content.consentDeclarationBox}
-                  onChange={(e) => patch("consentDeclarationBox", e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-gray-500">
-                After assigning to a project, open the project booking-form editor for the full field
-                set (RERA, KYC list, logos, colours, etc.). Each project keeps its own active template
-                version used by the customer form and printable document.
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Assign to project</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[220px] flex-1">
-                <Label>Project</Label>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  value={assignProjectId}
-                  onChange={(e) => setAssignProjectId(e.target.value)}
-                >
-                  <option value="">Select project…</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <Button variant="outline" onClick={assignToProject} disabled={!editingId}>
-                Assign active template
-              </Button>
-              {assignProjectId ? (
-                <Link href={`/admin/projects/${assignProjectId}/booking-form-template`}>
-                  <Button variant="outline">Open project editor</Button>
-                </Link>
-              ) : null}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+      {!selectedProjectId ? (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <p className="text-sm text-gray-600">
+              Select a project above to edit its booking form template.
+            </p>
+            <p className="mt-2 text-xs text-gray-400">
+              Or open a project and use{" "}
+              <Link href="/admin/projects" className="text-brand-600 underline">
+                Projects
+              </Link>
+              .
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <ProjectBookingFormTemplatePanel key={selectedProjectId} projectId={selectedProjectId} />
+      )}
     </div>
   );
 }

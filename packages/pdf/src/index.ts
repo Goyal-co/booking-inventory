@@ -1,13 +1,16 @@
 import type { CostSheetResult } from "./types";
+import { normalizeMediaUrl } from "./media-url";
 
 export * from "./types";
+export * from "./sample-data";
+export { normalizeMediaUrl } from "./media-url";
 
 function inr(n: number) {
   return `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
 function num(n: number | null | undefined) {
-  if (n == null || !Number.isFinite(Number(n))) return "—";
+  if (n == null || !Number.isFinite(Number(n))) return "";
   return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
@@ -20,39 +23,145 @@ function esc(v: unknown) {
 }
 
 function val(step: Record<string, unknown> | undefined, key: string) {
-  if (!step) return "—";
+  if (!step) return "";
   const v = step[key];
-  if (Array.isArray(v)) return v.length ? v.join(", ") : "—";
-  if (v == null || String(v).trim() === "") return "—";
+  if (Array.isArray(v)) return v.length ? v.map(String).join(", ") : "";
+  if (v == null || String(v).trim() === "") return "";
   return String(v);
 }
 
-function section(title: string, rows: Array<[string, string]>) {
-  const body = rows
-    .map(
-      ([l, v]) =>
-        `<tr><td style="width:38%;color:#475569;padding:6px 8px;border-bottom:1px solid #E2E8F0">${esc(l)}</td><td style="padding:6px 8px;border-bottom:1px solid #E2E8F0;font-weight:600;color:#1E3A5F">${esc(v)}</td></tr>`
-    )
+function asList(step: Record<string, unknown> | undefined, key: string): string[] {
+  if (!step) return [];
+  const v = step[key];
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof v === "string" && v.trim()) {
+    return v.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function listHas(list: string[], opt: string) {
+  const o = opt.toLowerCase();
+  return list.some((s) => {
+    const x = s.toLowerCase();
+    return x === o || x.includes(o) || o.includes(x);
+  });
+}
+
+function yesNo(v: unknown) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return "";
+  if (s === "yes" || s === "true" || s === "1" || s === "accepted") return "Yes";
+  if (s === "no" || s === "false" || s === "0") return "No";
+  return String(v);
+}
+
+function mapNationality(raw: string) {
+  const s = raw.toLowerCase();
+  if (!s) return "";
+  if (s.includes("non") || s.includes("nri") || s.includes("oci") || s.includes("pio")) {
+    return "Non Resident";
+  }
+  if (s.includes("resident") || s.includes("indian") || s === "india") return "Resident";
+  return raw;
+}
+
+function mapOccupation(raw: string) {
+  const s = raw.toLowerCase();
+  if (!s) return "";
+  if (s.includes("employ") || s.includes("salaried") || s.includes("service")) return "Employed";
+  if (s.includes("profess")) return "Professional";
+  if (s.includes("business") || s.includes("self")) return "Business";
+  return raw;
+}
+
+function mapFunding(raw: string) {
+  const s = raw.toLowerCase();
+  if (!s) return "";
+  if (s.includes("self")) return "Self Funding";
+  if (s.includes("loan") || s.includes("home")) return "Home Loan";
+  return raw;
+}
+
+function display(v: unknown) {
+  const s = String(v ?? "").trim();
+  return s && s !== "—" ? s : "";
+}
+
+/** Label + filled underline (paper booking form style — not a table). */
+function uline(label: string, value: unknown, opts?: { full?: boolean; className?: string }) {
+  const text = display(value);
+  return `<div class="uline ${opts?.full ? "uline-full" : ""} ${opts?.className || ""}">
+  <span class="ulabel">${esc(label)} :</span>
+  <span class="uvalue">${text ? esc(text) : "&nbsp;"}</span>
+</div>`;
+}
+
+function ulinePair(a: [string, unknown], b: [string, unknown]) {
+  return `<div class="uline-row">${uline(a[0], a[1])}${uline(b[0], b[1])}</div>`;
+}
+
+function ulineTriple(a: [string, unknown], b: [string, unknown], c: [string, unknown]) {
+  return `<div class="uline-row three">${uline(a[0], a[1])}${uline(b[0], b[1])}${uline(c[0], c[1])}</div>`;
+}
+
+function checkboxes(label: string | null, options: string[], selected: string | string[]) {
+  const sel = Array.isArray(selected)
+    ? selected.map((s) => String(s))
+    : selected
+      ? [String(selected)]
+      : [];
+  const boxes = options
+    .map((opt) => {
+      const on = listHas(sel, opt);
+      return `<label class="chk"><span class="box">${on ? "✓" : ""}</span> ${esc(opt)}</label>`;
+    })
     .join("");
-  return `<div class="sec"><h3>${esc(title)}</h3><table>${body}</table></div>`;
+  return `<div class="chk-row">${label ? `<span class="ulabel">${esc(label)} :</span>` : ""}${boxes}</div>`;
+}
+
+function preferredTick(preferred: string[], keys: string[]) {
+  const on = keys.some((k) => listHas(preferred, k));
+  return `<span class="box" style="margin-right:6px">${on ? "✓" : ""}</span>`;
+}
+
+function sectionTitle(title: string) {
+  return `<h3 class="sec-title">${esc(title)}</h3>`;
+}
+
+function detailsBanner(label: string, teal: string, navy: string) {
+  return `<div class="details-banner">
+  <div class="details-stripe" style="background-image:repeating-linear-gradient(-45deg,${teal} 0 4px,${navy} 4px 8px)"></div>
+  <div class="details-label" style="background:${teal};color:${navy}">${esc(label)}</div>
+</div>`;
+}
+
+function tealBanner(label: string, teal: string, navy: string) {
+  return `<div class="teal-banner" style="background:${teal};color:${navy}">${esc(label)}</div>`;
 }
 
 function wingOf(result: CostSheetResult) {
-  return result.wing || result.towerName || "—";
+  return result.wing || result.towerName || "";
 }
 
 function apartmentOf(result: CostSheetResult) {
-  return result.apartmentNo || result.unitNumber || "—";
+  return result.apartmentNo || result.unitNumber || "";
 }
 
 function accommodationOf(result: CostSheetResult) {
-  return result.accommodationType || result.configuration || "—";
+  return result.accommodationType || result.configuration || "";
 }
 
 function floorOf(result: CostSheetResult) {
-  return result.floorLabel || (result.floor != null ? String(result.floor) : "—");
+  return result.floorLabel || (result.floor != null ? String(result.floor) : "");
 }
 
+function amountInWordsFallback(n: number) {
+  if (!n || !Number.isFinite(n)) return "";
+  return `${inr(n)} only`;
+}
+
+/** Standalone / embeddable cost sheet — paper underline layout (full HTML document). */
 export function costSheetToHtml(
   result: CostSheetResult,
   meta: {
@@ -62,59 +171,173 @@ export function costSheetToHtml(
     customerName?: string;
   }
 ) {
-  const inventoryRows = [
-    ["Wing", wingOf(result) || meta.towerName],
-    ["Apartment No.", apartmentOf(result) || meta.unitNumber],
-    ["Accommodation Type", accommodationOf(result)],
-    ["Floors", floorOf(result)],
-    ["Saleable Area (Sq.ft.)", num(result.saleableAreaSqft)],
-    ["Carpet Area (Sq.Mt)* Excluding Balcony / Utility Area", num(result.carpetAreaSqm)],
-    ["Carpet Area (Sq.ft)* Excluding Balcony / Utility Area", num(result.carpetAreaSqft)],
-    ["Balcony Area (Sq.Mt.)", num(result.balconyAreaSqm)],
-    ["Balcony Area (Sq.ft.)", num(result.balconyAreaSqft)],
-    ["Unit Price per sq.ft. on Saleable Area (Rs.)", inr(result.saleablePricePerSqft)],
-    ["Unit Price per sq.ft. on Carpet Area (Rs.)", inr(result.carpetPricePerSqft)],
-    ["Basic Sale Value", inr(result.basicSaleValue)],
-    [`GST applicable on Basic Sale Value (${result.gstPercent ?? 5}%)`, inr(result.gstAmount)],
-    ["Basic Sale Value with GST (A)", inr(result.basicSaleValueWithGst)],
-  ];
+  const teal = "#2BB8C8";
+  const navy = "#1E3A5F";
+  const body = apartmentDetailsPaper(result, meta);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cost Sheet — ${esc(meta.projectName)}</title>
+<style>${paperCss(teal, navy)}</style></head><body>
+<div class="no-print" style="padding:12px 16px"><button onclick="window.print()" style="background:${teal};color:#fff;border:0;padding:10px 18px;border-radius:6px;font-weight:600;cursor:pointer">Print / Save as PDF</button></div>
+<div class="page">
+  <div class="page-inner">
+    ${detailsBanner("COST SHEET", teal, navy)}
+    <p class="meta-line">${esc(meta.projectName)} · Unit ${esc(meta.unitNumber || apartmentOf(result))} · ${esc(meta.customerName || "")}</p>
+    ${body}
+  </div>
+</div>
+</body></html>`;
+}
 
-  const paymentRows = result.paymentSchedule
-    .map(
-      (s) =>
-        `<tr><td>${esc(s.stageName)}</td><td style="text-align:right">${s.percentage != null ? `${s.percentage}%` : "—"}</td><td style="text-align:right">${inr(s.amount)}</td></tr>`
+function apartmentDetailsPaper(
+  result: CostSheetResult,
+  meta: { projectName: string; unitNumber: string; towerName: string; carParks?: string }
+) {
+  const unit = apartmentOf(result) || meta.unitNumber;
+  const wing = wingOf(result) || meta.towerName;
+  const otherTotal = result.otherChargesTotal;
+  const otherLines = (result.otherCharges || [])
+    .map((c) => `${c.name}: ${inr(c.amount)}`)
+    .join("; ");
+
+  return `
+${sectionTitle("Details of Residential Apartment Applied For")}
+${ulineTriple(
+  ["Type of Apartment", accommodationOf(result)],
+  ["Unit No", unit],
+  ["Wing", wing]
+)}
+${uline("Saleable Area / Super builtup area in sqft", num(result.saleableAreaSqft), { full: true })}
+${ulinePair(
+  ["Carpet area in sqft*", num(result.carpetAreaSqft)],
+  ["Carpet area in sqmt*", num(result.carpetAreaSqm)]
+)}
+<p class="note">* Carpet Area as per RERA</p>
+${ulinePair(
+  ["Exclusive balcony area in sqft", num(result.balconyAreaSqft)],
+  ["Exclusive balcony area in sqmt", num(result.balconyAreaSqm)]
+)}
+${uline("No of car parks", meta.carParks || "", { full: true })}
+${uline(
+  "Unit Price per sqft on saleable area / super builtup area (Rs)",
+  inr(result.saleablePricePerSqft),
+  { full: true }
+)}
+${uline("Unit Price per sqft on carpet area (Rs)", inr(result.carpetPricePerSqft), { full: true })}
+${uline("Basic Sale Value (Rs)", inr(result.basicSaleValue), { full: true })}
+${uline(`GST (${result.gstPercent ?? 5}%) (Rs)`, inr(result.gstAmount), { full: true })}
+${uline("Basic Sale Value with GST (A) (Rs)", inr(result.basicSaleValueWithGst), { full: true })}
+${uline(
+  "Other cost charges & expenses (B) (Rs)",
+  otherLines || inr(otherTotal),
+  { full: true }
+)}
+<p class="note">Inclusive of GST as applicable</p>
+${uline("Gross Apartment Value (A+B) (Rs)", inr(result.grossApartmentValue), { full: true })}
+${uline("In words (Rs)", amountInWordsFallback(result.grossApartmentValue), { full: true })}
+${uline("Offers if applicable", "", { full: true })}
+${
+  result.paymentSchedule?.length
+    ? `<div class="pay-sched">
+  ${sectionTitle("Payment Schedule")}
+  ${result.paymentSchedule
+    .map((s) =>
+      uline(
+        s.stageName + (s.percentage != null ? ` (${s.percentage}%)` : ""),
+        inr(s.amount),
+        { full: true }
+      )
     )
-    .join("");
+    .join("")}
+</div>`
+    : ""
+}`;
+}
 
-  const paymentTotal = result.paymentSchedule.reduce((sum, s) => sum + Number(s.amount || 0), 0);
-  // Do not sum display % — FIXED booking rows + BALANCE residual would double-count the 10% booking block
-
-  const otherRows = result.otherCharges
-    .map((c) => `<tr><td>${esc(c.name)}</td><td style="text-align:right">${inr(c.amount)}</td></tr>`)
-    .join("");
-
-  const inventoryHtml = inventoryRows
-    .map(([l, v]) => `<tr><td>${esc(l)}</td><td style="text-align:right;font-weight:600">${esc(v)}</td></tr>`)
-    .join("");
-
-  return `<div class="cost-sheet">
-<h2>Details of Residential Apartment Applied For</h2>
-<table class="grid">${inventoryHtml}</table>
-<p style="font-size:12px;color:#64748B;margin:8px 0 0">Booking amount target = 10% of Basic Sale Value with GST (A). Balance Booking = 10% of A − READ / token already paid.</p>
-<h3>Payment Schedule</h3>
-<table class="grid">
-<thead><tr><th>Milestone</th><th style="text-align:right">%</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${paymentRows}
-<tr class="total"><td>TOTAL</td><td style="text-align:right">—</td><td style="text-align:right">${inr(paymentTotal)}</td></tr>
-</tbody></table>
-<h3>Other Charges (B)</h3>
-<table class="grid">
-<tbody>${otherRows}
-<tr class="total"><td>Sub Total (B)</td><td style="text-align:right" colspan="1">${inr(result.otherChargesTotal)}</td></tr>
-<tr class="gross"><td>Gross Apartment Value (A+B)</td><td style="text-align:right">${inr(result.grossApartmentValue)}</td></tr>
-</tbody></table>
+function kycBox(checklist: string, teal: string, navy: string) {
+  const items = checklist
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!items.length) return "";
+  const half = Math.ceil(items.length / 2);
+  const col = (arr: string[]) =>
+    arr.map((i) => `<li><span class="sq"></span> ${esc(i)}</li>`).join("");
+  return `
+${sectionTitle("Request you to submit the following KYC documents of all the applicants :")}
+<div class="kyc-box" style="background:${teal};color:${navy}">
+  <ul class="kyc-col">${col(items.slice(0, half))}</ul>
+  <ul class="kyc-col">${col(items.slice(half))}</ul>
 </div>`;
 }
+
+function paperCss(teal: string, navy: string) {
+  return `
+@page{margin:12mm 10mm}
+*{box-sizing:border-box}
+body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};margin:0;padding:0;background:#fff;font-size:12px;line-height:1.45}
+.page{position:relative;padding:18px 22px 24px 36px;min-height:100vh;border-right:7px solid ${teal};page-break-after:always}
+.page:last-child{page-break-after:auto}
+.page::before{content:"";position:absolute;left:0;top:0;bottom:0;width:18px;background-image:repeating-linear-gradient(-45deg,${navy} 0 5px,#152a45 5px 10px)}
+.page-inner{position:relative}
+.cover{display:flex;flex-direction:column;min-height:88vh;padding:8px 12px 24px}
+.cover-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:48px}
+.apt-boxes{display:inline-flex;gap:4px;vertical-align:middle}
+.apt-boxes span{display:inline-block;width:18px;height:22px;border:1.5px solid ${navy}}
+.cover-title{text-align:center;font-size:20px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;color:${navy};margin:24px 0 28px;line-height:1.35}
+.cover-logo{text-align:center;margin:20px auto;max-width:280px}
+.cover-logo img{max-width:100%;max-height:160px;object-fit:contain}
+.cover-project{text-align:center;font-size:28px;font-weight:300;letter-spacing:.08em;color:#64748B;margin-top:8px}
+.cover-project strong{display:block;font-size:36px;font-weight:800;color:${navy};letter-spacing:.04em;margin-top:4px}
+.cover-foot{margin-top:auto;text-align:center;padding-top:48px}
+.dual-logos{display:flex;align-items:center;justify-content:center;gap:28px;margin-bottom:12px}
+.dual-logos img{max-height:56px;max-width:140px;object-fit:contain}
+.dual-logos .divider{width:1px;height:48px;background:${navy};opacity:.35}
+.tagline{font-style:italic;font-size:13px;color:#0f172a}
+.details-banner{display:flex;margin:0 0 16px -8px}
+.details-stripe{width:36px;flex-shrink:0}
+.details-label{flex:1;padding:10px 18px;font-size:26px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
+.teal-banner{text-align:center;padding:12px 16px;font-size:22px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:0 0 18px}
+.sec-title{margin:18px 0 10px;font-size:13px;font-weight:800;text-transform:uppercase;color:${navy};letter-spacing:.03em}
+.uline{display:flex;align-items:baseline;gap:6px;margin:7px 0;min-width:0;flex:1}
+.uline-full{width:100%}
+.uline-row{display:flex;gap:18px;margin:7px 0}
+.uline-row.three .uline{flex:1}
+.ulabel{flex-shrink:0;font-weight:600;color:${navy};white-space:nowrap}
+.uvalue{flex:1;min-width:40px;border-bottom:1.5px solid ${navy};padding:0 4px 2px;font-weight:500;color:#0f172a;min-height:1.15em}
+.chk-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin:8px 0}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+.box{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.5px solid ${navy};font-size:10px;line-height:1;flex-shrink:0}
+.note{font-size:10px;color:#64748B;margin:2px 0 8px 0}
+.meta-line{font-size:12px;color:#64748B;margin:0 0 12px}
+.kyc-box{display:flex;gap:24px;padding:14px 18px;margin:8px 0 20px;border-radius:2px}
+.kyc-col{margin:0;padding:0;list-style:none;flex:1}
+.kyc-col li{display:flex;align-items:flex-start;gap:8px;margin:6px 0;font-weight:600;font-size:12px}
+.sq{display:inline-block;width:10px;height:10px;border:1.5px solid currentColor;margin-top:3px;flex-shrink:0;background:transparent}
+.prose{font-size:11px;line-height:1.55;color:#475569;white-space:pre-wrap}
+.callout{background:${teal};color:${navy};padding:14px 16px;font-size:11px;line-height:1.5;margin:10px 0;white-space:pre-wrap}
+.sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px 40px;margin-top:36px}
+.sign-line{border-top:1.5px solid ${navy};margin-top:40px;padding-top:6px;font-size:11px}
+.footer-block{margin-top:40px;text-align:center;font-size:11px;color:#334155}
+.footer-block strong{display:block;font-size:12px;color:${navy};margin-bottom:4px}
+.enquiry-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:8px 0 12px}
+.preview-ribbon{background:#FEF3C7;color:#92400E;text-align:center;font-weight:700;font-size:12px;padding:8px;margin:0 0 12px;letter-spacing:.04em}
+.no-print{margin-bottom:12px}
+@media print{body{padding:0}.no-print{display:none!important}.page{min-height:auto}}
+`;
+}
+
+type LayoutBlock = {
+  id: string;
+  visible?: boolean;
+  order?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+};
+
+type PrintLayoutOpt = {
+  mode?: "flow" | "freeform";
+  blocks?: LayoutBlock[];
+};
 
 export type PrintBranding = {
   logoUrl?: string | null;
@@ -128,6 +351,32 @@ export type PrintBranding = {
   content?: Record<string, unknown> | null;
 };
 
+function wrapBlock(id: string, html: string, layout?: PrintLayoutOpt) {
+  if (!html) return "";
+  const block = layout?.blocks?.find((b) => b.id === id);
+  if (block && block.visible === false) return "";
+  if (layout?.mode === "freeform" && block) {
+    const x = Math.max(0, Math.min(100, Number(block.x ?? 0)));
+    const y = Math.max(0, Number(block.y ?? 0));
+    const w = Math.max(10, Math.min(100, Number(block.w ?? 100)));
+    return `<div class="layout-block" data-block="${esc(id)}" style="left:${x}%;top:${y}%;width:${w}%">${html}</div>`;
+  }
+  return `<div class="layout-block flow" data-block="${esc(id)}">${html}</div>`;
+}
+
+function orderedIds(layout?: PrintLayoutOpt, fallback: string[] = []): string[] {
+  const blocks = layout?.blocks ?? [];
+  if (!blocks.length) return fallback;
+  return [...blocks]
+    .filter((b) => b.visible !== false)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((b) => b.id);
+}
+
+function page(inner: string) {
+  return `<div class="page"><div class="page-inner">${inner}</div></div>`;
+}
+
 export function digitalFormToPrintHtml(
   form: {
     page1Snapshot: Record<string, unknown>;
@@ -139,37 +388,44 @@ export function digitalFormToPrintHtml(
     customerName?: string;
     customerPhone?: string;
     customerEmail?: string;
+    preview?: boolean;
   }
 ) {
   const page1 = form.page1Snapshot as unknown as CostSheetResult;
   const fd = (form.formData ?? {}) as Record<string, Record<string, unknown>>;
   const branding = options?.branding ?? {};
   const content = (branding.content ?? {}) as Record<string, unknown>;
+  const layout = (content.printLayout ?? null) as PrintLayoutOpt | null;
   const teal = String(content.accentTeal || branding.primaryColor || "#2BB8C8");
   const navy = String(content.accentNavy || "#1E3A5F");
   const projectName = String(
     content.projectDisplayName || branding.projectName || page1.projectName || ""
   );
   const projectLine2 = String(content.projectNameLine2 || "");
+  const fullProject = `${projectName}${projectLine2 ? ` ${projectLine2}` : ""}`.trim();
   const unitNumber = String(
     branding.unitNumber || page1.apartmentNo || page1.unitNumber || ""
   );
   const applicant = fd.applicant ?? {};
   const customerName =
     options?.customerName ||
-    [val(applicant, "firstName"), val(applicant, "surname")].filter((x) => x !== "—").join(" ") ||
+    [val(applicant, "firstName"), val(applicant, "surname")].filter(Boolean).join(" ") ||
     val(applicant, "fullName");
 
-  const costHtml = costSheetToHtml(page1, {
-    projectName,
+  const costOnly = apartmentDetailsPaper(page1, {
+    projectName: fullProject,
     unitNumber,
     towerName: String(page1.wing ?? page1.towerName ?? ""),
-    customerName,
+    carParks: String(
+      (page1 as unknown as Record<string, unknown>).carParks ??
+        (page1 as unknown as Record<string, unknown>).noOfCarParks ??
+        ""
+    ),
   });
 
   if (options?.templateHtml) {
     return options.templateHtml
-      .replace(/\{\{page1\}\}/g, costHtml)
+      .replace(/\{\{page1\}\}/g, costOnly)
       .replace(/\{\{formData\}\}/g, JSON.stringify(form.formData ?? {}, null, 2))
       .replace(/\{\{customerName\}\}/g, esc(customerName));
   }
@@ -187,200 +443,358 @@ export function digitalFormToPrintHtml(
   const consent = fd.consent ?? {};
   const cover = fd.cover ?? {};
 
-  const bodySections = [
-    section("Cover", [
-      ["Date", val(cover, "date")],
-      ["Apartment No.", unitNumber],
-      ["Project", `${projectName}${projectLine2 ? ` ${projectLine2}` : ""}`],
-    ]),
-    costHtml,
-    section("Promoter", [
-      ["Name", String(content.promoterName || "—")],
-      ["Address", String(content.promoterAddress || "—")],
-    ]),
-    content.showLandOwners
-      ? section("Land Owners", [
-          ["Names", String(content.landOwnerNames || "—")],
-          ["Address", String(content.landOwnerAddress || "—")],
-        ])
-      : "",
-    section("Project Details", [
-      ...(content.showLandArea ? [["Land Area", String(content.landArea || "—")] as [string, string]] : []),
-      ["Project Phase", String(content.projectPhase || "—")],
-      ["Project Name", projectName],
-      ["Sanction of Plan by", String(content.sanctionBy || "—")],
-      ["Plan Sanction / LP No.", String(content.planSanctionNo || "—")],
-      ["RERA Website", String(content.reraWebsite || "—")],
-      ["RERA #", String(content.reraNumber || "—")],
-    ]),
-    section("First Applicant", [
-      ["First Name", val(applicant, "firstName")],
-      ["Surname", val(applicant, "surname")],
-      ["Father / Spouse Name", val(applicant, "fatherHusbandName") !== "—" ? val(applicant, "fatherHusbandName") : val(applicant, "fatherSpouseName")],
-      ["Date of Birth", val(applicant, "dateOfBirth")],
-      ["Marital Status", val(applicant, "maritalStatus")],
-      ["PAN No.", val(applicant, "pan")],
-      ["AADHAR No.", val(applicant, "aadhar")],
-      ["Nationality", val(applicant, "nationality")],
-      ["Mobile", options?.customerPhone || val(comm, "mobile")],
-      ["Email", options?.customerEmail || val(comm, "email")],
-    ]),
-    section("Joint Applicant", [
-      ["First Name", val(joint, "firstName")],
-      ["Surname", val(joint, "surname")],
-      ["Father / Spouse Name", val(joint, "fatherHusbandName")],
-      ["Date of Birth", val(joint, "dateOfBirth")],
-      ["Marital Status", val(joint, "maritalStatus")],
-      ["PAN No.", val(joint, "pan")],
-      ["AADHAR No.", val(joint, "aadhar")],
-      ["Nationality", val(joint, "nationality")],
-    ]),
-    section("Geographic Information", [
-      ["Communication Address", val(geo, "communicationAddress") !== "—" ? val(geo, "communicationAddress") : val(fd.communication, "address")],
-      ["Permanent Address", val(geo, "permanentAddress") !== "—" ? val(geo, "permanentAddress") : val(fd.communication, "permanentAddress")],
-    ]),
-    section("Occupation", [
-      ["Occupation (First)", val(occ, "occupationType") !== "—" ? val(occ, "occupationType") : val(occ, "occupation")],
-      ["Organisation", val(occ, "organizationName")],
-      ["Designation", val(occ, "designation")],
-      ["Place of Work", val(occ, "workPlace")],
-      ["Occupation (Second)", val(occ, "occupationType2")],
-      ["Organisation (Second)", val(occ, "organizationName2")],
-      ["Designation (Second)", val(occ, "designation2")],
-    ]),
-    section("Source of Fund", [
-      ["Funding", val(fund, "fundingType") !== "—" ? val(fund, "fundingType") : val(fund, "source")],
-      ["Home Loan %", val(fund, "homeLoanPercent")],
-      ["Annual Income", val(fund, "annualIncome")],
-    ]),
-    section("Authority (POA)", [
-      ["Name", val(auth, "authorityName")],
-      ["Relationship", val(auth, "authorityRelation")],
-      ["Contact", val(auth, "authorityMobile")],
-      ["PAN", val(auth, "authorityPan")],
-      ["AADHAR", val(auth, "authorityAadhar")],
-      ["Email", val(auth, "authorityEmail")],
-      ["Address", val(auth, "authorityAddress")],
-    ]),
-    section("Source of Enquiry", [
-      ["Sources", val(enquiry, "sources") !== "—" ? val(enquiry, "sources") : val(enquiry, "source")],
-      ["Details", val(enquiry, "sourceDetails") !== "—" ? val(enquiry, "sourceDetails") : val(enquiry, "campaign")],
-    ]),
-    section("Real Estate Agents (Optional)", [
-      ["Agent Name", val(agent, "agentName")],
-      ["Represented By", val(agent, "representedBy")],
-      ["Contact", val(agent, "agentPhone")],
-      ["Email", val(agent, "agentEmail")],
-      ["RERA #", val(agent, "reraNumber")],
-    ]),
-    section("Refundable Earnest Amount Deposit (READ)", [
-      ["Cheque / Wire / Draft No.", val(deposit, "instrumentNo")],
-      ["UPI Transaction No.", val(deposit, "upiNo")],
-      ["Dated", val(deposit, "dated")],
-      ["Drawn on", val(deposit, "drawnOn")],
-      ["Place", val(deposit, "place")],
-      ["Amount", val(deposit, "amount")],
-      ["In words", val(deposit, "amountInWords")],
-      ["In favour of", String(content.collectionAccountName || "—")],
-      ["Payable at", String(content.payableAt || "—")],
-    ]),
-    `<div class="sec page-break"><div class="banner">Terms &amp; Conditions</div>
-      <div class="prose">${esc(String(content.termsText || "")).replace(/\n/g, "<br/>")}</div>
-      <h3 style="margin-top:16px">Declaration</h3>
-      <div class="callout">${esc(String(content.declarationText || "")).replace(/\n/g, "<br/>")}</div>
-      <table style="margin-top:12px">${[
-        ["Accepted", val(terms, "accepted")],
-        ["Date", val(terms, "signDate")],
-        ["Place", val(terms, "signPlace")],
-      ]
-        .map(
-          ([l, v]) =>
-            `<tr><td style="width:38%;color:#475569;padding:6px 8px;border-bottom:1px solid #E2E8F0">${esc(l)}</td><td style="padding:6px 8px;border-bottom:1px solid #E2E8F0;font-weight:600">${esc(v)}</td></tr>`
-        )
-        .join("")}</table>
-    </div>`,
-    content.showConsentPage
-      ? `<div class="sec page-break"><div class="banner">Acknowledged and Agreed</div>
-      <p><strong>To:</strong> ${esc(String(content.consentTo || content.promoterName || ""))}</p>
-      <p><strong>Subject:</strong> ${esc(String(content.consentSubject || ""))}</p>
-      <p style="margin-top:12px">${esc(
-        String(content.consentIntroText || "")
-          .replace(/\{\{projectName\}\}/g, projectName)
-          .replace(/\{\{landSurveyDetails\}\}/g, String(content.landSurveyDetails || ""))
-      ).replace(/\n/g, "<br/>")}</p>
-      <table style="margin:12px 0">${[
-        ["Applicant Name", val(consent, "name") !== "—" ? val(consent, "name") : val(consent, "fullName")],
-        ["S/o / D/o / W/o", val(consent, "relative") !== "—" ? val(consent, "relative") : val(consent, "relativeName")],
-        ["Age", val(consent, "age")],
-        ["Residing at", val(consent, "address")],
-        ["Accepted", val(consent, "accepted")],
-      ]
-        .map(
-          ([l, v]) =>
-            `<tr><td style="width:38%;color:#475569;padding:6px 8px;border-bottom:1px solid #E2E8F0">${esc(l)}</td><td style="padding:6px 8px;border-bottom:1px solid #E2E8F0;font-weight:600">${esc(v)}</td></tr>`
-        )
-        .join("")}</table>
-      <div class="prose">${esc(String(content.consentBodyText || "")).replace(/\n/g, "<br/>")}</div>
-      <div class="callout" style="margin-top:12px">${esc(String(content.consentDeclarationBox || "")).replace(/\n/g, "<br/>")}</div>
-    </div>`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const showLandOwners =
+    Boolean(content.showLandOwners) &&
+    layout?.blocks?.find((b) => b.id === "landOwners")?.visible !== false;
+  const showConsent =
+    Boolean(content.showConsentPage) &&
+    layout?.blocks?.find((b) => b.id === "consent")?.visible !== false;
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Booking Form — ${esc(projectName)}</title>
-<style>
-@page{margin:16mm}
-body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};margin:0;padding:24px;background:#fff}
-.header{border-bottom:3px solid ${teal};padding-bottom:16px;margin-bottom:20px;display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
-.logo{max-height:56px;max-width:180px}
-h1{font-size:18px;margin:0 0 4px;text-transform:uppercase;letter-spacing:.02em}
-.project{font-size:22px;font-weight:800;color:${navy}}
-.banner{background:${teal};color:${navy};font-weight:800;font-size:18px;padding:8px 14px;margin:24px 0 12px;text-transform:uppercase}
-.sec{margin:18px 0;page-break-inside:avoid}
-.page-break{page-break-before:always}
-.sec h3,.cost-sheet h2,.cost-sheet h3{margin:0 0 8px;font-size:14px;text-transform:uppercase;color:${navy}}
-.prose{font-size:12px;line-height:1.55;color:#334155;white-space:pre-wrap}
-.callout{background:#F0FDFA;border-left:4px solid ${teal};padding:12px 14px;font-size:12px;line-height:1.5;color:#1E3A5F}
-table{width:100%;border-collapse:collapse}
-table.grid td,table.grid th{border:1px solid #CBD5E1;padding:7px 9px;font-size:12px}
-.total td{background:#EEF2FF;font-weight:700}
-.gross td{background:#FEF3C7;font-weight:700}
-.muted{color:#64748B;font-size:12px}
-.sign{margin-top:36px;display:grid;grid-template-columns:1fr 1fr;gap:28px;page-break-inside:avoid}
-.sign .line{border-top:1px solid ${navy};margin-top:48px;padding-top:6px;font-size:12px}
-.footer{margin-top:28px;padding-top:12px;border-top:1px solid #E2E8F0;text-align:center;font-size:11px;color:#64748B}
-@media print{body{padding:0}.no-print{display:none!important}}
-</style></head><body>
-<div class="no-print" style="margin-bottom:16px">
-  <button onclick="window.print()" style="background:${teal};color:#fff;border:0;padding:10px 18px;border-radius:6px;font-weight:600;cursor:pointer">Print / Save as PDF</button>
-  <span class="muted" style="margin-left:12px">Use this printout for physical customer signatures.</span>
+  const coverDate = val(cover, "date") || val(terms, "signDate");
+  const aptDigits = unitNumber.replace(/\D/g, "").slice(0, 5).padEnd(5, " ");
+  const aptBoxes = aptDigits
+    .split("")
+    .map((d) => `<span>${d.trim() ? esc(d) : ""}</span>`)
+    .join("");
+
+  const projectLogo = normalizeMediaUrl(
+    String(content.projectLogoUrl || content.heroImageUrl || "")
+  );
+  const secondaryLogo = normalizeMediaUrl(String(content.secondaryLogoUrl || ""));
+  const companyLogo = normalizeMediaUrl(branding.logoUrl);
+
+  const marital = val(applicant, "maritalStatus");
+  const jointMarital = val(joint, "maritalStatus");
+  const nationality = mapNationality(val(applicant, "nationality"));
+  const jointNat = mapNationality(val(joint, "nationality"));
+
+  const fundingRaw = mapFunding(val(fund, "fundingType") || val(fund, "source"));
+  let enquirySources = asList(enquiry, "sources");
+  if (!enquirySources.length && val(enquiry, "source")) {
+    enquirySources = asList(enquiry, "source");
+  }
+  const preferred = asList(comm, "preferred");
+  const enquiryList = [
+    "Newspaper Ad",
+    "Magazines",
+    "Hoarding",
+    "Site Walkin",
+    "Office Walkin",
+    "Exhibition/Road shows",
+    "Website",
+    "Online Portals",
+    "Social Media",
+    "T.V.",
+    "Radio",
+    "Reference",
+    "Presales",
+    "Real Estate Agent",
+  ];
+
+  const mobile1 = options?.customerPhone || val(comm, "mobile");
+  const email1 = options?.customerEmail || val(comm, "email");
+  const mobile2 = val(comm, "jointMobile") || val(comm, "mobile2") || val(joint, "mobile");
+  const email2 = val(comm, "jointEmail") || val(comm, "email2") || val(joint, "email");
+  const occ1 = mapOccupation(val(occ, "occupationType") || val(occ, "occupation"));
+  const occ2 = mapOccupation(val(occ, "occupationType2"));
+  const termsAccepted = yesNo(val(terms, "accepted"));
+  const consentAccepted = yesNo(val(consent, "accepted"));
+
+  const parts: Record<string, string> = {
+    header: page(`
+<div class="cover">
+  <div class="cover-top">
+    <div>${uline("DATE", coverDate)}</div>
+    <div><span class="ulabel">Apartment No :</span> <span class="apt-boxes">${aptBoxes}</span></div>
+  </div>
+  <div class="cover-title">${esc(
+    branding.formTitle || "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN"
+  )}</div>
+  <div class="cover-logo">
+    ${projectLogo ? `<img src="${esc(projectLogo)}" alt="project"/>` : ""}
+    <div class="cover-project">
+      ${esc(projectName || "ORCHID")}
+      ${projectLine2 ? `<strong>${esc(projectLine2)}</strong>` : ""}
+    </div>
+  </div>
+  <div class="cover-foot">
+    <div class="dual-logos">
+      ${companyLogo ? `<img src="${esc(companyLogo)}" alt="company"/>` : `<strong>${esc(branding.companyName || "Goyal & Co.")}</strong>`}
+      <div class="divider"></div>
+      ${
+        secondaryLogo
+          ? `<img src="${esc(secondaryLogo)}" alt="secondary"/>`
+          : `<strong>${esc(String(content.secondaryCompanyName || "Hariyana Group"))}</strong>`
+      }
+    </div>
+    <div class="tagline">${esc(branding.tagline || "creating landmarks since 1971")}</div>
+  </div>
+</div>`),
+
+    cover: "", // covered by header/cover page
+
+    costSheet: page(`
+${costOnly}
+${kycBox(String(content.kycChecklist || ""), teal, navy)}
+${detailsBanner("DETAILS", teal, navy)}
+${sectionTitle("Details of the Promoter")}
+${uline("Name", content.promoterName, { full: true })}
+${uline("Address", content.promoterAddress, { full: true })}
+${
+  showLandOwners
+    ? `${sectionTitle("Details of the Land Owner")}
+${uline("Name of the Owners", content.landOwnerNames, { full: true })}
+${uline("Address of the Owners", content.landOwnerAddress, { full: true })}`
+    : ""
+}`),
+
+    promoter: "", // merged into costSheet page for paper fidelity
+    landOwners: "",
+    projectDetails: page(`
+${detailsBanner("DETAILS", teal, navy)}
+${sectionTitle("Details of the Project")}
+${uline("Project Phase", content.projectPhase, { full: true })}
+${uline("Project Name", fullProject, { full: true })}
+${uline("Sanction of Plan by", content.sanctionBy, { full: true })}
+${uline("Plan Sanction / LP No.", content.planSanctionNo, { full: true })}
+${uline("Website (RERA)", content.reraWebsite, { full: true })}
+${uline("RERA #", content.reraNumber, { full: true })}
+${sectionTitle("Details of the First Applicant (S)")}
+${uline("First Name", val(applicant, "firstName"), { full: true })}
+${uline("Surname Name", val(applicant, "surname"), { full: true })}
+${uline(
+  "Father / Spouse Name",
+  val(applicant, "fatherHusbandName") || val(applicant, "fatherSpouseName"),
+  { full: true }
+)}
+${uline("Date of Birth", val(applicant, "dateOfBirth"), { full: true })}
+${checkboxes("Marital Status", ["Married", "Unmarried"], marital)}
+${ulinePair(["PAN No.", val(applicant, "pan")], ["AADHAR No.", val(applicant, "aadhar")])}
+${checkboxes("Nationality", ["Resident", "Non Resident"], nationality)}
+${sectionTitle("Joint Applicants (If Any)")}
+${uline("First Name", val(joint, "firstName"), { full: true })}
+${uline("Surname Name", val(joint, "surname"), { full: true })}
+${uline("Father / Spouse Name", val(joint, "fatherHusbandName"), { full: true })}
+${uline("Date of Birth", val(joint, "dateOfBirth"), { full: true })}
+${checkboxes("Marital Status", ["Married", "Unmarried"], jointMarital)}
+${ulinePair(["PAN No.", val(joint, "pan")], ["AADHAR No.", val(joint, "aadhar")])}
+${checkboxes("Nationality", ["Resident", "Non Resident"], jointNat)}
+${sectionTitle("Geographic Information")}
+${uline("Communication Address", val(geo, "communicationAddress") || val(comm, "address") || val(fd.communication, "address"), { full: true })}
+${uline("", "", { full: true })}
+${uline("", "", { full: true })}
+${uline("Permanent Address", val(geo, "permanentAddress") || val(comm, "permanentAddress") || val(fd.communication, "permanentAddress"), { full: true })}
+${uline("", "", { full: true })}
+`),
+
+    applicant: "",
+    jointApplicant: "",
+    geographic: "",
+
+    occupation: page(`
+${detailsBanner("DETAILS", teal, navy)}
+${sectionTitle("Occupation")}
+<p class="note" style="font-weight:700;color:${navy}">First Applicant</p>
+${checkboxes("Occupation", ["Employed", "Professional", "Business"], occ1)}
+${uline("Name of the Employer / Business / Profession", val(occ, "organizationName"), { full: true })}
+${uline("Designation", val(occ, "designation"), { full: true })}
+${uline("Place of Employment / Business / Profession", val(occ, "workPlace"), { full: true })}
+<p class="note" style="font-weight:700;color:${navy};margin-top:16px">Second Applicant</p>
+${checkboxes("Occupation", ["Employed", "Professional", "Business"], occ2)}
+${uline("Name of the Employer / Business / Profession", val(occ, "organizationName2"), { full: true })}
+${uline("Designation", val(occ, "designation2"), { full: true })}
+${uline("Place of Employment / Business / Profession", val(occ, "workPlace2"), { full: true })}
+${sectionTitle("Communication")}
+<p class="note">(please tick the preferred mode of contact)</p>
+<div class="uline uline-full"><span class="ulabel">${preferredTick(preferred, ["Mobile (First)", "mobile (first)", "Mobile No. of the First"])}Mobile No. of the First Applicant :</span><span class="uvalue">${esc(mobile1) || "&nbsp;"}</span></div>
+<div class="uline uline-full"><span class="ulabel">${preferredTick(preferred, ["Email (First)", "email (first)", "Email ID of the First"])}Email ID of the First Applicant :</span><span class="uvalue">${esc(email1) || "&nbsp;"}</span></div>
+<div class="uline uline-full"><span class="ulabel">${preferredTick(preferred, ["Mobile (Joint)", "mobile (joint)", "Mobile No. of the Joint"])}Mobile No. of the Joint Applicant :</span><span class="uvalue">${esc(mobile2) || "&nbsp;"}</span></div>
+<div class="uline uline-full"><span class="ulabel">${preferredTick(preferred, ["Email (Joint)", "email (joint)", "Email ID of the Joint"])}Email ID of the Joint Applicant :</span><span class="uvalue">${esc(email2) || "&nbsp;"}</span></div>
+${sectionTitle("Source of Fund")}
+${checkboxes(null, ["Self Funding", "Home Loan"], fundingRaw)}
+${uline("Home Loan % required", val(fund, "homeLoanPercent"), { full: true })}
+${sectionTitle("Authority")}
+${uline("Power of Attorney Holder (if any)", val(auth, "authorityName"), { full: true })}
+${uline("Relationship with the Applicant / Joint Applicant", val(auth, "authorityRelation"), { full: true })}
+${uline("Contact No. of the Authority Holder", val(auth, "authorityMobile"), { full: true })}
+${ulinePair(["PAN No.", val(auth, "authorityPan")], ["AADHAR No.", val(auth, "authorityAadhar")])}
+${uline("Email ID of the Authority Holder", val(auth, "authorityEmail"), { full: true })}
+${uline("Correspondence address of the Authority Holder", val(auth, "authorityAddress"), { full: true })}
+${uline("", "", { full: true })}
+`),
+
+    sourceOfFund: "",
+    authority: "",
+
+    sourceOfEnquiry: page(`
+${detailsBanner("DETAILS", teal, navy)}
+${sectionTitle("Source of Enquiry")}
+<div class="enquiry-grid">
+${enquiryList
+  .map((opt) => {
+    const on = listHas(enquirySources, opt);
+    return `<label class="chk"><span class="box">${on ? "✓" : ""}</span> ${esc(opt)}</label>`;
+  })
+  .join("")}
 </div>
-<div class="header">
+${uline("Details of source", val(enquiry, "sourceDetails") || val(enquiry, "campaign"), { full: true })}
+${sectionTitle("Real Estate Agents")}
+${ulinePair(
+  ["Real Estate Agent Name", val(agent, "agentName")],
+  ["Represented By", val(agent, "representedBy")]
+)}
+${ulinePair(
+  ["Contact No.", val(agent, "agentPhone")],
+  ["Email ID", val(agent, "agentEmail")]
+)}
+${uline("Real Estate Agent RERA Registration #", val(agent, "reraNumber"), { full: true })}
+<p class="prose" style="margin-top:14px">${esc(
+      String(content.agentDeclarationText || "")
+    ).replace(/\n/g, "<br/>")}</p>
+<div class="sign-grid">
+  <div><div class="sign-line">Signature of the First Applicant</div></div>
+  <div><div class="sign-line">Signature of the Second / Joint Applicant</div></div>
+</div>
+${sectionTitle("Refundable Earnest Amount Deposit Details (READ)")}
+${uline("Wire transfer / Cheque / Draft No.", val(deposit, "instrumentNo"), { full: true })}
+${uline("UPI Transaction No.", val(deposit, "upiNo"), { full: true })}
+${ulinePair(["Dated", val(deposit, "dated")], ["Drawn on", val(deposit, "drawnOn")])}
+${ulinePair(["Place", val(deposit, "place")], ["Amount", val(deposit, "amount")])}
+${uline("In words", val(deposit, "amountInWords"), { full: true })}
+<p style="margin-top:12px;font-weight:700">in favour of <strong>${esc(
+      String(content.collectionAccountName || "")
+    )}</strong> Payable at ${esc(String(content.payableAt || ""))}</p>
+<div class="sign-grid" style="margin-top:28px">
+  <div>${uline("Date", val(terms, "signDate"))}${uline("Place", val(terms, "signPlace"))}</div>
   <div>
-    ${branding.logoUrl ? `<img class="logo" src="${esc(branding.logoUrl)}" alt="logo"/>` : ""}
-    <p class="muted" style="margin:8px 0 0">${esc(branding.companyName || "Goyal & Co.")}</p>
-    <p class="muted">${esc(branding.tagline || "creating landmarks since 1971")}</p>
-  </div>
-  <div style="text-align:right">
-    <h1>${esc(branding.formTitle || "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN")}</h1>
-    <div class="project">${esc(projectName)}</div>
-    ${projectLine2 ? `<div class="project" style="font-size:18px">${esc(projectLine2)}</div>` : ""}
-    <p class="muted" style="margin-top:8px">Unit ${esc(unitNumber)} · ${esc(customerName)}</p>
+    <div class="sign-line">Applicant Signature : 1</div>
+    <div class="sign-line">Applicant Signature : 2</div>
   </div>
 </div>
-<div class="banner">DETAILS — Filled Booking Form</div>
-${bodySections}
-<div class="sign">
-  <div><div class="line">Applicant Signature 1</div></div>
-  <div><div class="line">Applicant Signature 2</div></div>
-  <div><div class="line">Date / Place</div></div>
-  <div><div class="line">Sales Advisor / Authorized Signatory</div></div>
+`),
+
+    agents: "",
+    earnestDeposit: "",
+
+    terms: page(`
+${tealBanner("TERMS & CONDITIONS", teal, navy)}
+<div class="prose">${esc(String(content.termsText || "")).replace(/\n/g, "<br/>")}</div>
+${checkboxes("Terms accepted", ["Yes"], termsAccepted)}
+<div class="sign-grid">
+  <div>${uline("Date", val(terms, "signDate"))}${uline("Place", val(terms, "signPlace"))}</div>
+  <div>
+    <div class="sign-line">Applicant Signature : 1</div>
+    <div class="sign-line">Applicant Signature : 2</div>
+  </div>
 </div>
-<div class="footer">
-  <strong>${esc(String(content.promoterName || branding.companyName || ""))}</strong><br/>
+`),
+
+    consent: showConsent
+      ? page(`
+${tealBanner("ACKNOWLEDGED AND AGREED", teal, navy)}
+<p><strong>To</strong> ${esc(String(content.consentTo || content.promoterName || ""))}</p>
+<p class="prose">${esc(String(content.promoterAddress || ""))}</p>
+<p style="margin-top:12px"><strong>Subject:</strong> ${esc(String(content.consentSubject || ""))}</p>
+<p class="prose" style="margin-top:14px">${esc(
+          String(content.consentIntroText || "")
+            .replace(/\{\{projectName\}\}/g, fullProject)
+            .replace(/\{\{landSurveyDetails\}\}/g, String(content.landSurveyDetails || ""))
+        ).replace(/\n/g, "<br/>")}</p>
+${uline("Applicant No. 1", val(consent, "name") || val(consent, "fullName") || customerName, { full: true })}
+${uline("Applicant No. 2", [val(joint, "firstName"), val(joint, "surname")].filter(Boolean).join(" "), { full: true })}
+${uline("Unit No.", unitNumber, { full: true })}
+${checkboxes("Consent accepted", ["Yes"], consentAccepted)}
+<p class="prose" style="margin-top:12px">${esc(String(content.consentBodyText || "")).replace(/\n/g, "<br/>")}</p>
+<p style="margin-top:14px;font-weight:800">Declaration:</p>
+<div class="callout">${esc(String(content.consentDeclarationBox || content.declarationText || "")).replace(/\n/g, "<br/>")}</div>
+<p style="margin-top:28px;font-weight:700">For M/s ${esc(String(content.promoterName || branding.companyName || ""))}</p>
+${ulinePair(["SALES ADVISOR NAME", ""], ["APPROVED BY", ""])}
+${uline("AUTHORIZED SIGNATORY", "", { full: true })}
+<div class="footer-block">
+  <strong>${esc(String(content.promoterName || branding.companyName || ""))}</strong>
   ${esc(String(content.officeAddress || ""))}<br/>
   E: ${esc(String(content.officeEmail || branding.supportEmail || ""))} | C: ${esc(String(content.supportPhone || ""))}
 </div>
+`)
+      : "",
+
+    signatures: "",
+    footer: "",
+  };
+
+  // Fill consent intro blanks with applicant data
+  if (parts.consent) {
+    const fills = [
+      val(consent, "name") || customerName,
+      val(consent, "relative") || val(consent, "relativeName"),
+      val(consent, "age"),
+      val(consent, "address") || val(geo, "communicationAddress"),
+    ];
+    let fi = 0;
+    parts.consent = parts.consent.replace(/_{3,}/g, () => {
+      const f = fills[fi++] || "";
+      return f
+        ? `<span style="display:inline;border-bottom:1.5px solid ${navy};padding:0 6px;font-weight:600">${esc(f)}</span>`
+        : "________";
+    });
+  }
+
+  const defaultOrder = [
+    "header",
+    "costSheet",
+    "projectDetails",
+    "occupation",
+    "sourceOfEnquiry",
+    "terms",
+    "consent",
+  ];
+  const ids = orderedIds(layout ?? undefined, defaultOrder).filter((id) => parts[id]);
+  // If layout reorders legacy block ids, still emit paper pages in sensible order when those are empty
+  const used = new Set(ids.filter((id) => parts[id]));
+  const sequence = [
+    ...ids.filter((id) => parts[id]),
+    ...defaultOrder.filter((id) => parts[id] && !used.has(id)),
+  ];
+
+  const freeform = layout?.mode === "freeform";
+  const bodyInner = sequence
+    .map((id) => wrapBlock(id, parts[id] ?? "", layout ?? undefined))
+    .filter(Boolean)
+    .join("\n");
+
+  const maxY = freeform
+    ? Math.max(
+        100,
+        ...(layout?.blocks ?? [])
+          .filter((b) => b.visible !== false)
+          .map((b) => Number(b.y ?? 0) + 14)
+      )
+    : 100;
+
+  const bodyHtml = freeform
+    ? `<div class="freeform-canvas" style="position:relative;min-height:${Math.round((maxY / 100) * 1123)}px;width:100%">${bodyInner}</div>`
+    : bodyInner;
+
+  const previewRibbon = options?.preview
+    ? `<div class="no-print preview-ribbon">SAMPLE DATA PREVIEW — paper booking form layout (not tables)</div>`
+    : "";
+
+  const printBtn = options?.preview
+    ? ""
+    : `<div class="no-print" style="padding:12px 16px">
+  <button onclick="window.print()" style="background:${teal};color:#fff;border:0;padding:10px 18px;border-radius:6px;font-weight:600;cursor:pointer">Print / Save as PDF</button>
+  <span style="margin-left:12px;color:#64748B;font-size:12px">Matches physical booking form layout.</span>
+</div>`;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Booking Form — ${esc(fullProject)}</title>
+<style>
+${paperCss(teal, navy)}
+.freeform-canvas .layout-block{position:absolute;box-sizing:border-box}
+.layout-block.flow{position:relative}
+.layout-block.flow > .page{page-break-after:always;min-height:auto}
+</style></head><body>
+${previewRibbon}
+${printBtn}
+${bodyHtml}
 </body></html>`;
 }

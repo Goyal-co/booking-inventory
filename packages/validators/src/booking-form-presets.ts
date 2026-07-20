@@ -1,5 +1,10 @@
 /** Shared booking form template content (Template Example 1 & 2). */
 
+import {
+  mergePrintLayout,
+  type PrintLayout,
+} from "./print-layout";
+
 export type BookingFormTemplateVariant = "example1" | "example2";
 
 export type BookingFormTemplateContent = {
@@ -45,6 +50,8 @@ export type BookingFormTemplateContent = {
   consentIntroText: string;
   consentBodyText: string;
   consentDeclarationBox: string;
+  /** Canva-style print section layout (order, visibility, freeform positions). */
+  printLayout?: PrintLayout;
 };
 
 const SHARED_KYC_SHORT = `Copy of Pan Card
@@ -214,12 +221,17 @@ export function mergeTemplateContent(
   // Default to Orchid South Park (example2) when no variant is set
   const variant = partial?.templateVariant === "example1" ? "example1" : "example2";
   const base = { ...BOOKING_FORM_TEMPLATE_PRESETS[variant] };
-  const merged = { ...base, ...(partial ?? {}) };
+  const { printLayout: partialLayout, ...rest } = partial ?? {};
+  const merged = { ...base, ...rest };
   if (!merged.projectDisplayName && projectName) {
     merged.projectDisplayName = projectName;
   }
   if (!merged.collectionAccountName && projectName) {
     merged.collectionAccountName = `RERA COLLECTION ACCOUNT — ${projectName.toUpperCase()}`;
   }
+  merged.printLayout = mergePrintLayout(partialLayout ?? base.printLayout, {
+    showLandOwners: merged.showLandOwners,
+    showConsentPage: merged.showConsentPage,
+  });
   return merged;
 }
