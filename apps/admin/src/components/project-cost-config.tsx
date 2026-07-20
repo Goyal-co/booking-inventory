@@ -580,10 +580,16 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
                       value={row.months ?? ""}
                       onChange={(e) => {
                         const next = [...charges];
-                        next[i] = { ...row, months: Number(e.target.value) };
+                        next[i] = {
+                          ...row,
+                          months: e.target.value === "" ? null : Number(e.target.value),
+                        };
                         setCharges(next);
                       }}
                     />
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Required for maintenance (e.g. 24). Rate × area × months.
+                    </p>
                   </div>
                 </>
               )}

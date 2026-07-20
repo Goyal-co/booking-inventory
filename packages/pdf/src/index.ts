@@ -87,7 +87,7 @@ export function costSheetToHtml(
     .join("");
 
   const paymentTotal = result.paymentSchedule.reduce((sum, s) => sum + Number(s.amount || 0), 0);
-  const paymentPct = result.paymentSchedule.reduce((sum, s) => sum + Number(s.percentage || 0), 0);
+  // Do not sum display % — FIXED booking rows + BALANCE residual would double-count the 10% booking block
 
   const otherRows = result.otherCharges
     .map((c) => `<tr><td>${esc(c.name)}</td><td style="text-align:right">${inr(c.amount)}</td></tr>`)
@@ -100,11 +100,12 @@ export function costSheetToHtml(
   return `<div class="cost-sheet">
 <h2>Details of Residential Apartment Applied For</h2>
 <table class="grid">${inventoryHtml}</table>
+<p style="font-size:12px;color:#64748B;margin:8px 0 0">Booking amount target = 10% of Basic Sale Value with GST (A). Balance Booking = 10% of A − READ / token already paid.</p>
 <h3>Payment Schedule</h3>
 <table class="grid">
 <thead><tr><th>Milestone</th><th style="text-align:right">%</th><th style="text-align:right">Amount</th></tr></thead>
 <tbody>${paymentRows}
-<tr class="total"><td>TOTAL</td><td style="text-align:right">${paymentPct ? `${Math.round(paymentPct * 100) / 100}%` : "—"}</td><td style="text-align:right">${inr(paymentTotal)}</td></tr>
+<tr class="total"><td>TOTAL</td><td style="text-align:right">—</td><td style="text-align:right">${inr(paymentTotal)}</td></tr>
 </tbody></table>
 <h3>Other Charges (B)</h3>
 <table class="grid">
@@ -283,19 +284,45 @@ export function digitalFormToPrintHtml(
       ["In favour of", String(content.collectionAccountName || "—")],
       ["Payable at", String(content.payableAt || "—")],
     ]),
-    section("Terms Acceptance", [
-      ["Accepted", val(terms, "accepted")],
-      ["Date", val(terms, "signDate")],
-      ["Place", val(terms, "signPlace")],
-    ]),
+    `<div class="sec page-break"><div class="banner">Terms &amp; Conditions</div>
+      <div class="prose">${esc(String(content.termsText || "")).replace(/\n/g, "<br/>")}</div>
+      <h3 style="margin-top:16px">Declaration</h3>
+      <div class="callout">${esc(String(content.declarationText || "")).replace(/\n/g, "<br/>")}</div>
+      <table style="margin-top:12px">${[
+        ["Accepted", val(terms, "accepted")],
+        ["Date", val(terms, "signDate")],
+        ["Place", val(terms, "signPlace")],
+      ]
+        .map(
+          ([l, v]) =>
+            `<tr><td style="width:38%;color:#475569;padding:6px 8px;border-bottom:1px solid #E2E8F0">${esc(l)}</td><td style="padding:6px 8px;border-bottom:1px solid #E2E8F0;font-weight:600">${esc(v)}</td></tr>`
+        )
+        .join("")}</table>
+    </div>`,
     content.showConsentPage
-      ? section("Consent / Acknowledged & Agreed", [
-          ["Accepted", val(consent, "accepted")],
-          ["Applicant Name", val(consent, "fullName")],
-          ["S/o D/o W/o", val(consent, "relativeName")],
-          ["Age", val(consent, "age")],
-          ["Residing at", val(consent, "address")],
-        ])
+      ? `<div class="sec page-break"><div class="banner">Acknowledged and Agreed</div>
+      <p><strong>To:</strong> ${esc(String(content.consentTo || content.promoterName || ""))}</p>
+      <p><strong>Subject:</strong> ${esc(String(content.consentSubject || ""))}</p>
+      <p style="margin-top:12px">${esc(
+        String(content.consentIntroText || "")
+          .replace(/\{\{projectName\}\}/g, projectName)
+          .replace(/\{\{landSurveyDetails\}\}/g, String(content.landSurveyDetails || ""))
+      ).replace(/\n/g, "<br/>")}</p>
+      <table style="margin:12px 0">${[
+        ["Applicant Name", val(consent, "name") !== "—" ? val(consent, "name") : val(consent, "fullName")],
+        ["S/o / D/o / W/o", val(consent, "relative") !== "—" ? val(consent, "relative") : val(consent, "relativeName")],
+        ["Age", val(consent, "age")],
+        ["Residing at", val(consent, "address")],
+        ["Accepted", val(consent, "accepted")],
+      ]
+        .map(
+          ([l, v]) =>
+            `<tr><td style="width:38%;color:#475569;padding:6px 8px;border-bottom:1px solid #E2E8F0">${esc(l)}</td><td style="padding:6px 8px;border-bottom:1px solid #E2E8F0;font-weight:600">${esc(v)}</td></tr>`
+        )
+        .join("")}</table>
+      <div class="prose">${esc(String(content.consentBodyText || "")).replace(/\n/g, "<br/>")}</div>
+      <div class="callout" style="margin-top:12px">${esc(String(content.consentDeclarationBox || "")).replace(/\n/g, "<br/>")}</div>
+    </div>`
       : "",
   ]
     .filter(Boolean)
@@ -311,7 +338,10 @@ h1{font-size:18px;margin:0 0 4px;text-transform:uppercase;letter-spacing:.02em}
 .project{font-size:22px;font-weight:800;color:${navy}}
 .banner{background:${teal};color:${navy};font-weight:800;font-size:18px;padding:8px 14px;margin:24px 0 12px;text-transform:uppercase}
 .sec{margin:18px 0;page-break-inside:avoid}
+.page-break{page-break-before:always}
 .sec h3,.cost-sheet h2,.cost-sheet h3{margin:0 0 8px;font-size:14px;text-transform:uppercase;color:${navy}}
+.prose{font-size:12px;line-height:1.55;color:#334155;white-space:pre-wrap}
+.callout{background:#F0FDFA;border-left:4px solid ${teal};padding:12px 14px;font-size:12px;line-height:1.5;color:#1E3A5F}
 table{width:100%;border-collapse:collapse}
 table.grid td,table.grid th{border:1px solid #CBD5E1;padding:7px 9px;font-size:12px}
 .total td{background:#EEF2FF;font-weight:700}

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { addBookingDocument } from "@booking/database";
 import { uploadFile } from "@goyal/storage";
 
-const ALLOWED_TYPES = new Set(["PAN", "AADHAAR", "SIGNATURE", "OTHER"]);
+const ALLOWED_TYPES = new Set(["PAN", "AADHAAR", "SIGNATURE", "PAYMENT_PROOF", "OTHER"]);
 const MAX_BYTES = 5 * 1024 * 1024;
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
@@ -19,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
 
   const doc = await addBookingDocument(
     token,
-    type as "PAN" | "AADHAAR" | "SIGNATURE" | "OTHER",
+    type as "PAN" | "AADHAAR" | "SIGNATURE" | "PAYMENT_PROOF" | "OTHER",
     file.name,
     uploaded.url
   );

@@ -179,6 +179,21 @@ export async function calculateCostSheet(
   ]);
 
   let bookingFixedTotal = 0;
+  for (const stage of scheduleTemplates) {
+    if (stage.stageType === PaymentStageType.FIXED && stage.fixedAmount) {
+      const name = stage.stageName.toLowerCase();
+      if (
+        name.includes("booking") ||
+        name.includes("read") ||
+        name.includes("earnest") ||
+        name.includes("token")
+      ) {
+        bookingFixedTotal += Number(stage.fixedAmount);
+      }
+    }
+  }
+
+  const bookingTarget = round2(basicSaleValueWithGst * 0.1);
   const paymentSchedule: CostSheetPaymentStage[] = [];
 
   for (const stage of scheduleTemplates) {
@@ -187,9 +202,6 @@ export async function calculateCostSheet(
 
     if (stage.stageType === PaymentStageType.FIXED && stage.fixedAmount) {
       amount = Number(stage.fixedAmount);
-      if (stage.stageName.toLowerCase().includes("booking") || stage.stageName.toLowerCase().includes("read")) {
-        bookingFixedTotal += amount;
-      }
       if (basicSaleValueWithGst > 0) {
         percentage = round2((amount / basicSaleValueWithGst) * 100);
       }
@@ -197,8 +209,11 @@ export async function calculateCostSheet(
       percentage = Number(stage.percentage);
       amount = round2(basicSaleValueWithGst * (percentage / 100));
     } else if (stage.stageType === PaymentStageType.FORMULA && stage.formulaKey === "BALANCE_BOOKING") {
-      percentage = 10;
-      amount = round2(basicSaleValueWithGst * 0.1 - bookingFixedTotal);
+      // 10% of A (with GST) minus READ / fixed booking already paid
+      // e.g. A=2Cr → 10%=20L, READ=2L → balance=18L
+      amount = round2(Math.max(0, bookingTarget - bookingFixedTotal));
+      percentage =
+        basicSaleValueWithGst > 0 ? round2((amount / basicSaleValueWithGst) * 100) : 0;
     }
 
     paymentSchedule.push({
@@ -214,14 +229,20 @@ export async function calculateCostSheet(
     if (c.calcMode === ChargeCalcMode.FIXED && c.amount) {
       amount = Number(c.amount);
     } else if (c.calcMode === ChargeCalcMode.RATE_PER_AREA && c.rate) {
-      const months = c.months ?? 1;
+      // months must be positive; empty/0 from admin UI previously zeroed maintenance
+      const months =
+        c.months != null && Number(c.months) > 0
+          ? Number(c.months)
+          : /\b(\d+)\s*month/i.test(c.name)
+            ? Number(/\b(\d+)\s*month/i.exec(c.name)?.[1] ?? 1)
+            : 1;
       const area =
         c.areaField === "carpet"
           ? ctx.carpetAreaSqft
           : c.areaField === "balcony"
             ? ctx.balconyAreaSqft ?? 0
             : ctx.saleableAreaSqft;
-      amount = round2(Number(c.rate) * area * months);
+      amount = round2(Number(c.rate) * Number(area || 0) * months);
     }
     return { name: c.name, amount };
   });

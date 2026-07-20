@@ -243,7 +243,7 @@ export async function submitDigitalForm(token: string) {
 
 export async function addBookingDocument(
   token: string,
-  type: "PAN" | "AADHAAR" | "SIGNATURE" | "OTHER",
+  type: "PAN" | "AADHAAR" | "SIGNATURE" | "PAYMENT_PROOF" | "OTHER",
   fileName: string,
   fileUrl: string
 ) {

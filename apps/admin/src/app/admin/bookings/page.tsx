@@ -55,6 +55,22 @@ function AdminBookingsContent() {
   } | null>(null);
   const [cancelling, setCancelling] = useState<BookingRow | null>(null);
   const [rejecting, setRejecting] = useState<BookingRow | null>(null);
+  const [reviewing, setReviewing] = useState<BookingRow | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewDetail, setReviewDetail] = useState<{
+    form?: {
+      documents?: Array<{ id: string; type: string; fileName: string; fileUrl: string }>;
+      status?: string;
+    } | null;
+    formSnapshot?: { page1Snapshot?: unknown } | null;
+  } | null>(null);
+  const [verifyChecks, setVerifyChecks] = useState({
+    pan: false,
+    aadhaar: false,
+    paymentProof: false,
+    costSheet: false,
+    bookingForm: false,
+  });
   const [cancelReason, setCancelReason] = useState("");
   const [rejectComment, setRejectComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -135,8 +151,41 @@ function AdminBookingsContent() {
     }
   };
 
+  const openReview = async (booking: BookingRow) => {
+    setReviewing(booking);
+    setVerifyChecks({
+      pan: false,
+      aadhaar: false,
+      paymentProof: false,
+      costSheet: false,
+      bookingForm: false,
+    });
+    setReviewLoading(true);
+    try {
+      const res = await fetch(`/api/bookings/${booking.id}/digital-form`);
+      const data = await res.json().catch(() => ({}));
+      setReviewDetail(res.ok ? data : null);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const docsOfType = (type: string) =>
+    (reviewDetail?.form?.documents ?? []).filter((d) => d.type === type);
+
+  const allVerified =
+    verifyChecks.pan &&
+    verifyChecks.aadhaar &&
+    verifyChecks.paymentProof &&
+    verifyChecks.costSheet &&
+    verifyChecks.bookingForm;
+
   const handleApprove = async (booking: BookingRow) => {
     if (submitting) return;
+    if (!allVerified) {
+      toast.error("Verify KYC, payment proof, cost sheet, and booking form before approving");
+      return;
+    }
     setSubmitting(true);
     const res = await fetch(`/api/bookings/${booking.id}`, {
       method: "PATCH",
@@ -146,6 +195,7 @@ function AdminBookingsContent() {
     setSubmitting(false);
     if (res.ok) {
       toast.success("Booking approved");
+      setReviewing(null);
       loadBookings();
     } else {
       const data = await parseJsonSafe(res);
@@ -195,8 +245,8 @@ function AdminBookingsContent() {
       )}
       {booking.status === "PENDING" && (
         <>
-          <Button size="sm" disabled={submitting} onClick={() => handleApprove(booking)}>
-            Approve
+          <Button size="sm" disabled={submitting} onClick={() => openReview(booking)}>
+            Review &amp; Approve
           </Button>
           <Button
             size="sm"
@@ -319,6 +369,130 @@ function AdminBookingsContent() {
         total={total}
         onPageChange={setPage}
       />
+
+      <Modal
+        open={!!reviewing}
+        onOpenChange={(open) => {
+          if (!open) setReviewing(null);
+        }}
+        title="Verify documents before approval"
+      >
+        {reviewing && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Unit <strong>{reviewing.unit.unitNumber}</strong> · {reviewing.customerName} ·{" "}
+              {reviewing.customerPhone}
+            </p>
+            {reviewLoading ? (
+              <p className="text-sm text-gray-500">Loading documents…</p>
+            ) : (
+              <>
+                <div className="space-y-2 rounded-lg border bg-gray-50 p-3 text-sm">
+                  <p className="font-medium text-navy-700">Uploaded files</p>
+                  {(["PAN", "AADHAAR", "PAYMENT_PROOF"] as const).map((type) => {
+                    const docs = docsOfType(type);
+                    const label =
+                      type === "PAYMENT_PROOF"
+                        ? "Payment proof"
+                        : type === "AADHAAR"
+                          ? "Aadhaar"
+                          : "PAN";
+                    return (
+                      <div key={type}>
+                        <span className="font-medium">{label}:</span>{" "}
+                        {docs.length === 0 ? (
+                          <span className="text-amber-700">Missing</span>
+                        ) : (
+                          docs.map((d) => (
+                            <a
+                              key={d.id}
+                              href={d.fileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mr-2 text-brand-600 underline"
+                            >
+                              {d.fileName}
+                            </a>
+                          ))
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" asChild>
+                    <a
+                      href={`/api/bookings/${reviewing.id}/print-pdf`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open Booking Form
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <a
+                      href={`/api/bookings/${reviewing.id}/cost-sheet`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open Cost Sheet
+                    </a>
+                  </Button>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <p className="font-medium">Checklist — tick after verifying each item</p>
+                  {(
+                    [
+                      ["pan", "KYC — PAN card verified", docsOfType("PAN").length > 0],
+                      ["aadhaar", "KYC — Aadhaar card verified", docsOfType("AADHAAR").length > 0],
+                      [
+                        "paymentProof",
+                        "Payment proof verified (screenshot / PDF)",
+                        docsOfType("PAYMENT_PROOF").length > 0,
+                      ],
+                      ["costSheet", "Cost sheet of this unit reviewed", true],
+                      ["bookingForm", "Filled booking form reviewed", Boolean(reviewing.hasForm)],
+                    ] as const
+                  ).map(([key, label, available]) => (
+                    <label key={key} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={verifyChecks[key]}
+                        disabled={!available}
+                        onChange={(e) =>
+                          setVerifyChecks((prev) => ({ ...prev, [key]: e.target.checked }))
+                        }
+                      />
+                      <span>
+                        {label}
+                        {!available ? (
+                          <span className="ml-1 text-amber-700">(not uploaded)</span>
+                        ) : null}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setReviewing(null)}>
+                    Close
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    disabled={submitting || !allVerified}
+                    onClick={() => handleApprove(reviewing)}
+                  >
+                    {submitting ? "Approving…" : "Approve booking"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={!!cancelling}

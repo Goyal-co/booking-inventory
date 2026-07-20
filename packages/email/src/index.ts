@@ -15,11 +15,18 @@ import {
   MUTED,
 } from "./layout";
 
+export interface EmailAttachment {
+  name: string;
+  content: string; // base64
+  contentType?: string;
+}
+
 export interface EmailOptions {
   to: string;
   subject: string;
   html: string;
   from?: string;
+  attachments?: EmailAttachment[];
 }
 
 export interface EmailSendResult {
@@ -75,11 +82,10 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
     console.log("[Email Mock] From:", `${resolvedSender.name} <${resolvedSender.email}>`);
     console.log("[Email Mock] To:", options.to);
     console.log("[Email Mock] Subject:", options.subject);
-    const linkMatch = options.html.match(/href="(https?:\/\/[^"]+)"/g);
-    if (linkMatch?.length) {
+    if (options.attachments?.length) {
       console.log(
-        "[Email Mock] Links:",
-        linkMatch.map((l) => l.replace(/^href="|"$/g, "")).join("\n  ")
+        "[Email Mock] Attachments:",
+        options.attachments.map((a) => a.name).join(", ")
       );
     }
     return { success: true, id: `mock-${Date.now()}`, mocked: true };
@@ -88,6 +94,22 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
   const apiKey = getBrevoApiKey()!;
   console.log("[Email] Sending via Brevo to:", options.to);
   try {
+    const payload: Record<string, unknown> = {
+      sender: {
+        name: resolvedSender.name,
+        email: resolvedSender.email,
+      },
+      to: [{ email: options.to }],
+      subject: options.subject,
+      htmlContent: options.html,
+    };
+    if (options.attachments?.length) {
+      payload.attachment = options.attachments.map((a) => ({
+        name: a.name,
+        content: a.content,
+      }));
+    }
+
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: {
@@ -95,15 +117,7 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
         "Content-Type": "application/json",
         accept: "application/json",
       },
-      body: JSON.stringify({
-        sender: {
-          name: resolvedSender.name,
-          email: resolvedSender.email,
-        },
-        to: [{ email: options.to }],
-        subject: options.subject,
-        htmlContent: options.html,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -130,9 +144,13 @@ export function blockNotificationEmail(params: {
   bookingUrl: string;
   dashboardUrl?: string;
   brochureUrl?: string;
+  hasCostSheetAttachment?: boolean;
 }) {
   const brochureBlock = params.brochureUrl
     ? `<p style="margin:8px 0 0;text-align:center;"><a href="${params.brochureUrl}" style="color:#2563EB;text-decoration:none;font-size:14px;">Download Project Brochure</a></p>`
+    : "";
+  const costSheetNote = params.hasCostSheetAttachment
+    ? `<p style="margin:12px 0 0;font-size:13px;color:${MUTED};text-align:center;">Your unit cost sheet is attached to this email (open and use Print → Save as PDF if needed).</p>`
     : "";
 
   const html = wrapEmail([
@@ -148,12 +166,12 @@ export function blockNotificationEmail(params: {
         unitNumber: params.unitNumber,
       })}
       <p style="margin:0 0 8px;color:${MUTED};">
-        Use the secure link below to fill the form, verify your email OTP, and upload your documents.
+        Use the secure link below to fill the form, verify your email OTP, and upload your documents (PAN, Aadhaar, and payment proof).
       </p>
       ${numberedSteps([
         "Open your booking form link.",
-        "Complete each section (agent details are optional).",
-        "Verify OTP, upload PAN / Aadhaar, and submit the form.",
+        "Review the attached cost sheet for your unit.",
+        "Complete each section, verify OTP, upload KYC + payment proof, and submit.",
       ])}
       <div style="text-align:center;">${primaryButton("Open Booking Form", params.bookingUrl)}</div>
       ${
@@ -161,6 +179,7 @@ export function blockNotificationEmail(params: {
           ? `<div style="text-align:center;">${secondaryButton("Open Customer Dashboard", params.dashboardUrl)}</div>`
           : ""
       }
+      ${costSheetNote}
       ${brochureBlock}
       ${linkFallback(params.bookingUrl, "Booking form link")}
       ${params.dashboardUrl ? linkFallback(params.dashboardUrl, "Customer dashboard link") : ""}

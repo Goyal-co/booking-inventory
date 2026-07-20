@@ -20,6 +20,7 @@
     "@prisma/client": "^6.1.0",
     "@booking/email": "workspace:*",
     "@booking/integrations": "workspace:*",
+    "@booking/pdf": "workspace:*",
     "@goyal/ecosystem-contracts": "workspace:*",
     "bcryptjs": "^2.4.3"
   },

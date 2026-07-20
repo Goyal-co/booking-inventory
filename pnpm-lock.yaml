@@ -350,6 +350,9 @@ importers:
       '@booking/integrations':
         specifier: workspace:*
         version: link:../integrations
+      '@booking/pdf':
+        specifier: workspace:*
+        version: link:../pdf
       '@goyal/ecosystem-contracts':
         specifier: workspace:*
         version: link:../ecosystem-contracts

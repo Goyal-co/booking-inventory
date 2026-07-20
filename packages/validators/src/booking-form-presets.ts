@@ -211,7 +211,8 @@ export function mergeTemplateContent(
   partial?: Partial<BookingFormTemplateContent> | null,
   projectName = ""
 ): BookingFormTemplateContent {
-  const variant = partial?.templateVariant === "example2" ? "example2" : "example1";
+  // Default to Orchid South Park (example2) when no variant is set
+  const variant = partial?.templateVariant === "example1" ? "example1" : "example2";
   const base = { ...BOOKING_FORM_TEMPLATE_PRESETS[variant] };
   const merged = { ...base, ...(partial ?? {}) };
   if (!merged.projectDisplayName && projectName) {

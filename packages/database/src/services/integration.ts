@@ -28,6 +28,8 @@ export async function sendBlockNotificationEmail(params: {
   dashboardUrl?: string;
   brochureUrl?: string;
   leadId?: string;
+  costSheetHtml?: string;
+  costSheetFileName?: string;
 }) {
   const { subject, html } = blockNotificationEmail({
     customerName: params.customerName,
@@ -37,9 +39,24 @@ export async function sendBlockNotificationEmail(params: {
     bookingUrl: params.bookingUrl,
     dashboardUrl: params.dashboardUrl,
     brochureUrl: params.brochureUrl,
+    hasCostSheetAttachment: Boolean(params.costSheetHtml),
   });
 
-  const result = await sendEmail({ to: params.customerEmail, subject, html });
+  const attachments = params.costSheetHtml
+    ? [
+        {
+          name: params.costSheetFileName ?? `Cost-Sheet-${params.unitNumber}.html`,
+          content: Buffer.from(params.costSheetHtml, "utf8").toString("base64"),
+        },
+      ]
+    : undefined;
+
+  const result = await sendEmail({
+    to: params.customerEmail,
+    subject,
+    html,
+    attachments,
+  });
 
   await logIntegrationSync(
     IntegrationSystem.TITAN,

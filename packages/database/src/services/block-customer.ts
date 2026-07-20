@@ -42,6 +42,24 @@ function customerLinks(bookingToken: string) {
   }
 }
 
+async function costSheetEmailAttachment(
+  costSheet: Awaited<ReturnType<typeof calculateCostSheet>>,
+  meta: { projectName: string; unitNumber: string; towerName: string; customerName: string }
+) {
+  if (!costSheet) return {};
+  const { costSheetToHtml } = await import("@booking/pdf");
+  const costSheetHtml = costSheetToHtml(costSheet, {
+    projectName: meta.projectName,
+    unitNumber: meta.unitNumber,
+    towerName: meta.towerName,
+    customerName: meta.customerName,
+  });
+  return {
+    costSheetHtml,
+    costSheetFileName: `Cost-Sheet-${meta.unitNumber}.html`,
+  };
+}
+
 export async function createBlockWithCustomer(input: CreateBlockWithCustomerInput) {
   const ctx = await import("./cost-sheet-engine").then((m) => m.getUnitPricingContext(input.unitId));
   if (!ctx) throw new BlockError("Unit not found", "NOT_FOUND");
@@ -120,6 +138,12 @@ export async function createBlockWithCustomer(input: CreateBlockWithCustomerInpu
   });
 
   const { customerUrl, dashboardUrl } = customerLinks(bookingToken);
+  const costSheetAttach = await costSheetEmailAttachment(costSheet, {
+    projectName: project?.name ?? ctx.projectName,
+    unitNumber: ctx.unitNumber,
+    towerName: ctx.towerName,
+    customerName: input.customerName,
+  });
 
   const emailResult = await sendBlockNotificationEmail({
     blockId: block.id,
@@ -132,6 +156,7 @@ export async function createBlockWithCustomer(input: CreateBlockWithCustomerInpu
     dashboardUrl,
     brochureUrl: project?.brochureUrl ?? undefined,
     leadId: input.leadId,
+    ...costSheetAttach,
   });
 
   return { block, customer, costSheet, bookingToken, projectId: base.projectId, customerUrl, emailResult };
@@ -196,6 +221,12 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
     });
 
     const { customerUrl, dashboardUrl } = customerLinks(refreshedBlock.bookingToken!);
+    const costSheetAttach = await costSheetEmailAttachment(costSheet, {
+      projectName: project?.name ?? ctx.projectName,
+      unitNumber: ctx.unitNumber,
+      towerName: ctx.towerName,
+      customerName: input.customerName,
+    });
 
     const emailResult = await sendBlockNotificationEmail({
       blockId: block.id,
@@ -208,6 +239,7 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
       dashboardUrl,
       brochureUrl: project?.brochureUrl ?? undefined,
       leadId: input.leadId,
+      ...costSheetAttach,
     });
 
     return {
@@ -287,6 +319,12 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
   });
 
   const { customerUrl, dashboardUrl } = customerLinks(bookingToken);
+  const costSheetAttach = await costSheetEmailAttachment(costSheet, {
+    projectName: project?.name ?? ctx.projectName,
+    unitNumber: ctx.unitNumber,
+    towerName: ctx.towerName,
+    customerName: input.customerName,
+  });
 
   const emailResult = await sendBlockNotificationEmail({
     blockId: block.id,
@@ -299,6 +337,7 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
     dashboardUrl,
     brochureUrl: project?.brochureUrl ?? undefined,
     leadId: input.leadId,
+    ...costSheetAttach,
   });
 
   return {

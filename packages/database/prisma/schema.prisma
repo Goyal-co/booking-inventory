@@ -26,6 +26,7 @@ enum BookingDocumentType {
   PAN
   AADHAAR
   SIGNATURE
+  PAYMENT_PROOF
   OTHER
 }
 

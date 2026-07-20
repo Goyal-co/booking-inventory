@@ -34,6 +34,7 @@ const ALL_STEPS = [
   { id: "realEstateAgents", label: "Real Estate Agents", optional: true },
   { id: "earnestDeposit", label: "Earnest Deposit", optional: false },
   { id: "terms", label: "Terms & Declaration", optional: false },
+  { id: "documents", label: "Documents & OTP", optional: false },
   { id: "consent", label: "Consent", optional: true },
 ] as const;
 
@@ -238,6 +239,14 @@ export default function BookingFormPage() {
       if (s.id === "terms") {
         return values.accepted === "yes";
       }
+      if (s.id === "documents") {
+        return (
+          otpVerified &&
+          docsUploaded.includes("PAN") &&
+          docsUploaded.includes("AADHAAR") &&
+          docsUploaded.includes("PAYMENT_PROOF")
+        );
+      }
       if (s.id === "consent") {
         return values.accepted === "yes";
       }
@@ -248,7 +257,7 @@ export default function BookingFormPage() {
       if (s.optional) return formData[s.id] != null;
       return Object.values(values).some(isFilled);
     });
-  }, [formData, STEPS]);
+  }, [formData, STEPS, otpVerified, docsUploaded]);
 
   const saveStep = async () => {
     if (linkError) return false;
@@ -1158,9 +1167,30 @@ export default function BookingFormPage() {
                       />
                     </div>
                     <p className="text-xs text-slate-500">
-                      Applicant signatures will be collected at the sales office.
+                      Applicant signatures will be collected at the sales office. Continue to the
+                      next step for OTP verification, PAN / Aadhaar, and payment proof upload.
                     </p>
 
+                    <div className="border-t pt-4 text-center text-xs text-navy-600">
+                      <p className="font-bold">{content.promoterName}</p>
+                      <p>{content.officeAddress}</p>
+                      <p>
+                        E: {content.officeEmail || branding.supportEmail} | C: {content.supportPhone}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {current.id === "documents" && (
+                <div>
+                  <div
+                    className="px-4 py-3 text-center text-lg font-black uppercase tracking-wide text-navy-600 sm:text-2xl"
+                    style={{ backgroundColor: teal }}
+                  >
+                    Documents &amp; Verification
+                  </div>
+                  <div className="space-y-6 p-4 sm:p-6">
                     <div className="rounded-sm border border-slate-200 p-4">
                       <div className="mb-3 flex items-center justify-between">
                         <h3 className="font-semibold text-navy-600">Verify Identity (OTP)</h3>
@@ -1219,11 +1249,29 @@ export default function BookingFormPage() {
 
                     <div className="rounded-sm border border-slate-200 p-4">
                       <div className="mb-3 flex items-center justify-between">
-                        <h3 className="font-semibold text-navy-600">Upload KYC Documents</h3>
+                        <h3 className="font-semibold text-navy-600">Upload Documents</h3>
                         <FieldTick
-                          done={docsUploaded.includes("PAN") && docsUploaded.includes("AADHAAR")}
+                          done={
+                            docsUploaded.includes("PAN") &&
+                            docsUploaded.includes("AADHAAR") &&
+                            docsUploaded.includes("PAYMENT_PROOF")
+                          }
                         />
                       </div>
+                      <p className="mb-3 text-xs text-slate-500">
+                        Required: PAN, Aadhaar, and payment proof (cheque / UPI / NEFT screenshot —
+                        JPEG, PNG, or PDF).
+                      </p>
+                      <ul className="mb-3 space-y-1 text-sm text-navy-700">
+                        <li>PAN: {docsUploaded.includes("PAN") ? "Uploaded ✓" : "Pending"}</li>
+                        <li>
+                          Aadhaar: {docsUploaded.includes("AADHAAR") ? "Uploaded ✓" : "Pending"}
+                        </li>
+                        <li>
+                          Payment proof:{" "}
+                          {docsUploaded.includes("PAYMENT_PROOF") ? "Uploaded ✓" : "Pending"}
+                        </li>
+                      </ul>
                       <form
                         className="space-y-2"
                         onSubmit={async (e) => {
@@ -1247,11 +1295,12 @@ export default function BookingFormPage() {
                         <select name="type" className="w-full rounded border px-3 py-2 text-sm">
                           <option value="PAN">PAN Card</option>
                           <option value="AADHAAR">Aadhaar Card</option>
+                          <option value="PAYMENT_PROOF">Payment Proof</option>
                         </select>
                         <input
                           type="file"
                           name="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
+                          accept=".pdf,.jpg,.jpeg,.png,.webp"
                           required
                           className="w-full text-sm"
                         />
@@ -1259,14 +1308,6 @@ export default function BookingFormPage() {
                           Upload
                         </Button>
                       </form>
-                    </div>
-
-                    <div className="border-t pt-4 text-center text-xs text-navy-600">
-                      <p className="font-bold">{content.promoterName}</p>
-                      <p>{content.officeAddress}</p>
-                      <p>
-                        E: {content.officeEmail || branding.supportEmail} | C: {content.supportPhone}
-                      </p>
                     </div>
                   </div>
                 </div>

@@ -877,6 +877,20 @@ export async function POST_block_resendBookingEmail(
     const dashboardUrl = getCustomerDashboardUrl(block.bookingToken);
     const project = block.unit.floor.tower.project;
 
+    let costSheetHtml: string | undefined;
+    let costSheetFileName: string | undefined;
+    const snap = block.costSheetSnapshot as import("@booking/pdf").CostSheetResult | null;
+    if (snap?.basicSaleValueWithGst != null) {
+      const { costSheetToHtml } = await import("@booking/pdf");
+      costSheetHtml = costSheetToHtml(snap, {
+        projectName: project.name,
+        unitNumber: block.unit.unitNumber,
+        towerName: block.unit.floor.tower.name,
+        customerName: block.customerName,
+      });
+      costSheetFileName = `Cost-Sheet-${block.unit.unitNumber}.html`;
+    }
+
     const emailResult = await sendBlockNotificationEmail({
       blockId: block.id,
       customerEmail: block.customerEmail,
@@ -887,6 +901,8 @@ export async function POST_block_resendBookingEmail(
       bookingUrl: customerUrl,
       dashboardUrl,
       brochureUrl: project.brochureUrl ?? undefined,
+      costSheetHtml,
+      costSheetFileName,
     });
 
     return NextResponse.json({

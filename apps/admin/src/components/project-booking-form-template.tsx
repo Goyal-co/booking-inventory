@@ -31,7 +31,7 @@ const EMPTY_BRAND: BrandForm = {
 export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: string }) {
   const [brand, setBrand] = useState<BrandForm>(EMPTY_BRAND);
   const [content, setContent] = useState<BookingFormTemplateContent>(
-    BOOKING_FORM_TEMPLATE_PRESETS.example1
+    BOOKING_FORM_TEMPLATE_PRESETS.example2
   );
   const [projectName, setProjectName] = useState("");
   const [version, setVersion] = useState<number | null>(null);

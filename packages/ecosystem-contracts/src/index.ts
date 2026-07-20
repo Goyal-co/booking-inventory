@@ -30,6 +30,7 @@ export const digitalFormStepSchema = z.object({
     "realEstateAgents",
     "earnestDeposit",
     "terms",
+    "documents",
     "consent",
   ]),
   data: z.record(z.unknown()),
