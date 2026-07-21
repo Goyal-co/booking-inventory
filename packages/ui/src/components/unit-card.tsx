@@ -80,7 +80,9 @@ export function UnitCard({
             {unit.superArea != null && `SBA ${unit.superArea} sqft`}
           </p>
         )}
-        {unit.price != null && <p className="font-semibold text-gray-800">{formatPrice(unit.price)}</p>}
+        {selectionMode === "admin" && unit.price != null && (
+          <p className="font-semibold text-gray-800">{formatPrice(unit.price)}</p>
+        )}
       </div>
 
       {unit.status === "BLOCKED" && unit.block && (

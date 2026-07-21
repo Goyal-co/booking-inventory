@@ -16,6 +16,7 @@
     "@booking/pdf": "workspace:*",
     "@goyal/ecosystem-contracts": "workspace:*",
     "@goyal/integration-hub": "workspace:*",
+    "@goyal/storage": "workspace:*",
     "bcryptjs": "^2.4.3",
     "lucide-react": "^0.469.0",
     "next": "^15.1.3",

@@ -473,6 +473,18 @@ export async function GET_bookingDigitalForm(_req: NextRequest, { params }: { pa
   const denied = denyUnlessProjectAccess(user, projectId);
   if (denied) return denied;
 
+  const customerBaseUrl =
+    process.env.CUSTOMER_URL?.replace(/\/+$/, "") ||
+    (process.env.NODE_ENV !== "production" ? "http://localhost:3003" : undefined);
+  const documents =
+    booking.digitalForm?.documents.map((document) => ({
+      ...document,
+      fileUrl:
+        document.fileUrl.startsWith("/") && customerBaseUrl
+          ? `${customerBaseUrl}${document.fileUrl}`
+          : document.fileUrl,
+    })) ?? [];
+
   return NextResponse.json({
     booking: {
       id: booking.id,
@@ -491,7 +503,7 @@ export async function GET_bookingDigitalForm(_req: NextRequest, { params }: { pa
           page1Snapshot: booking.digitalForm.page1Snapshot,
           formData: booking.digitalForm.formData,
           submittedAt: booking.digitalForm.submittedAt,
-          documents: booking.digitalForm.documents,
+          documents,
         }
       : null,
     formSnapshot: booking.formSnapshot,

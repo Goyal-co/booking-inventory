@@ -64,6 +64,8 @@ function AdminBookingsContent() {
     } | null;
     formSnapshot?: { page1Snapshot?: unknown } | null;
   } | null>(null);
+  /** Signed preview URLs (EOI-style) — never use stored fileUrl directly for private objects. */
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const [verifyChecks, setVerifyChecks] = useState({
     pan: false,
     aadhaar: false,
@@ -160,11 +162,37 @@ function AdminBookingsContent() {
       costSheet: false,
       bookingForm: false,
     });
+    setPreviewUrls({});
     setReviewLoading(true);
     try {
       const res = await fetch(`/api/bookings/${booking.id}/digital-form`);
       const data = await res.json().catch(() => ({}));
       setReviewDetail(res.ok ? data : null);
+      if (res.ok) {
+        const docs =
+          (data?.form?.documents as Array<{ id: string; fileName: string }> | undefined) ?? [];
+        const entries = await Promise.all(
+          docs.map(async (doc) => {
+            try {
+              const dl = await fetch(
+                `/api/bookings/${booking.id}/documents/${doc.id}/download`
+              );
+              const body = await dl.json().catch(() => ({}));
+              if (dl.ok && typeof body.downloadUrl === "string") {
+                return [doc.id, body.downloadUrl] as const;
+              }
+            } catch {
+              /* ignore — preview falls back to empty */
+            }
+            return null;
+          })
+        );
+        const map: Record<string, string> = {};
+        for (const entry of entries) {
+          if (entry) map[entry[0]] = entry[1];
+        }
+        setPreviewUrls(map);
+      }
     } finally {
       setReviewLoading(false);
     }
@@ -172,6 +200,27 @@ function AdminBookingsContent() {
 
   const docsOfType = (type: string) =>
     (reviewDetail?.form?.documents ?? []).filter((d) => d.type === type);
+  const isPdfDocument = (fileName: string, previewUrl?: string) =>
+    /\.pdf(?:$|\?)/i.test(fileName) || (!!previewUrl && /\.pdf(?:$|\?)/i.test(previewUrl));
+
+  const openDocument = async (bookingId: string, documentId: string) => {
+    try {
+      const cached = previewUrls[documentId];
+      if (cached) {
+        window.open(cached, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const res = await fetch(`/api/bookings/${bookingId}/documents/${documentId}/download`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || typeof body.downloadUrl !== "string") {
+        toast.error(typeof body.error === "string" ? body.error : "Could not open document");
+        return;
+      }
+      window.open(body.downloadUrl, "_blank", "noopener,noreferrer");
+    } catch {
+      toast.error("Could not open document");
+    }
+  };
 
   const allVerified =
     verifyChecks.pan &&
@@ -387,37 +436,63 @@ function AdminBookingsContent() {
               <p className="text-sm text-gray-500">Loading documents…</p>
             ) : (
               <>
-                <div className="space-y-2 rounded-lg border bg-gray-50 p-3 text-sm">
-                  <p className="font-medium text-navy-700">Uploaded files</p>
-                  {(["PAN", "AADHAAR", "PAYMENT_PROOF"] as const).map((type) => {
-                    const docs = docsOfType(type);
-                    const label =
-                      type === "PAYMENT_PROOF"
-                        ? "Payment proof"
-                        : type === "AADHAAR"
-                          ? "Aadhaar"
-                          : "PAN";
-                    return (
-                      <div key={type}>
-                        <span className="font-medium">{label}:</span>{" "}
-                        {docs.length === 0 ? (
-                          <span className="text-amber-700">Missing</span>
-                        ) : (
-                          docs.map((d) => (
-                            <a
-                              key={d.id}
-                              href={d.fileUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mr-2 text-brand-600 underline"
-                            >
-                              {d.fileName}
-                            </a>
-                          ))
-                        )}
-                      </div>
-                    );
-                  })}
+                <div className="space-y-3 rounded-lg border bg-gray-50 p-3 text-sm">
+                  <p className="font-medium text-navy-700">
+                    Uploaded documents — review each file before approval
+                  </p>
+                  {(reviewDetail?.form?.documents ?? []).length === 0 ? (
+                    <p className="text-amber-700">No documents uploaded.</p>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(reviewDetail?.form?.documents ?? []).map((document) => {
+                        const label =
+                          document.type === "PAYMENT_PROOF"
+                            ? "Cheque / payment proof"
+                            : document.type === "AADHAAR"
+                              ? "Aadhaar"
+                              : document.type === "PAN"
+                                ? "PAN"
+                                : document.type.replaceAll("_", " ");
+                        const previewUrl = previewUrls[document.id];
+                        const isPdf = isPdfDocument(document.fileName, previewUrl);
+                        return (
+                          <div key={document.id} className="overflow-hidden rounded-lg border bg-white">
+                            <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+                              <div className="min-w-0">
+                                <p className="font-medium text-navy-700">{label}</p>
+                                <p className="truncate text-xs text-gray-500">{document.fileName}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => openDocument(reviewing.id, document.id)}
+                                className="shrink-0 text-xs font-medium text-brand-600 underline"
+                              >
+                                Open full
+                              </button>
+                            </div>
+                            {!previewUrl ? (
+                              <p className="p-4 text-xs text-amber-700">
+                                Preview unavailable — use Open full after retry.
+                              </p>
+                            ) : isPdf ? (
+                              <iframe
+                                src={previewUrl}
+                                title={`${label} — ${document.fileName}`}
+                                className="h-64 w-full border-0"
+                              />
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={previewUrl}
+                                alt={`${label} — ${document.fileName}`}
+                                className="h-64 w-full bg-gray-100 object-contain"
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-2">

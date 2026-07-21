@@ -15,6 +15,7 @@
     "@booking/ui": "workspace:*",
     "@booking/validators": "workspace:*",
     "@goyal/storage": "workspace:*",
+    "@vercel/blob": "^2.4.0",
     "lucide-react": "^0.469.0",
     "next": "^15.1.3",
     "react": "^19.0.0",

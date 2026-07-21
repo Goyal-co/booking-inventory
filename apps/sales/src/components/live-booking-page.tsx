@@ -668,11 +668,6 @@ function LiveBookingContent() {
                 <p>
                   <strong>Facing:</strong> {selectedUnit.facing ?? "N/A"}
                 </p>
-                {selectedUnit.price && (
-                  <p>
-                    <strong>Price:</strong> {formatPrice(selectedUnit.price)}
-                  </p>
-                )}
               </div>
               {selectedUnit.status === "AVAILABLE" && canBlock && (
                 <Button className="mt-4 w-full" onClick={() => handleBlock(selectedUnit)}>

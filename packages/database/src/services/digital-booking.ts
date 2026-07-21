@@ -24,6 +24,7 @@ export async function getDigitalFormByToken(token: string) {
   const form = await prisma.digitalBookingForm.findFirst({
     where: { block: { bookingToken: token } },
     include: {
+      documents: true,
       block: {
         include: {
           unit: {
@@ -33,7 +34,6 @@ export async function getDigitalFormByToken(token: string) {
           },
         },
       },
-      documents: true,
     },
   });
   if (!form?.block) return null;
@@ -63,6 +63,7 @@ export async function submitDigitalForm(token: string) {
   const form = await prisma.digitalBookingForm.findFirst({
     where: { block: { bookingToken: token } },
     include: {
+      documents: { select: { type: true } },
       block: {
         include: {
           unit: {
@@ -84,6 +85,20 @@ export async function submitDigitalForm(token: string) {
   }
   if (form.status !== DigitalFormStatus.DRAFT) {
     throw new BookingError("Form already submitted", "ALREADY_SUBMITTED");
+  }
+  const uploadedTypes = new Set(form.documents.map((document) => document.type));
+  const missingDocuments = [
+    ["PAN", "PAN card"],
+    ["AADHAAR", "Aadhaar card"],
+    ["PAYMENT_PROOF", "cheque / payment proof"],
+  ]
+    .filter(([type]) => !uploadedTypes.has(type as "PAN" | "AADHAAR" | "PAYMENT_PROOF"))
+    .map(([, label]) => label);
+  if (missingDocuments.length) {
+    throw new BookingError(
+      `Upload required documents before submission: ${missingDocuments.join(", ")}`,
+      "MISSING_DOCUMENTS"
+    );
   }
 
   const projectId = block.unit.floor.tower.projectId;
@@ -247,7 +262,18 @@ export async function addBookingDocument(
 ) {
   const form = await getDigitalFormByToken(token);
   if (!form?.block) return null;
-  return prisma.bookingDocument.create({
+
+  // EOI pattern: one document per type — replace previous upload.
+  const existing = await prisma.bookingDocument.findFirst({
+    where: { digitalFormId: form.id, type },
+    orderBy: { createdAt: "desc" },
+  });
+  const replacedFileUrl = existing?.fileUrl ?? null;
+  if (existing) {
+    await prisma.bookingDocument.delete({ where: { id: existing.id } });
+  }
+
+  const doc = await prisma.bookingDocument.create({
     data: {
       digitalFormId: form.id,
       customerId: form.block.customerId,
@@ -255,6 +281,27 @@ export async function addBookingDocument(
       fileName,
       fileUrl,
     },
+  });
+  return { doc, replacedFileUrl };
+}
+
+export async function getBookingDocumentForToken(token: string, documentId: string) {
+  const form = await getDigitalFormByToken(token);
+  if (!form) return null;
+  return prisma.bookingDocument.findFirst({
+    where: { id: documentId, digitalFormId: form.id },
+  });
+}
+
+export async function getBookingDocumentForAdmin(bookingId: string, documentId: string) {
+  const booking = await prisma.booking.findFirst({
+    where: { id: bookingId },
+    include: { digitalForm: true },
+  });
+  const digitalFormId = booking?.digitalForm?.id;
+  if (!digitalFormId) return null;
+  return prisma.bookingDocument.findFirst({
+    where: { id: documentId, digitalFormId },
   });
 }
 

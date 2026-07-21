@@ -15,7 +15,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
     const result = await saveLogoAsset(file);
-    return NextResponse.json(result);
+    // Local storage returns /api/files/...; persist an absolute admin URL so
+    // sales/customer PDF renderers can fetch the same logo too. S3 URLs pass through.
+    const url = result.url.startsWith("/")
+      ? new URL(result.url, req.nextUrl.origin).toString()
+      : result.url;
+    return NextResponse.json({ ...result, url });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Upload failed";
     return NextResponse.json({ error: message }, { status: 400 });

@@ -24,28 +24,31 @@ export function resolveFormBranding(input: {
   existingBranding?: Record<string, unknown> | null;
 }) {
   const existing = input.existingBranding ?? null;
-  const rawContent = (existing?.content ??
-    input.template?.fieldMapping ??
-    {}) as Partial<BookingFormTemplateContent>;
+  const existingContent = (existing?.content ?? {}) as Partial<BookingFormTemplateContent>;
+  const templateContent = (input.template?.fieldMapping ?? {}) as Partial<BookingFormTemplateContent>;
+  // The active project template is the shared source of truth for both the
+  // customer form and printable render. Keep snapshot-only values as fallback,
+  // but let the active template (including newly submitted logos) win.
+  const rawContent = { ...existingContent, ...templateContent };
   const content = mergeTemplateContent(rawContent, input.projectName);
 
   return {
     logoUrl:
-      (existing?.logoUrl as string | null | undefined) ??
       input.template?.logoUrl ??
+      (existing?.logoUrl as string | null | undefined) ??
       input.projectLogoUrl ??
       null,
     companyName:
-      (existing?.companyName as string | undefined) ??
       input.template?.companyName ??
+      (existing?.companyName as string | undefined) ??
       "Goyal & Co.",
     tagline:
-      (existing?.tagline as string | undefined) ??
       input.template?.tagline ??
+      (existing?.tagline as string | undefined) ??
       "creating landmarks since 1971",
     formTitle:
-      (existing?.formTitle as string | undefined) ??
       input.template?.formTitle ??
+      (existing?.formTitle as string | undefined) ??
       "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN",
     formSubtitle:
       (existing?.formSubtitle as string | null | undefined) ??
@@ -61,8 +64,8 @@ export function resolveFormBranding(input: {
       content.officeEmail ??
       null,
     primaryColor:
-      (existing?.primaryColor as string | null | undefined) ??
       input.template?.primaryColor ??
+      (existing?.primaryColor as string | null | undefined) ??
       input.projectPrimaryColor ??
       content.accentTeal,
     projectName: input.projectName,

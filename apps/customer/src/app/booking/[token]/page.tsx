@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button, CostSheetEngineView, type CostSheetEngineData } from "@booking/ui";
-import { mergeTemplateContent, type BookingFormTemplateContent } from "@booking/validators";
+import {
+  mergeTemplateContent,
+  normalizeMediaUrl,
+  type BookingFormTemplateContent,
+} from "@booking/validators";
 import { toast, Toaster } from "sonner";
 import {
   CheckboxRow,
@@ -18,6 +22,7 @@ import {
   UnderlineField,
   YellowHighlight,
 } from "@/components/booking-form/paper-form";
+import { uploadViaPresign } from "@/lib/uploads/client-upload";
 
 const ALL_STEPS = [
   { id: "cover", label: "Cover", optional: false },
@@ -132,6 +137,7 @@ export default function BookingFormPage() {
   const [otp, setOtp] = useState("");
   const [otpVerified, setOtpVerified] = useState(false);
   const [docsUploaded, setDocsUploaded] = useState<string[]>([]);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
   const [branding, setBranding] = useState<Branding>({
     logoUrl: null,
     companyName: "Goyal & Co. | Hariyana Group",
@@ -145,6 +151,9 @@ export default function BookingFormPage() {
 
   const content = branding.content;
   const teal = content.accentTeal || FORM_TEAL;
+  const companyLogoUrl = normalizeMediaUrl(branding.logoUrl) || "/logo.svg";
+  const projectLogoUrl = normalizeMediaUrl(content.projectLogoUrl || content.heroImageUrl);
+  const secondaryLogoUrl = normalizeMediaUrl(content.secondaryLogoUrl);
 
   const STEPS: StepDef[] = useMemo(
     () => ALL_STEPS.filter((s) => s.id !== "consent" || content.showConsentPage),
@@ -458,10 +467,10 @@ export default function BookingFormPage() {
                           className="flex min-h-[160px] items-center justify-center rounded-sm"
                           style={{ backgroundColor: FORM_YELLOW }}
                         >
-                          {content.heroImageUrl || content.projectLogoUrl ? (
+                          {projectLogoUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={content.heroImageUrl || content.projectLogoUrl}
+                              src={projectLogoUrl}
                               alt={projectLabel}
                               className="max-h-40 max-w-full object-contain p-4"
                             />
@@ -501,7 +510,7 @@ export default function BookingFormPage() {
                         <div>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={branding.logoUrl || "/logo.svg"}
+                            src={companyLogoUrl}
                             alt={branding.companyName}
                             className="mb-2 h-10 w-auto max-w-[200px] object-contain"
                           />
@@ -510,10 +519,10 @@ export default function BookingFormPage() {
                           </p>
                         </div>
                         <div className="text-right">
-                          {content.projectLogoUrl ? (
+                          {projectLogoUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={content.projectLogoUrl}
+                              src={projectLogoUrl}
                               alt={projectLabel}
                               className="ml-auto h-12 w-auto object-contain"
                             />
@@ -528,10 +537,10 @@ export default function BookingFormPage() {
                   ) : (
                     <>
                       <div className="flex flex-col items-center px-4 py-10 text-center sm:px-6">
-                        {content.projectLogoUrl ? (
+                        {projectLogoUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={content.projectLogoUrl}
+                            src={projectLogoUrl}
                             alt={projectLabel}
                             className="mb-6 h-24 w-auto max-w-[220px] object-contain"
                           />
@@ -560,7 +569,7 @@ export default function BookingFormPage() {
                         <div className="flex flex-1 flex-col items-center gap-2">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={branding.logoUrl || "/logo.svg"}
+                            src={companyLogoUrl}
                             alt={branding.companyName}
                             className="h-12 w-auto max-w-[180px] object-contain"
                           />
@@ -569,10 +578,10 @@ export default function BookingFormPage() {
                           </p>
                         </div>
                         <div className="flex flex-1 flex-col items-center gap-2">
-                          {content.secondaryLogoUrl ? (
+                          {secondaryLogoUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={content.secondaryLogoUrl}
+                              src={secondaryLogoUrl}
                               alt={content.secondaryCompanyName || "Partner"}
                               className="h-12 w-auto max-w-[180px] object-contain"
                             />
@@ -1278,24 +1287,57 @@ export default function BookingFormPage() {
                           e.preventDefault();
                           const formEl = e.currentTarget;
                           const fd = new FormData(formEl);
-                          const type = String(fd.get("type") ?? "");
-                          const res = await fetch(`/api/booking/${token}/documents`, {
-                            method: "POST",
-                            body: fd,
-                          });
-                          if (res.ok) {
-                            toast.success("Document uploaded");
-                            setDocsUploaded((prev) =>
-                              prev.includes(type) ? prev : [...prev, type]
+                          const type = String(fd.get("type") ?? "") as
+                            | "PAN"
+                            | "AADHAAR"
+                            | "PAYMENT_PROOF";
+                          const file = fd.get("file");
+                          if (!(file instanceof File) || file.size === 0) {
+                            toast.error("Select a file to upload");
+                            return;
+                          }
+                          setUploadingDocument(true);
+                          try {
+                            // EOI flow: browser uploads bytes → then save metadata only
+                            const uploaded = await uploadViaPresign(token, file, type);
+                            const res = await fetch(`/api/booking/${token}/documents`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                type,
+                                fileName: uploaded.fileName,
+                                fileUrl: uploaded.fileUrl,
+                                mimeType: uploaded.mimeType,
+                                fileSize: uploaded.fileSize,
+                              }),
+                            });
+                            const data = await parseJsonSafe(res);
+                            if (res.ok) {
+                              toast.success("Document uploaded");
+                              setDocsUploaded((prev) =>
+                                prev.includes(type) ? prev : [...prev, type]
+                              );
+                              formEl.reset();
+                            } else {
+                              toast.error(
+                                typeof data.error === "string" ? data.error : "Upload failed"
+                              );
+                            }
+                          } catch (err) {
+                            toast.error(
+                              err instanceof Error
+                                ? err.message
+                                : "Upload failed. Check your connection and try again."
                             );
-                            formEl.reset();
-                          } else toast.error("Upload failed");
+                          } finally {
+                            setUploadingDocument(false);
+                          }
                         }}
                       >
                         <select name="type" className="w-full rounded border px-3 py-2 text-sm">
                           <option value="PAN">PAN Card</option>
                           <option value="AADHAAR">Aadhaar Card</option>
-                          <option value="PAYMENT_PROOF">Payment Proof</option>
+                          <option value="PAYMENT_PROOF">Cheque / UPI / NEFT Payment Proof</option>
                         </select>
                         <input
                           type="file"
@@ -1304,8 +1346,8 @@ export default function BookingFormPage() {
                           required
                           className="w-full text-sm"
                         />
-                        <Button type="submit" size="sm">
-                          Upload
+                        <Button type="submit" size="sm" disabled={uploadingDocument}>
+                          {uploadingDocument ? "Uploading…" : "Upload"}
                         </Button>
                       </form>
                     </div>

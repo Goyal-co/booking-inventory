@@ -113,7 +113,7 @@ This creates `admin@demo.com` / `password123` and sample projects. Never run thi
 | Session cookies | `httpOnly`, `secure` in production, separate cookie names per app |
 | HTTP headers | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy` on Next apps |
 | Admin API | Auth middleware + project-scoped access for Project Admin |
-| File uploads | Type/size limits on floor plan uploads; admin auth required |
+| File uploads | KYC docs use EOI-style presign + client upload; signed download for admin review; type/size limits |
 
 ### Your responsibilities before go-live
 
@@ -131,7 +131,7 @@ This creates `admin@demo.com` / `password123` and sample projects. Never run thi
 
 - Credentials-based login (no MFA yet)
 - No built-in login rate limiting in app code
-- Floor plan files stored on local disk (use shared storage / S3 for multi-instance deploys)
+- Prefer Vercel Blob (`BLOB_READ_WRITE_TOKEN`) or S3 for booking documents on multi-instance deploys; local disk is for dev only
 - WebSocket rooms are not auth-gated (clients only receive public inventory events)
 
 ---

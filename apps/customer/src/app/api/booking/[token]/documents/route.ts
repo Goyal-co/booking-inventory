@@ -1,28 +1,89 @@
 import { NextResponse } from "next/server";
-import { addBookingDocument } from "@booking/database";
-import { uploadFile } from "@goyal/storage";
+import { addBookingDocument, getDigitalFormByToken } from "@booking/database";
+import {
+  deleteStoredObject,
+  objectExists,
+  validateBookingDocument,
+  type BookingDocType,
+} from "@goyal/storage";
 
-const ALLOWED_TYPES = new Set(["PAN", "AADHAAR", "SIGNATURE", "PAYMENT_PROOF", "OTHER"]);
-const MAX_BYTES = 5 * 1024 * 1024;
+const ALLOWED = new Set<BookingDocType>([
+  "PAN",
+  "AADHAAR",
+  "SIGNATURE",
+  "PAYMENT_PROOF",
+  "OTHER",
+]);
 
-export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
+/** EOI-style: metadata only after client upload. Never accept multipart bytes here. */
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ token: string }> }
+) {
   const { token } = await params;
-  const formData = await req.formData();
-  const file = formData.get("file") as File | null;
-  const type = (formData.get("type") as string) ?? "OTHER";
-  if (!file) return NextResponse.json({ error: "file required" }, { status: 400 });
-  if (!ALLOWED_TYPES.has(type)) return NextResponse.json({ error: "invalid type" }, { status: 400 });
-  if (file.size > MAX_BYTES) return NextResponse.json({ error: "file too large (max 5MB)" }, { status: 400 });
+  const form = await getDigitalFormByToken(token);
+  if (!form) {
+    return NextResponse.json({ error: "Invalid or expired booking link" }, { status: 404 });
+  }
+  if (form.status !== "DRAFT") {
+    return NextResponse.json({ error: "Booking form is no longer editable" }, { status: 400 });
+  }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const uploaded = await uploadFile("booking-docs", file.name, buffer, file.type || "application/octet-stream");
+  try {
+    const body = (await req.json()) as {
+      type?: string;
+      fileName?: string;
+      fileUrl?: string;
+      mimeType?: string;
+      fileSize?: number;
+    };
 
-  const doc = await addBookingDocument(
-    token,
-    type as "PAN" | "AADHAAR" | "SIGNATURE" | "PAYMENT_PROOF" | "OTHER",
-    file.name,
-    uploaded.url
-  );
-  if (!doc) return NextResponse.json({ error: "Invalid or expired token" }, { status: 404 });
-  return NextResponse.json({ document: doc }, { status: 201 });
+    const type = String(body.type ?? "OTHER") as BookingDocType;
+    const fileName = String(body.fileName ?? "").trim();
+    const fileUrl = String(body.fileUrl ?? "").trim();
+    const mimeType = String(body.mimeType ?? "").trim();
+    const fileSize = Number(body.fileSize ?? 0);
+
+    if (!ALLOWED.has(type)) {
+      return NextResponse.json({ error: "Invalid document type" }, { status: 400 });
+    }
+    if (!fileName || !fileUrl) {
+      return NextResponse.json({ error: "fileName and fileUrl are required" }, { status: 400 });
+    }
+    if (mimeType) {
+      const validationError = validateBookingDocument(type, mimeType, fileSize || 1);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
+      }
+    }
+
+    const exists = await objectExists(fileUrl);
+    if (!exists) {
+      return NextResponse.json(
+        { error: "Uploaded file not found. Please upload again." },
+        { status: 400 }
+      );
+    }
+
+    const result = await addBookingDocument(token, type, fileName, fileUrl);
+    if (!result) {
+      return NextResponse.json({ error: "Invalid or expired booking link" }, { status: 404 });
+    }
+
+    if (result.replacedFileUrl && result.replacedFileUrl !== fileUrl) {
+      try {
+        await deleteStoredObject(result.replacedFileUrl);
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+
+    return NextResponse.json({ document: result.doc }, { status: 201 });
+  } catch (error) {
+    console.error("Booking document metadata save failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Document save failed" },
+      { status: 500 }
+    );
+  }
 }

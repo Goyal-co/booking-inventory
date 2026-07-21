@@ -189,7 +189,13 @@ export function costSheetToHtml(
 
 function apartmentDetailsPaper(
   result: CostSheetResult,
-  meta: { projectName: string; unitNumber: string; towerName: string; carParks?: string }
+  meta: {
+    projectName: string;
+    unitNumber: string;
+    towerName: string;
+    carParks?: string;
+    includePaymentSchedule?: boolean;
+  }
 ) {
   const unit = apartmentOf(result) || meta.unitNumber;
   const wing = wingOf(result) || meta.towerName;
@@ -235,7 +241,7 @@ ${uline("Gross Apartment Value (A+B) (Rs)", inr(result.grossApartmentValue), { f
 ${uline("In words (Rs)", amountInWordsFallback(result.grossApartmentValue), { full: true })}
 ${uline("Offers if applicable", "", { full: true })}
 ${
-  result.paymentSchedule?.length
+  meta.includePaymentSchedule !== false && result.paymentSchedule?.length
     ? `<div class="pay-sched">
   ${sectionTitle("Payment Schedule")}
   ${result.paymentSchedule
@@ -271,14 +277,15 @@ ${sectionTitle("Request you to submit the following KYC documents of all the app
 
 function paperCss(teal: string, navy: string) {
   return `
-@page{margin:12mm 10mm}
+@page{size:A4 portrait;margin:0}
 *{box-sizing:border-box}
-body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};margin:0;padding:0;background:#fff;font-size:12px;line-height:1.45}
-.page{position:relative;padding:18px 22px 24px 36px;min-height:100vh;border-right:7px solid ${teal};page-break-after:always}
-.page:last-child{page-break-after:auto}
+html,body{width:210mm;margin:0;padding:0;background:#fff}
+body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};font-size:11px;line-height:1.35}
+.page{position:relative;width:210mm;height:297mm;overflow:hidden;padding:10mm 10mm 11mm 16mm;border-right:2.5mm solid ${teal};break-after:page;page-break-after:always}
+.page:last-child{break-after:auto;page-break-after:auto}
 .page::before{content:"";position:absolute;left:0;top:0;bottom:0;width:18px;background-image:repeating-linear-gradient(-45deg,${navy} 0 5px,#152a45 5px 10px)}
-.page-inner{position:relative}
-.cover{display:flex;flex-direction:column;min-height:88vh;padding:8px 12px 24px}
+.page-inner{position:relative;height:100%}
+.cover{display:flex;flex-direction:column;height:100%;padding:2mm 3mm 4mm}
 .cover-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:48px}
 .apt-boxes{display:inline-flex;gap:4px;vertical-align:middle}
 .apt-boxes span{display:inline-block;width:18px;height:22px;border:1.5px solid ${navy}}
@@ -292,36 +299,37 @@ body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};margin:0;pa
 .dual-logos img{max-height:56px;max-width:140px;object-fit:contain}
 .dual-logos .divider{width:1px;height:48px;background:${navy};opacity:.35}
 .tagline{font-style:italic;font-size:13px;color:#0f172a}
-.details-banner{display:flex;margin:0 0 16px -8px}
+.details-banner{display:flex;margin:0 0 12px -8px;break-inside:avoid;break-after:avoid}
 .details-stripe{width:36px;flex-shrink:0}
-.details-label{flex:1;padding:10px 18px;font-size:26px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
-.teal-banner{text-align:center;padding:12px 16px;font-size:22px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:0 0 18px}
-.sec-title{margin:18px 0 10px;font-size:13px;font-weight:800;text-transform:uppercase;color:${navy};letter-spacing:.03em}
-.uline{display:flex;align-items:baseline;gap:6px;margin:7px 0;min-width:0;flex:1}
+.details-label{flex:1;padding:7px 14px;font-size:21px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
+.teal-banner{text-align:center;padding:9px 14px;font-size:19px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:0 0 14px}
+.sec-title{margin:12px 0 7px;font-size:12px;font-weight:800;text-transform:uppercase;color:${navy};letter-spacing:.03em;break-after:avoid}
+.uline{display:flex;align-items:baseline;gap:5px;margin:4px 0;min-width:0;flex:1;break-inside:avoid}
 .uline-full{width:100%}
-.uline-row{display:flex;gap:18px;margin:7px 0}
+.uline-row{display:flex;gap:18px;margin:5px 0;break-inside:avoid}
 .uline-row.three .uline{flex:1}
 .ulabel{flex-shrink:0;font-weight:600;color:${navy};white-space:nowrap}
 .uvalue{flex:1;min-width:40px;border-bottom:1.5px solid ${navy};padding:0 4px 2px;font-weight:500;color:#0f172a;min-height:1.15em}
-.chk-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin:8px 0}
+.chk-row{display:flex;flex-wrap:wrap;align-items:center;gap:7px 13px;margin:5px 0;break-inside:avoid}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:12px}
 .box{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.5px solid ${navy};font-size:10px;line-height:1;flex-shrink:0}
 .note{font-size:10px;color:#64748B;margin:2px 0 8px 0}
 .meta-line{font-size:12px;color:#64748B;margin:0 0 12px}
-.kyc-box{display:flex;gap:24px;padding:14px 18px;margin:8px 0 20px;border-radius:2px}
+.kyc-box{display:flex;gap:20px;padding:9px 14px;margin:6px 0 12px;border-radius:2px;break-inside:avoid}
 .kyc-col{margin:0;padding:0;list-style:none;flex:1}
 .kyc-col li{display:flex;align-items:flex-start;gap:8px;margin:6px 0;font-weight:600;font-size:12px}
 .sq{display:inline-block;width:10px;height:10px;border:1.5px solid currentColor;margin-top:3px;flex-shrink:0;background:transparent}
-.prose{font-size:11px;line-height:1.55;color:#475569;white-space:pre-wrap}
-.callout{background:${teal};color:${navy};padding:14px 16px;font-size:11px;line-height:1.5;margin:10px 0;white-space:pre-wrap}
-.sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px 40px;margin-top:36px}
-.sign-line{border-top:1.5px solid ${navy};margin-top:40px;padding-top:6px;font-size:11px}
+.prose{font-size:9.5px;line-height:1.38;color:#475569;white-space:pre-wrap}
+.callout{background:${teal};color:${navy};padding:10px 12px;font-size:9.5px;line-height:1.38;margin:7px 0;white-space:pre-wrap;break-inside:avoid}
+.sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 32px;margin-top:22px;break-inside:avoid}
+.sign-line{border-top:1.5px solid ${navy};margin-top:28px;padding-top:5px;font-size:10px}
 .footer-block{margin-top:40px;text-align:center;font-size:11px;color:#334155}
 .footer-block strong{display:block;font-size:12px;color:${navy};margin-bottom:4px}
 .enquiry-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:8px 0 12px}
 .preview-ribbon{background:#FEF3C7;color:#92400E;text-align:center;font-weight:700;font-size:12px;padding:8px;margin:0 0 12px;letter-spacing:.04em}
 .no-print{margin-bottom:12px}
-@media print{body{padding:0}.no-print{display:none!important}.page{min-height:auto}}
+@media screen{body{background:#e5e7eb}.page{margin:0 auto 16px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)}}
+@media print{html,body{width:210mm}.no-print{display:none!important}.page{margin:0;box-shadow:none}}
 `;
 }
 
@@ -421,6 +429,10 @@ export function digitalFormToPrintHtml(
         (page1 as unknown as Record<string, unknown>).noOfCarParks ??
         ""
     ),
+    // The physical booking form only shows apartment totals. The detailed
+    // milestone schedule is a separate cost-sheet document and caused this
+    // booking-form page to overflow onto the next PDF page.
+    includePaymentSchedule: false,
   });
 
   if (options?.templateHtml) {
@@ -756,7 +768,11 @@ ${uline("AUTHORIZED SIGNATORY", "", { full: true })}
     ...defaultOrder.filter((id) => parts[id] && !used.has(id)),
   ];
 
-  const freeform = layout?.mode === "freeform";
+  // Printable blocks are complete A4 pages. Applying editor x/y coordinates
+  // to those page wrappers nests A4 pages in one absolute canvas and causes
+  // clipping/misalignment. Print in the configured order; freeform coordinates
+  // remain an editor aid until element-level (rather than page-level) layout.
+  const freeform = false;
   const bodyInner = sequence
     .map((id) => wrapBlock(id, parts[id] ?? "", layout ?? undefined))
     .filter(Boolean)
@@ -791,7 +807,8 @@ ${uline("AUTHORIZED SIGNATORY", "", { full: true })}
 ${paperCss(teal, navy)}
 .freeform-canvas .layout-block{position:absolute;box-sizing:border-box}
 .layout-block.flow{position:relative}
-.layout-block.flow > .page{page-break-after:always;min-height:auto}
+.layout-block.flow{break-inside:avoid;page-break-inside:avoid}
+.layout-block.flow > .page{break-after:page;page-break-after:always}
 </style></head><body>
 ${previewRibbon}
 ${printBtn}
