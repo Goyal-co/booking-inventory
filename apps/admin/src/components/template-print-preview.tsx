@@ -14,6 +14,27 @@ type BrandForm = {
   primaryColor: string;
 };
 
+async function resolveLogoForPreview(raw: string | null | undefined): Promise<string> {
+  const normalized = normalizeMediaUrl(raw);
+  if (!normalized) return "";
+  if (normalized.startsWith("/")) {
+    return `${window.location.origin}${normalized}`;
+  }
+  if (
+    normalized.includes("blob.vercel-storage.com") ||
+    normalized.includes("/api/files/")
+  ) {
+    try {
+      const res = await fetch(`/api/media/logo-url?url=${encodeURIComponent(normalized)}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && typeof data.displayUrl === "string") return data.displayUrl;
+    } catch {
+      /* fall through */
+    }
+  }
+  return normalized;
+}
+
 export function TemplatePrintPreview({
   brand,
   content,
@@ -32,27 +53,49 @@ export function TemplatePrintPreview({
   );
 
   useEffect(() => {
+    let cancelled = false;
     const t = window.setTimeout(() => {
-      const next = digitalFormToPrintHtml(sample, {
-        preview: true,
-        customerName: "Rahul Sharma",
-        customerPhone: "9876543210",
-        customerEmail: "rahul.sharma@example.com",
-        branding: {
-          logoUrl: brand.logoUrl ? normalizeMediaUrl(brand.logoUrl) : null,
-          companyName: brand.companyName,
-          tagline: brand.tagline,
-          formTitle: brand.formTitle,
-          supportEmail: brand.supportEmail,
-          primaryColor: content.accentTeal || brand.primaryColor,
-          projectName: content.projectDisplayName || projectName,
-          unitNumber: "1204",
-          content: content as unknown as Record<string, unknown>,
-        },
-      });
-      setHtml(next);
+      void (async () => {
+        const contentRecord = { ...(content as unknown as Record<string, unknown>) };
+        const [companyLogo, projectLogo, secondaryLogo] = await Promise.all([
+          resolveLogoForPreview(brand.logoUrl),
+          resolveLogoForPreview(
+            String(content.projectLogoUrl || content.heroImageUrl || "")
+          ),
+          resolveLogoForPreview(String(content.secondaryLogoUrl || "")),
+        ]);
+        if (cancelled) return;
+
+        if (projectLogo) {
+          contentRecord.projectLogoUrl = projectLogo;
+          contentRecord.heroImageUrl = projectLogo;
+        }
+        if (secondaryLogo) contentRecord.secondaryLogoUrl = secondaryLogo;
+
+        const next = digitalFormToPrintHtml(sample, {
+          preview: true,
+          customerName: "Rahul Sharma",
+          customerPhone: "9876543210",
+          customerEmail: "rahul.sharma@example.com",
+          branding: {
+            logoUrl: companyLogo || null,
+            companyName: brand.companyName,
+            tagline: brand.tagline,
+            formTitle: brand.formTitle,
+            supportEmail: brand.supportEmail,
+            primaryColor: content.accentTeal || brand.primaryColor,
+            projectName: content.projectDisplayName || projectName,
+            unitNumber: "1204",
+            content: contentRecord,
+          },
+        });
+        setHtml(next);
+      })();
     }, 280);
-    return () => window.clearTimeout(t);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
   }, [brand, content, projectName, sample]);
 
   const openFullscreen = () => {

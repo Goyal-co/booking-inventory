@@ -39,6 +39,6 @@ async function runLifecycleJob() {
 
 console.log("Starting block expiry worker...");
 runExpiryJob();
-runLifecycleJob();
+setTimeout(runLifecycleJob, 15_000);
 setInterval(runExpiryJob, INTERVAL_MS);
 setInterval(runLifecycleJob, INTERVAL_MS);

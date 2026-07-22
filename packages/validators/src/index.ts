@@ -28,6 +28,7 @@ export {
   PRINT_BLOCK_IDS,
   defaultPrintLayout,
   mergePrintLayout,
+  clampFontScale,
   type PrintBlockId,
   type PrintLayout,
   type PrintLayoutBlock,

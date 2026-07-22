@@ -472,6 +472,7 @@ export default function BookingFormPage() {
                             <img
                               src={projectLogoUrl}
                               alt={projectLabel}
+                              referrerPolicy="no-referrer"
                               className="max-h-40 max-w-full object-contain p-4"
                             />
                           ) : (
@@ -512,6 +513,7 @@ export default function BookingFormPage() {
                           <img
                             src={companyLogoUrl}
                             alt={branding.companyName}
+                            referrerPolicy="no-referrer"
                             className="mb-2 h-10 w-auto max-w-[200px] object-contain"
                           />
                           <p className="text-xs italic text-navy-600">
@@ -524,6 +526,7 @@ export default function BookingFormPage() {
                             <img
                               src={projectLogoUrl}
                               alt={projectLabel}
+                              referrerPolicy="no-referrer"
                               className="ml-auto h-12 w-auto object-contain"
                             />
                           ) : (
@@ -542,6 +545,7 @@ export default function BookingFormPage() {
                           <img
                             src={projectLogoUrl}
                             alt={projectLabel}
+                            referrerPolicy="no-referrer"
                             className="mb-6 h-24 w-auto max-w-[220px] object-contain"
                           />
                         ) : null}
@@ -571,6 +575,7 @@ export default function BookingFormPage() {
                           <img
                             src={companyLogoUrl}
                             alt={branding.companyName}
+                            referrerPolicy="no-referrer"
                             className="h-12 w-auto max-w-[180px] object-contain"
                           />
                           <p className="text-center text-xs font-semibold text-navy-700">
@@ -583,6 +588,7 @@ export default function BookingFormPage() {
                             <img
                               src={secondaryLogoUrl}
                               alt={content.secondaryCompanyName || "Partner"}
+                              referrerPolicy="no-referrer"
                               className="h-12 w-auto max-w-[180px] object-contain"
                             />
                           ) : (

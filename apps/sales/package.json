@@ -15,6 +15,7 @@
     "@booking/realtime": "workspace:*",
     "@booking/ui": "workspace:*",
     "@booking/validators": "workspace:*",
+    "@goyal/storage": "workspace:*",
     "bcryptjs": "^2.4.3",
     "lucide-react": "^0.469.0",
     "next": "^15.1.3",

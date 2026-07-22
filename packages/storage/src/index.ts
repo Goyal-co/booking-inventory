@@ -322,10 +322,14 @@ export async function uploadFile(
   folder: string,
   fileName: string,
   buffer: Buffer,
-  contentType: string
+  contentType: string,
+  options?: { access?: "public" | "private" }
 ): Promise<UploadResult> {
   const key = buildObjectKey(folder, fileName);
   const mode = getStorageMode();
+  // Private Blob stores reject access:"public". Logos stay private and are
+  // shown via resolveMediaDisplayUrl / signed URLs (same as KYC docs).
+  const access = options?.access ?? "private";
 
   if (mode === "s3") {
     const cfg = getS3Config();
@@ -336,6 +340,7 @@ export async function uploadFile(
         Key: key,
         Body: buffer,
         ContentType: contentType,
+        ...(access === "public" ? { ACL: "public-read" as const } : {}),
       })
     );
     return { key, url: permanentS3FileUrl(key) };
@@ -343,6 +348,7 @@ export async function uploadFile(
 
   if (mode === "blob") {
     const { put } = await import("@vercel/blob");
+    // Always private when store is private; ignore public requests for blob.
     const blob = await put(key, buffer, {
       access: "private",
       contentType,
@@ -353,6 +359,62 @@ export async function uploadFile(
   }
 
   return putLocalObject(key, buffer, contentType);
+}
+
+/**
+ * Resolve a stored media URL into something safe for <img src> / print HTML.
+ * Private Blob/S3 objects get a short-lived signed URL; public/local pass through.
+ */
+export async function resolveMediaDisplayUrl(
+  fileUrl: string | null | undefined,
+  opts?: { baseOrigin?: string }
+): Promise<string> {
+  const raw = String(fileUrl ?? "").trim();
+  if (!raw) return "";
+
+  let url = raw;
+  if (url.startsWith("/") && opts?.baseOrigin) {
+    url = new URL(url, opts.baseOrigin.replace(/\/+$/, "")).toString();
+  }
+
+  if (isBlobUrl(url) || (getStorageMode() === "s3" && isPrivateStorageUrl(url))) {
+    try {
+      return await getPresignedDownloadUrl(url);
+    } catch {
+      return url;
+    }
+  }
+
+  return url;
+}
+
+/** Sign/normalize logo fields on a branding object for print or customer HTML. */
+export async function resolveBrandingLogosForDisplay(
+  branding: Record<string, unknown>,
+  baseOrigin?: string
+): Promise<Record<string, unknown>> {
+  const content =
+    branding.content && typeof branding.content === "object"
+      ? { ...(branding.content as Record<string, unknown>) }
+      : {};
+
+  const resolve = (raw: unknown) =>
+    resolveMediaDisplayUrl(typeof raw === "string" ? raw : "", { baseOrigin });
+
+  const [logoUrl, projectLogoUrl, heroImageUrl, secondaryLogoUrl] = await Promise.all([
+    resolve(branding.logoUrl),
+    resolve(content.projectLogoUrl),
+    resolve(content.heroImageUrl),
+    resolve(content.secondaryLogoUrl),
+  ]);
+
+  const next: Record<string, unknown> = { ...branding };
+  if (logoUrl) next.logoUrl = logoUrl;
+  if (projectLogoUrl) content.projectLogoUrl = projectLogoUrl;
+  if (heroImageUrl) content.heroImageUrl = heroImageUrl;
+  if (secondaryLogoUrl) content.secondaryLogoUrl = secondaryLogoUrl;
+  next.content = content;
+  return next;
 }
 
 export type { StorageMode };

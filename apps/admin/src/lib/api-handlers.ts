@@ -992,7 +992,7 @@ export async function GET_bookings(req: NextRequest) {
 }
 
 export async function GET_booking_printPdf(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const user = await getAdminUser();
@@ -1048,6 +1048,8 @@ export async function GET_booking_printPdf(
       template,
       existingBranding: branding ?? null,
     }) as unknown as Record<string, unknown>;
+    const { resolveBrandingLogosForDisplay } = await import("@goyal/storage");
+    branding = await resolveBrandingLogosForDisplay(branding, req.nextUrl.origin);
   }
 
   const { digitalFormToPrintHtml } = await import("@booking/pdf");

@@ -1,10 +1,36 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Input, Label } from "@booking/ui";
 import { normalizeMediaUrl } from "@booking/validators";
 import { uploadLogoFile } from "@/lib/upload-logo-client";
 import { toast } from "sonner";
+
+async function fetchDisplayUrl(raw: string): Promise<string> {
+  const normalized = normalizeMediaUrl(raw);
+  if (!normalized) return "";
+  // Drive/Dropbox/public https — use directly with no-referrer on img
+  if (
+    /drive\.google\.com|dropbox\.com/i.test(normalized) ||
+    (normalized.startsWith("http") && !normalized.includes("blob.vercel-storage.com") && !normalized.includes("/api/files/"))
+  ) {
+    return normalized;
+  }
+  try {
+    const res = await fetch(`/api/media/logo-url?url=${encodeURIComponent(normalized)}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && typeof data.displayUrl === "string" && data.displayUrl) {
+      return data.displayUrl;
+    }
+  } catch {
+    /* fall through */
+  }
+  // Relative local path — resolve against current origin for preview
+  if (normalized.startsWith("/")) {
+    return `${window.location.origin}${normalized}`;
+  }
+  return normalized;
+}
 
 export function LogoSourceField({
   label,
@@ -19,7 +45,21 @@ export function LogoSourceField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const preview = normalizeMediaUrl(value);
+  const [preview, setPreview] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!value.trim()) {
+      setPreview("");
+      return;
+    }
+    fetchDisplayUrl(value).then((url) => {
+      if (!cancelled) setPreview(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
 
   const onUpload = async (file: File | null) => {
     if (!file) return;
@@ -48,7 +88,13 @@ export function LogoSourceField({
         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-slate-50">
           {preview ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="" className="max-h-full max-w-full object-contain" />
+            <img
+              src={preview}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="max-h-full max-w-full object-contain"
+              onError={() => setPreview("")}
+            />
           ) : (
             <span className="text-[10px] text-slate-400">No logo</span>
           )}
@@ -85,7 +131,7 @@ export function LogoSourceField({
           </div>
           <p className="text-xs text-slate-500">
             {hint ||
-              "Use either: upload an image file, or paste a public URL / Google Drive share link."}
+              "Upload a file (recommended) or paste a public URL / Google Drive share link. Re-upload if an old logo no longer shows."}
           </p>
         </div>
       </div>

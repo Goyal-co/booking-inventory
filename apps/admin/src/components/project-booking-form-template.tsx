@@ -141,8 +141,13 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
     const logoUrl = normalizeMediaUrl(brand.logoUrl);
     const projectLogoUrl = normalizeMediaUrl(content.projectLogoUrl || content.heroImageUrl);
     const secondaryLogoUrl = normalizeMediaUrl(content.secondaryLogoUrl);
+    const printLayout = mergePrintLayout(content.printLayout, {
+      showLandOwners: content.showLandOwners,
+      showConsentPage: content.showConsentPage,
+    });
     const fieldMapping = {
       ...content,
+      printLayout,
       projectLogoUrl,
       heroImageUrl: projectLogoUrl,
       secondaryLogoUrl,
@@ -237,6 +242,46 @@ export function ProjectBookingFormTemplatePanel({ projectId }: { projectId: stri
             {saving ? "Saving…" : "Save Template"}
           </Button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-navy-600">Print font size</p>
+          <p className="text-xs text-slate-500">
+            Applies to every printable page (cover, details, terms, consent, etc.)
+          </p>
+        </div>
+        <label className="ml-auto flex items-center gap-2 text-sm text-slate-700">
+          <span className="whitespace-nowrap">Size</span>
+          <input
+            type="range"
+            min={100}
+            max={170}
+            step={5}
+            className="w-40 sm:w-56"
+            value={Math.round((content.printLayout?.fontScale ?? 1.35) * 100)}
+            onChange={(e) =>
+              setPrintLayout(
+                mergePrintLayout(
+                  {
+                    ...content.printLayout,
+                    fontScale: Math.round(Number(e.target.value)) / 100,
+                  },
+                  {
+                    showLandOwners: content.showLandOwners,
+                    showConsentPage: content.showConsentPage,
+                  }
+                )
+              )
+            }
+          />
+          <span className="w-14 tabular-nums font-semibold text-navy-600">
+            {Math.round((content.printLayout?.fontScale ?? 1.35) * 100)}%
+          </span>
+          <span className="hidden text-xs text-slate-500 sm:inline">
+            (~{Math.round(12 * (content.printLayout?.fontScale ?? 1.35))}px body)
+          </span>
+        </label>
       </div>
 
       <div className="flex gap-2 border-b border-slate-200">

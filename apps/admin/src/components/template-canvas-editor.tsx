@@ -135,6 +135,25 @@ export function TemplateCanvasEditor({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <label className="flex items-center gap-2 rounded-lg border bg-white px-2 py-1.5 text-xs text-slate-600">
+            Text size (all pages)
+            <input
+              type="range"
+              min={100}
+              max={170}
+              step={5}
+              value={Math.round((merged.fontScale ?? 1.35) * 100)}
+              onChange={(e) =>
+                onChange({
+                  ...merged,
+                  fontScale: Math.round(Number(e.target.value)) / 100,
+                })
+              }
+            />
+            <span className="w-12 tabular-nums font-semibold text-navy-600">
+              {Math.round((merged.fontScale ?? 1.35) * 100)}%
+            </span>
+          </label>
           <Button
             type="button"
             size="sm"

@@ -4,7 +4,7 @@ import { getDigitalFormByToken, saveDigitalFormStep, prisma } from "@booking/dat
 import { digitalFormStepSchema, mergeTemplateContent } from "@booking/validators";
 import type { BookingFormTemplateContent } from "@booking/validators";
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const form = await getDigitalFormByToken(token);
   if (!form?.block) {
@@ -23,6 +23,28 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       : {};
   const content = mergeTemplateContent(mapping, project.name);
 
+  let branding: Record<string, unknown> = {
+    logoUrl: template?.logoUrl ?? project.logoUrl ?? null,
+    companyName: template?.companyName ?? "Goyal & Co.",
+    tagline: template?.tagline ?? "creating landmarks since 1971",
+    formTitle:
+      template?.formTitle ?? "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN",
+    formSubtitle: template?.formSubtitle ?? null,
+    footerText: template?.footerText ?? null,
+    supportEmail: template?.supportEmail ?? content.officeEmail,
+    primaryColor: template?.primaryColor ?? content.accentTeal,
+    projectName: project.name,
+    unitNumber: block.unit.unitNumber,
+    content,
+  };
+
+  try {
+    const { resolveBrandingLogosForDisplay } = await import("@goyal/storage");
+    branding = await resolveBrandingLogosForDisplay(branding, req.nextUrl.origin);
+  } catch {
+    /* keep raw URLs if storage signing fails */
+  }
+
   return NextResponse.json({
     status: form.status,
     page1Snapshot: form.page1Snapshot,
@@ -30,20 +52,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     projectName: project.name,
     unitNumber: block.unit.unitNumber,
     documents: form.documents,
-    branding: {
-      logoUrl: template?.logoUrl ?? project.logoUrl ?? null,
-      companyName: template?.companyName ?? "Goyal & Co.",
-      tagline: template?.tagline ?? "creating landmarks since 1971",
-      formTitle:
-        template?.formTitle ?? "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN",
-      formSubtitle: template?.formSubtitle ?? null,
-      footerText: template?.footerText ?? null,
-      supportEmail: template?.supportEmail ?? content.officeEmail,
-      primaryColor: template?.primaryColor ?? content.accentTeal,
-      projectName: project.name,
-      unitNumber: block.unit.unitNumber,
-      content,
-    },
+    branding,
   });
 }
 

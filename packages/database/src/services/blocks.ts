@@ -289,41 +289,44 @@ export async function expireBlocks() {
   });
 
   for (const block of expired) {
-    await prisma.$transaction(async (tx) => {
-      const pendingBooking = await tx.booking.findFirst({
-        where: { unitId: block.unitId, status: BookingStatus.PENDING },
-      });
-      if (pendingBooking) return;
-
-      await tx.block.delete({ where: { id: block.id } });
-
-      const remaining = await tx.block.count({
-        where: { unitId: block.unitId, expiresAt: { gt: new Date() } },
-      });
-
-      const activeBooking = await tx.booking.findFirst({
-        where: {
-          unitId: block.unitId,
-          status: { in: [BookingStatus.CONFIRMED] },
-        },
-      });
-
-      if (!activeBooking && remaining === 0) {
-        await tx.unit.update({
-          where: { id: block.unitId },
-          data: { status: UnitStatus.AVAILABLE },
+    await prisma.$transaction(
+      async (tx) => {
+        const pendingBooking = await tx.booking.findFirst({
+          where: { unitId: block.unitId, status: BookingStatus.PENDING },
         });
-      }
+        if (pendingBooking) return;
 
-      await createActivity(
-        {
-          projectId: block.unit.floor.tower.projectId,
-          message: `Unit ${block.unit.unitNumber} has been released`,
-          unitId: block.unitId,
-        },
-        tx
-      );
-    });
+        await tx.block.delete({ where: { id: block.id } });
+
+        const remaining = await tx.block.count({
+          where: { unitId: block.unitId, expiresAt: { gt: new Date() } },
+        });
+
+        const activeBooking = await tx.booking.findFirst({
+          where: {
+            unitId: block.unitId,
+            status: { in: [BookingStatus.CONFIRMED] },
+          },
+        });
+
+        if (!activeBooking && remaining === 0) {
+          await tx.unit.update({
+            where: { id: block.unitId },
+            data: { status: UnitStatus.AVAILABLE },
+          });
+        }
+
+        await createActivity(
+          {
+            projectId: block.unit.floor.tower.projectId,
+            message: `Unit ${block.unit.unitNumber} has been released`,
+            unitId: block.unitId,
+          },
+          tx
+        );
+      },
+      { maxWait: 10_000, timeout: 20_000 }
+    );
   }
 
   return expired.map((b) => ({

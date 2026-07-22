@@ -254,6 +254,9 @@ importers:
       '@booking/validators':
         specifier: workspace:*
         version: link:../../packages/validators
+      '@goyal/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3

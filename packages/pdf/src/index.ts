@@ -275,58 +275,65 @@ ${sectionTitle("Request you to submit the following KYC documents of all the app
 </div>`;
 }
 
-function paperCss(teal: string, navy: string) {
+function paperCss(teal: string, navy: string, fontScale = 1.35) {
+  const s = Math.min(1.7, Math.max(1, fontScale || 1.35));
+  const px = (n: number) => `${+(n * s).toFixed(2)}px`;
+  // Slightly tighten large vertical gaps as text grows so pages fill better
+  const space = (n: number) => `${+((n * (0.8 + 0.2 / s)) * s).toFixed(2)}px`;
+  // Base 12px × scale applies to every page (labels, values, notes inherit)
+  const bodyPx = +(12 * s).toFixed(2);
   return `
 @page{size:A4 portrait;margin:0}
 *{box-sizing:border-box}
+html{font-size:${bodyPx}px}
 html,body{width:210mm;margin:0;padding:0;background:#fff}
-body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};font-size:11px;line-height:1.35}
-.page{position:relative;width:210mm;height:297mm;overflow:hidden;padding:10mm 10mm 11mm 16mm;border-right:2.5mm solid ${teal};break-after:page;page-break-after:always}
+body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};font-size:1rem;line-height:1.4}
+.page{position:relative;width:210mm;height:297mm;overflow:hidden;padding:9mm 9mm 10mm 15mm;border-right:2.5mm solid ${teal};break-after:page;page-break-after:always}
 .page:last-child{break-after:auto;page-break-after:auto}
 .page::before{content:"";position:absolute;left:0;top:0;bottom:0;width:18px;background-image:repeating-linear-gradient(-45deg,${navy} 0 5px,#152a45 5px 10px)}
 .page-inner{position:relative;height:100%}
 .cover{display:flex;flex-direction:column;height:100%;padding:2mm 3mm 4mm}
-.cover-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:48px}
+.cover-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${space(28)};font-size:1rem}
 .apt-boxes{display:inline-flex;gap:4px;vertical-align:middle}
 .apt-boxes span{display:inline-block;width:18px;height:22px;border:1.5px solid ${navy}}
-.cover-title{text-align:center;font-size:20px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;color:${navy};margin:24px 0 28px;line-height:1.35}
-.cover-logo{text-align:center;margin:20px auto;max-width:280px}
+.cover-title{text-align:center;font-size:${px(20)};font-weight:800;letter-spacing:.02em;text-transform:uppercase;color:${navy};margin:${space(14)} 0 ${space(16)};line-height:1.35}
+.cover-logo{text-align:center;margin:${space(12)} auto;max-width:280px}
 .cover-logo img{max-width:100%;max-height:160px;object-fit:contain}
-.cover-project{text-align:center;font-size:28px;font-weight:300;letter-spacing:.08em;color:#64748B;margin-top:8px}
-.cover-project strong{display:block;font-size:36px;font-weight:800;color:${navy};letter-spacing:.04em;margin-top:4px}
-.cover-foot{margin-top:auto;text-align:center;padding-top:48px}
+.cover-project{text-align:center;font-size:${px(28)};font-weight:300;letter-spacing:.08em;color:#64748B;margin-top:8px}
+.cover-project strong{display:block;font-size:${px(36)};font-weight:800;color:${navy};letter-spacing:.04em;margin-top:4px}
+.cover-foot{margin-top:auto;text-align:center;padding-top:${space(28)}}
 .dual-logos{display:flex;align-items:center;justify-content:center;gap:28px;margin-bottom:12px}
 .dual-logos img{max-height:56px;max-width:140px;object-fit:contain}
 .dual-logos .divider{width:1px;height:48px;background:${navy};opacity:.35}
-.tagline{font-style:italic;font-size:13px;color:#0f172a}
+.tagline{font-style:italic;font-size:${px(13)};color:#0f172a}
 .details-banner{display:flex;margin:0 0 12px -8px;break-inside:avoid;break-after:avoid}
 .details-stripe{width:36px;flex-shrink:0}
-.details-label{flex:1;padding:7px 14px;font-size:21px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
-.teal-banner{text-align:center;padding:9px 14px;font-size:19px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:0 0 14px}
-.sec-title{margin:12px 0 7px;font-size:12px;font-weight:800;text-transform:uppercase;color:${navy};letter-spacing:.03em;break-after:avoid}
-.uline{display:flex;align-items:baseline;gap:5px;margin:4px 0;min-width:0;flex:1;break-inside:avoid}
+.details-label{flex:1;padding:7px 14px;font-size:${px(21)};font-weight:900;letter-spacing:.04em;text-transform:uppercase}
+.teal-banner{text-align:center;padding:9px 14px;font-size:${px(19)};font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:0 0 14px}
+.sec-title{margin:${space(10)} 0 7px;font-size:${px(13)};font-weight:800;text-transform:uppercase;color:${navy};letter-spacing:.03em;break-after:avoid}
+.uline{display:flex;align-items:baseline;gap:5px;margin:5px 0;min-width:0;flex:1;break-inside:avoid;font-size:1rem}
 .uline-full{width:100%}
-.uline-row{display:flex;gap:18px;margin:5px 0;break-inside:avoid}
+.uline-row{display:flex;gap:18px;margin:6px 0;break-inside:avoid}
 .uline-row.three .uline{flex:1}
-.ulabel{flex-shrink:0;font-weight:600;color:${navy};white-space:nowrap}
-.uvalue{flex:1;min-width:40px;border-bottom:1.5px solid ${navy};padding:0 4px 2px;font-weight:500;color:#0f172a;min-height:1.15em}
-.chk-row{display:flex;flex-wrap:wrap;align-items:center;gap:7px 13px;margin:5px 0;break-inside:avoid}
-.chk{display:inline-flex;align-items:center;gap:6px;font-size:12px}
-.box{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.5px solid ${navy};font-size:10px;line-height:1;flex-shrink:0}
-.note{font-size:10px;color:#64748B;margin:2px 0 8px 0}
-.meta-line{font-size:12px;color:#64748B;margin:0 0 12px}
+.ulabel{flex-shrink:0;font-weight:600;color:${navy};white-space:nowrap;font-size:1rem}
+.uvalue{flex:1;min-width:40px;border-bottom:1.5px solid ${navy};padding:0 4px 2px;font-weight:500;color:#0f172a;min-height:1.2em;font-size:1rem}
+.chk-row{display:flex;flex-wrap:wrap;align-items:center;gap:7px 13px;margin:6px 0;break-inside:avoid}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:1rem}
+.box{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border:1.5px solid ${navy};font-size:${px(11)};line-height:1;flex-shrink:0}
+.note{font-size:${px(11)};color:#64748B;margin:2px 0 8px 0}
+.meta-line{font-size:1rem;color:#64748B;margin:0 0 12px}
 .kyc-box{display:flex;gap:20px;padding:9px 14px;margin:6px 0 12px;border-radius:2px;break-inside:avoid}
 .kyc-col{margin:0;padding:0;list-style:none;flex:1}
-.kyc-col li{display:flex;align-items:flex-start;gap:8px;margin:6px 0;font-weight:600;font-size:12px}
+.kyc-col li{display:flex;align-items:flex-start;gap:8px;margin:6px 0;font-weight:600;font-size:1rem}
 .sq{display:inline-block;width:10px;height:10px;border:1.5px solid currentColor;margin-top:3px;flex-shrink:0;background:transparent}
-.prose{font-size:9.5px;line-height:1.38;color:#475569;white-space:pre-wrap}
-.callout{background:${teal};color:${navy};padding:10px 12px;font-size:9.5px;line-height:1.38;margin:7px 0;white-space:pre-wrap;break-inside:avoid}
-.sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 32px;margin-top:22px;break-inside:avoid}
-.sign-line{border-top:1.5px solid ${navy};margin-top:28px;padding-top:5px;font-size:10px}
-.footer-block{margin-top:40px;text-align:center;font-size:11px;color:#334155}
-.footer-block strong{display:block;font-size:12px;color:${navy};margin-bottom:4px}
-.enquiry-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:8px 0 12px}
-.preview-ribbon{background:#FEF3C7;color:#92400E;text-align:center;font-weight:700;font-size:12px;padding:8px;margin:0 0 12px;letter-spacing:.04em}
+.prose{font-size:${px(11)};line-height:1.45;color:#475569;white-space:pre-wrap}
+.callout{background:${teal};color:${navy};padding:10px 12px;font-size:${px(11)};line-height:1.45;margin:7px 0;white-space:pre-wrap;break-inside:avoid}
+.sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 32px;margin-top:${space(16)};break-inside:avoid}
+.sign-line{border-top:1.5px solid ${navy};margin-top:${space(18)};padding-top:5px;font-size:${px(11)}}
+.footer-block{margin-top:${space(22)};text-align:center;font-size:1rem;color:#334155}
+.footer-block strong{display:block;font-size:${px(13)};color:${navy};margin-bottom:4px}
+.enquiry-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:8px 0 12px;font-size:1rem}
+.preview-ribbon{background:#FEF3C7;color:#92400E;text-align:center;font-weight:700;font-size:${px(12)};padding:8px;margin:0 0 12px;letter-spacing:.04em}
 .no-print{margin-bottom:12px}
 @media screen{body{background:#e5e7eb}.page{margin:0 auto 16px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)}}
 @media print{html,body{width:210mm}.no-print{display:none!important}.page{margin:0;box-shadow:none}}
@@ -345,6 +352,7 @@ type LayoutBlock = {
 type PrintLayoutOpt = {
   mode?: "flow" | "freeform";
   blocks?: LayoutBlock[];
+  fontScale?: number;
 };
 
 export type PrintBranding = {
@@ -523,7 +531,7 @@ export function digitalFormToPrintHtml(
     branding.formTitle || "APPLICATION FOR ALLOTMENT OF A RESIDENTIAL UNIT IN"
   )}</div>
   <div class="cover-logo">
-    ${projectLogo ? `<img src="${esc(projectLogo)}" alt="project"/>` : ""}
+    ${projectLogo ? `<img src="${esc(projectLogo)}" alt="project" referrerpolicy="no-referrer"/>` : ""}
     <div class="cover-project">
       ${esc(projectName || "ORCHID")}
       ${projectLine2 ? `<strong>${esc(projectLine2)}</strong>` : ""}
@@ -531,11 +539,11 @@ export function digitalFormToPrintHtml(
   </div>
   <div class="cover-foot">
     <div class="dual-logos">
-      ${companyLogo ? `<img src="${esc(companyLogo)}" alt="company"/>` : `<strong>${esc(branding.companyName || "Goyal & Co.")}</strong>`}
+      ${companyLogo ? `<img src="${esc(companyLogo)}" alt="company" referrerpolicy="no-referrer"/>` : `<strong>${esc(branding.companyName || "Goyal & Co.")}</strong>`}
       <div class="divider"></div>
       ${
         secondaryLogo
-          ? `<img src="${esc(secondaryLogo)}" alt="secondary"/>`
+          ? `<img src="${esc(secondaryLogo)}" alt="secondary" referrerpolicy="no-referrer"/>`
           : `<strong>${esc(String(content.secondaryCompanyName || "Hariyana Group"))}</strong>`
       }
     </div>
@@ -804,7 +812,7 @@ ${uline("AUTHORIZED SIGNATORY", "", { full: true })}
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Booking Form — ${esc(fullProject)}</title>
 <style>
-${paperCss(teal, navy)}
+${paperCss(teal, navy, Number(layout?.fontScale ?? 1.35))}
 .freeform-canvas .layout-block{position:absolute;box-sizing:border-box}
 .layout-block.flow{position:relative}
 .layout-block.flow{break-inside:avoid;page-break-inside:avoid}

@@ -2,15 +2,33 @@ export const WEAK_SECRETS = new Set([
   "change-me-in-production",
   "change-me-in-production-min-32-chars",
   "change-me-ws-internal-secret-min-32-chars",
+  "dev-secret-change-in-production",
   "secret",
   "password",
   "password123",
 ]);
 
+/**
+ * Next.js Edge middleware often reports NODE_ENV=production even during `next dev`.
+ * Treat localhost auth URLs as non-production so local secrets don't break middleware.
+ */
+function isDeployedProductionRuntime() {
+  if (process.env.NEXT_PHASE === "phase-production-build") return false;
+  if (process.env.NODE_ENV !== "production") return false;
+  const urls = [
+    process.env.NEXTAUTH_URL,
+    process.env.ADMIN_URL,
+    process.env.SALES_URL,
+    process.env.CUSTOMER_URL,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (urls && looksLikeLocalhost(urls)) return false;
+  return true;
+}
+
 export function assertNextAuthSecret() {
-  if (process.env.NODE_ENV !== "production") return;
-  // next build imports auth modules while collecting page data; secret is enforced at runtime
-  if (process.env.NEXT_PHASE === "phase-production-build") return;
+  if (!isDeployedProductionRuntime()) return;
 
   const secret = process.env.NEXTAUTH_SECRET?.trim();
   if (!secret || secret.length < 32 || WEAK_SECRETS.has(secret)) {

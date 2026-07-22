@@ -42,6 +42,11 @@ export type PrintLayout = {
   /** flow = document order; freeform = absolute positions on canvas. */
   mode: "flow" | "freeform";
   blocks: PrintLayoutBlock[];
+  /**
+   * Scales all print typography on every A4 page (1.0–1.7).
+   * Default 1.35 ≈ 16px body text across cover, details, terms, consent.
+   */
+  fontScale?: number;
 };
 
 const LABELS: Record<PrintBlockId, string> = {
@@ -66,6 +71,12 @@ const LABELS: Record<PrintBlockId, string> = {
   footer: "Footer",
 };
 
+export function clampFontScale(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 1.35;
+  return Math.min(1.7, Math.max(1, Math.round(n * 100) / 100));
+}
+
 /** Default stacked A4 flow layout. */
 export function defaultPrintLayout(): PrintLayout {
   const blocks: PrintLayoutBlock[] = PRINT_BLOCK_IDS.map((id, i) => ({
@@ -77,7 +88,7 @@ export function defaultPrintLayout(): PrintLayout {
     y: i * 12,
     w: 100,
   }));
-  return { mode: "flow", blocks };
+  return { mode: "flow", fontScale: 1.35, blocks };
 }
 
 export function mergePrintLayout(
@@ -106,6 +117,7 @@ export function mergePrintLayout(
   }
   return {
     mode: partial?.mode === "freeform" ? "freeform" : "flow",
+    fontScale: clampFontScale(partial?.fontScale ?? base.fontScale),
     blocks: Array.from(byId.values()).sort((a, b) => a.order - b.order),
   };
 }

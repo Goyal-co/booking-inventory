@@ -783,7 +783,7 @@ export async function GET_booking_digitalForm(_req: NextRequest, { params }: { p
   });
 }
 
-export async function GET_booking_printPdf(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET_booking_printPdf(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
@@ -830,6 +830,8 @@ export async function GET_booking_printPdf(_req: NextRequest, { params }: { para
       template,
       existingBranding: branding ?? null,
     }) as unknown as Record<string, unknown>;
+    const { resolveBrandingLogosForDisplay } = await import("@goyal/storage");
+    branding = await resolveBrandingLogosForDisplay(branding, req.nextUrl.origin);
   }
 
   const { digitalFormToPrintHtml } = await import("@booking/pdf");
