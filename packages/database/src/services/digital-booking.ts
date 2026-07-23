@@ -285,6 +285,24 @@ export async function addBookingDocument(
   return { doc, replacedFileUrl };
 }
 
+export async function removeBookingDocument(
+  token: string,
+  type: "PAN" | "AADHAAR" | "SIGNATURE" | "PAYMENT_PROOF" | "OTHER"
+) {
+  const form = await getDigitalFormByToken(token);
+  if (!form) return null;
+  if (form.status !== "DRAFT") return null;
+
+  const existing = await prisma.bookingDocument.findFirst({
+    where: { digitalFormId: form.id, type },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!existing) return { removed: false as const, fileUrl: null };
+
+  await prisma.bookingDocument.delete({ where: { id: existing.id } });
+  return { removed: true as const, fileUrl: existing.fileUrl };
+}
+
 export async function getBookingDocumentForToken(token: string, documentId: string) {
   const form = await getDigitalFormByToken(token);
   if (!form) return null;

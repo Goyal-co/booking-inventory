@@ -201,7 +201,7 @@ export async function approveBooking(bookingId: string, adminUserId: string) {
       where: { id: bookingId },
       include: {
         unit: { include: { floor: { include: { tower: true } } } },
-        user: { select: { name: true } },
+        user: { select: { id: true, name: true } },
       },
     });
 
@@ -213,6 +213,32 @@ export async function approveBooking(bookingId: string, adminUserId: string) {
     const projectId = booking.unit.floor.tower.projectId;
     const now = new Date();
 
+    const approver = await tx.user.findUnique({
+      where: { id: adminUserId },
+      select: { name: true },
+    });
+
+    const existingSnapshot =
+      (booking.formSnapshot as Record<string, unknown> | null) ?? {};
+    const existingFormData =
+      (existingSnapshot.formData as Record<string, unknown> | null) ?? {};
+    const consent =
+      (existingFormData.consent as Record<string, unknown> | null) ?? {};
+
+    const nextSnapshot = {
+      ...existingSnapshot,
+      formData: {
+        ...existingFormData,
+        consent: {
+          ...consent,
+          salesAdvisorName: booking.user.name,
+          approvedBy: approver?.name ?? "",
+        },
+      },
+      salesAdvisorName: booking.user.name,
+      approvedByName: approver?.name ?? "",
+    };
+
     const updated = await tx.booking.update({
       where: { id: bookingId },
       data: {
@@ -220,6 +246,7 @@ export async function approveBooking(bookingId: string, adminUserId: string) {
         reviewedById: adminUserId,
         reviewedAt: now,
         bookedAt: now,
+        formSnapshot: nextSnapshot as Prisma.InputJsonValue,
       },
     });
 

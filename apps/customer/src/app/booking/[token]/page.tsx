@@ -6,6 +6,7 @@ import { Button, CostSheetEngineView, type CostSheetEngineData } from "@booking/
 import {
   mergeTemplateContent,
   normalizeMediaUrl,
+  amountToIndianWords,
   type BookingFormTemplateContent,
 } from "@booking/validators";
 import { toast, Toaster } from "sonner";
@@ -80,9 +81,10 @@ function isFilled(value: unknown) {
 }
 
 function amountInWords(n: number) {
-  if (!Number.isFinite(n) || n <= 0) return "";
-  return `Rupees ${Math.round(n).toLocaleString("en-IN")} only`;
+  return amountToIndianWords(n);
 }
+
+type UploadedDocInfo = { id?: string; type: string; fileName: string };
 
 function CharBoxes({ value }: { value: string }) {
   const chars = (value || "————").split("");
@@ -136,8 +138,9 @@ export default function BookingFormPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState("");
   const [otpVerified, setOtpVerified] = useState(false);
-  const [docsUploaded, setDocsUploaded] = useState<string[]>([]);
+  const [docsUploaded, setDocsUploaded] = useState<UploadedDocInfo[]>([]);
   const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [removingDocType, setRemovingDocType] = useState<string | null>(null);
   const [branding, setBranding] = useState<Branding>({
     logoUrl: null,
     companyName: "Goyal & Co. | Hariyana Group",
@@ -206,9 +209,15 @@ export default function BookingFormPage() {
           content: merged,
         });
         const docs = Array.isArray(d.data.documents)
-          ? (d.data.documents as Array<{ type?: string }>).map((x) => String(x.type ?? ""))
+          ? (d.data.documents as Array<{ id?: string; type?: string; fileName?: string }>).map(
+              (x) => ({
+                id: x.id,
+                type: String(x.type ?? ""),
+                fileName: String(x.fileName ?? "Uploaded file"),
+              })
+            )
           : [];
-        setDocsUploaded(docs.filter(Boolean));
+        setDocsUploaded(docs.filter((x) => x.type));
       })
       .finally(() => setLoading(false));
   }, [token]);
@@ -249,11 +258,12 @@ export default function BookingFormPage() {
         return values.accepted === "yes";
       }
       if (s.id === "documents") {
+        const types = new Set(docsUploaded.map((d) => d.type));
         return (
           otpVerified &&
-          docsUploaded.includes("PAN") &&
-          docsUploaded.includes("AADHAAR") &&
-          docsUploaded.includes("PAYMENT_PROOF")
+          types.has("PAN") &&
+          types.has("AADHAAR") &&
+          types.has("PAYMENT_PROOF")
         );
       }
       if (s.id === "consent") {
@@ -271,17 +281,22 @@ export default function BookingFormPage() {
   const saveStep = async () => {
     if (linkError) return false;
     if (isViewOnly(current)) return true;
+    let dataToSave: Record<string, string | string[]> = { ...fields };
+    if (current.id === "earnestDeposit") {
+      const amt = String(dataToSave.amount ?? "").replace(/[, ]/g, "");
+      const words =
+        String(dataToSave.amountInWords ?? "").trim() || amountInWords(Number(amt));
+      if (words) dataToSave = { ...dataToSave, amountInWords: words };
+    }
     const res = await fetch(`/api/booking/${token}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ step: current.id, data: fields }),
+      body: JSON.stringify({ step: current.id, data: dataToSave }),
     });
     if (res.ok) {
-      if (!(current.id in formData)) {
-        setFormData((prev) => ({ ...prev, [current.id]: fields }));
-      }
+      setFormData((prev) => ({ ...prev, [current.id]: dataToSave }));
       toast.success(
-        current.optional && !Object.values(fields).some(isFilled)
+        current.optional && !Object.values(dataToSave).some(isFilled)
           ? "Skipped optional section"
           : "Saved"
       );
@@ -1106,12 +1121,19 @@ export default function BookingFormPage() {
                       <UnderlineField
                         label="Amount"
                         value={getStr("amount")}
-                        onChange={(v) => setField("amount", v)}
+                        onChange={(v) => {
+                          setField("amount", v);
+                          const words = amountInWords(Number(String(v).replace(/[, ]/g, "")));
+                          if (words) setField("amountInWords", words);
+                        }}
                       />
                     </div>
                     <UnderlineField
                       label="In words"
-                      value={getStr("amountInWords") || amountInWords(Number(getStr("amount")))}
+                      value={
+                        getStr("amountInWords") ||
+                        amountInWords(Number(String(getStr("amount")).replace(/[, ]/g, "")))
+                      }
                       onChange={(v) => setField("amountInWords", v)}
                     />
                     <p className="mt-4 text-sm text-navy-700">
@@ -1267,25 +1289,79 @@ export default function BookingFormPage() {
                         <h3 className="font-semibold text-navy-600">Upload Documents</h3>
                         <FieldTick
                           done={
-                            docsUploaded.includes("PAN") &&
-                            docsUploaded.includes("AADHAAR") &&
-                            docsUploaded.includes("PAYMENT_PROOF")
+                            docsUploaded.some((d) => d.type === "PAN") &&
+                            docsUploaded.some((d) => d.type === "AADHAAR") &&
+                            docsUploaded.some((d) => d.type === "PAYMENT_PROOF")
                           }
                         />
                       </div>
                       <p className="mb-3 text-xs text-slate-500">
                         Required: PAN, Aadhaar, and payment proof (cheque / UPI / NEFT screenshot —
-                        JPEG, PNG, or PDF).
+                        JPEG, PNG, or PDF). You can replace or remove a file before submitting.
                       </p>
-                      <ul className="mb-3 space-y-1 text-sm text-navy-700">
-                        <li>PAN: {docsUploaded.includes("PAN") ? "Uploaded ✓" : "Pending"}</li>
-                        <li>
-                          Aadhaar: {docsUploaded.includes("AADHAAR") ? "Uploaded ✓" : "Pending"}
-                        </li>
-                        <li>
-                          Payment proof:{" "}
-                          {docsUploaded.includes("PAYMENT_PROOF") ? "Uploaded ✓" : "Pending"}
-                        </li>
+                      <ul className="mb-3 space-y-2 text-sm text-navy-700">
+                        {(
+                          [
+                            ["PAN", "PAN"],
+                            ["AADHAAR", "Aadhaar"],
+                            ["PAYMENT_PROOF", "Payment proof"],
+                          ] as const
+                        ).map(([type, label]) => {
+                          const doc = docsUploaded.find((d) => d.type === type);
+                          return (
+                            <li
+                              key={type}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2 py-1.5"
+                            >
+                              <div className="min-w-0">
+                                <span className="font-medium">{label}: </span>
+                                {doc ? (
+                                  <span className="break-all text-emerald-700" title={doc.fileName}>
+                                    {doc.fileName}
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-700">Pending</span>
+                                )}
+                              </div>
+                              {doc ? (
+                                <button
+                                  type="button"
+                                  className="shrink-0 text-xs font-medium text-red-600 underline disabled:opacity-50"
+                                  disabled={removingDocType === type || uploadingDocument}
+                                  onClick={async () => {
+                                    setRemovingDocType(type);
+                                    try {
+                                      const res = await fetch(`/api/booking/${token}/documents`, {
+                                        method: "DELETE",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ type }),
+                                      });
+                                      const data = await parseJsonSafe(res);
+                                      if (res.ok) {
+                                        setDocsUploaded((prev) =>
+                                          prev.filter((d) => d.type !== type)
+                                        );
+                                        toast.success(`${label} removed`);
+                                      } else {
+                                        toast.error(
+                                          typeof data.error === "string"
+                                            ? data.error
+                                            : "Could not remove file"
+                                        );
+                                      }
+                                    } catch {
+                                      toast.error("Could not remove file");
+                                    } finally {
+                                      setRemovingDocType(null);
+                                    }
+                                  }}
+                                >
+                                  {removingDocType === type ? "Removing…" : "Remove"}
+                                </button>
+                              ) : null}
+                            </li>
+                          );
+                        })}
                       </ul>
                       <form
                         className="space-y-2"
@@ -1304,7 +1380,6 @@ export default function BookingFormPage() {
                           }
                           setUploadingDocument(true);
                           try {
-                            // EOI flow: browser uploads bytes → then save metadata only
                             const uploaded = await uploadViaPresign(token, file, type);
                             const res = await fetch(`/api/booking/${token}/documents`, {
                               method: "POST",
@@ -1319,10 +1394,23 @@ export default function BookingFormPage() {
                             });
                             const data = await parseJsonSafe(res);
                             if (res.ok) {
-                              toast.success("Document uploaded");
-                              setDocsUploaded((prev) =>
-                                prev.includes(type) ? prev : [...prev, type]
+                              const saved = data.document as
+                                | { id?: string; type?: string; fileName?: string }
+                                | undefined;
+                              toast.success(
+                                docsUploaded.some((d) => d.type === type)
+                                  ? "Document replaced"
+                                  : "Document uploaded"
                               );
+                              setDocsUploaded((prev) => {
+                                const next = prev.filter((d) => d.type !== type);
+                                next.push({
+                                  id: saved?.id,
+                                  type,
+                                  fileName: saved?.fileName || uploaded.fileName,
+                                });
+                                return next;
+                              });
                               formEl.reset();
                             } else {
                               toast.error(
@@ -1353,7 +1441,7 @@ export default function BookingFormPage() {
                           className="w-full text-sm"
                         />
                         <Button type="submit" size="sm" disabled={uploadingDocument}>
-                          {uploadingDocument ? "Uploading…" : "Upload"}
+                          {uploadingDocument ? "Uploading…" : "Upload / Replace"}
                         </Button>
                       </form>
                     </div>

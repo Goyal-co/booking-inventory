@@ -792,6 +792,8 @@ export async function GET_booking_printPdf(req: NextRequest, { params }: { param
     where: { id, userId: user.id },
     include: {
       digitalForm: true,
+      user: { select: { name: true } },
+      reviewedBy: { select: { name: true } },
       unit: { include: { floor: { include: { tower: { include: { project: true } } } } } },
     },
   });
@@ -842,6 +844,8 @@ export async function GET_booking_printPdf(req: NextRequest, { params }: { param
       customerName: booking.customerName,
       customerPhone: booking.customerPhone,
       customerEmail: booking.customerEmail ?? undefined,
+      salesAdvisorName: booking.user?.name ?? null,
+      approvedByName: booking.reviewedBy?.name ?? null,
     }
   );
   return new NextResponse(html, {

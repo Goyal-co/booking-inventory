@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { addBookingDocument, getDigitalFormByToken } from "@booking/database";
+import { addBookingDocument, getDigitalFormByToken, removeBookingDocument } from "@booking/database";
 import {
   deleteStoredObject,
   objectExists,
@@ -57,7 +57,12 @@ export async function POST(
       }
     }
 
-    const exists = await objectExists(fileUrl);
+    // Private Blob HEAD can lag briefly after client upload — retry once.
+    let exists = await objectExists(fileUrl);
+    if (!exists) {
+      await new Promise((r) => setTimeout(r, 800));
+      exists = await objectExists(fileUrl);
+    }
     if (!exists) {
       return NextResponse.json(
         { error: "Uploaded file not found. Please upload again." },
@@ -83,6 +88,42 @@ export async function POST(
     console.error("Booking document metadata save failed", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Document save failed" },
+      { status: 500 }
+    );
+  }
+}
+
+/** Clear a previously uploaded document before form submit. */
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  const { token } = await params;
+  try {
+    const body = (await req.json().catch(() => ({}))) as { type?: string };
+    const type = String(body.type ?? "") as BookingDocType;
+    if (!ALLOWED.has(type)) {
+      return NextResponse.json({ error: "Invalid document type" }, { status: 400 });
+    }
+
+    const result = await removeBookingDocument(token, type);
+    if (!result) {
+      return NextResponse.json({ error: "Form is not editable" }, { status: 400 });
+    }
+
+    if (result.fileUrl) {
+      try {
+        await deleteStoredObject(result.fileUrl);
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    return NextResponse.json({ ok: true, removed: result.removed });
+  } catch (error) {
+    console.error("Booking document delete failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Delete failed" },
       { status: 500 }
     );
   }

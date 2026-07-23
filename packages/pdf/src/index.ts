@@ -1,9 +1,11 @@
 import type { CostSheetResult } from "./types";
 import { normalizeMediaUrl } from "./media-url";
+import { amountToIndianWords } from "./amount-words";
 
 export * from "./types";
 export * from "./sample-data";
 export { normalizeMediaUrl } from "./media-url";
+export { amountToIndianWords } from "./amount-words";
 
 function inr(n: number) {
   return `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -157,8 +159,7 @@ function floorOf(result: CostSheetResult) {
 }
 
 function amountInWordsFallback(n: number) {
-  if (!n || !Number.isFinite(n)) return "";
-  return `${inr(n)} only`;
+  return amountToIndianWords(n);
 }
 
 /** Standalone / embeddable cost sheet — paper underline layout (full HTML document). */
@@ -200,9 +201,6 @@ function apartmentDetailsPaper(
   const unit = apartmentOf(result) || meta.unitNumber;
   const wing = wingOf(result) || meta.towerName;
   const otherTotal = result.otherChargesTotal;
-  const otherLines = (result.otherCharges || [])
-    .map((c) => `${c.name}: ${inr(c.amount)}`)
-    .join("; ");
 
   return `
 ${sectionTitle("Details of Residential Apartment Applied For")}
@@ -233,7 +231,7 @@ ${uline(`GST (${result.gstPercent ?? 5}%) (Rs)`, inr(result.gstAmount), { full: 
 ${uline("Basic Sale Value with GST (A) (Rs)", inr(result.basicSaleValueWithGst), { full: true })}
 ${uline(
   "Other cost charges & expenses (B) (Rs)",
-  otherLines || inr(otherTotal),
+  inr(otherTotal),
   { full: true }
 )}
 <p class="note">Inclusive of GST as applicable</p>
@@ -297,8 +295,8 @@ body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};font-size:1
 .apt-boxes{display:inline-flex;gap:4px;vertical-align:middle}
 .apt-boxes span{display:inline-block;width:18px;height:22px;border:1.5px solid ${navy}}
 .cover-title{text-align:center;font-size:${px(20)};font-weight:800;letter-spacing:.02em;text-transform:uppercase;color:${navy};margin:${space(14)} 0 ${space(16)};line-height:1.35}
-.cover-logo{text-align:center;margin:${space(12)} auto;max-width:280px}
-.cover-logo img{max-width:100%;max-height:160px;object-fit:contain}
+.cover-logo{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;margin:0 auto;max-width:320px;width:100%}
+.cover-logo img{max-width:100%;max-height:180px;object-fit:contain}
 .cover-project{text-align:center;font-size:${px(28)};font-weight:300;letter-spacing:.08em;color:#64748B;margin-top:8px}
 .cover-project strong{display:block;font-size:${px(36)};font-weight:800;color:${navy};letter-spacing:.04em;margin-top:4px}
 .cover-foot{margin-top:auto;text-align:center;padding-top:${space(28)}}
@@ -327,6 +325,7 @@ body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:${navy};font-size:1
 .kyc-col li{display:flex;align-items:flex-start;gap:8px;margin:6px 0;font-weight:600;font-size:1rem}
 .sq{display:inline-block;width:10px;height:10px;border:1.5px solid currentColor;margin-top:3px;flex-shrink:0;background:transparent}
 .prose{font-size:${px(11)};line-height:1.45;color:#475569;white-space:pre-wrap}
+.prose-terms{font-size:${px(9.25)};line-height:1.32;color:#334155;white-space:pre-wrap}
 .callout{background:${teal};color:${navy};padding:10px 12px;font-size:${px(11)};line-height:1.45;margin:7px 0;white-space:pre-wrap;break-inside:avoid}
 .sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 32px;margin-top:${space(16)};break-inside:avoid}
 .sign-line{border-top:1.5px solid ${navy};margin-top:${space(18)};padding-top:5px;font-size:${px(11)}}
@@ -367,6 +366,19 @@ export type PrintBranding = {
   content?: Record<string, unknown> | null;
 };
 
+export type PrintFormOptions = {
+  templateHtml?: string;
+  branding?: PrintBranding;
+  customerName?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  preview?: boolean;
+  /** Filled after booking approval (sales executive who owns the booking). */
+  salesAdvisorName?: string | null;
+  /** Filled after booking approval (admin who approved). */
+  approvedByName?: string | null;
+};
+
 function wrapBlock(id: string, html: string, layout?: PrintLayoutOpt) {
   if (!html) return "";
   const block = layout?.blocks?.find((b) => b.id === id);
@@ -393,19 +405,55 @@ function page(inner: string) {
   return `<div class="page"><div class="page-inner">${inner}</div></div>`;
 }
 
+/** Single-page terms: shrink font so all clauses fit without clipping. */
+function buildTermsPage(params: {
+  termsText: string;
+  teal: string;
+  navy: string;
+  termsAccepted: string[];
+  signDate: string;
+  signPlace: string;
+  fontScale: number;
+}) {
+  const raw = String(params.termsText || "").trim();
+  const lineCount = raw ? raw.split(/\n/).filter((l) => l.trim()).length : 0;
+  const charCount = raw.length;
+  // Fit long terms on one A4: denser type as content grows (independent of global print scale a bit)
+  const density =
+    charCount > 4200 || lineCount > 28
+      ? 0.72
+      : charCount > 3200 || lineCount > 22
+        ? 0.78
+        : charCount > 2200 || lineCount > 16
+          ? 0.85
+          : charCount > 1400 || lineCount > 12
+            ? 0.92
+            : 1;
+  const scale = Math.min(1.7, Math.max(1, params.fontScale || 1.35));
+  const termsPx = Math.max(7.5, +(9.25 * scale * density).toFixed(2));
+  const lineHeight = density < 0.8 ? 1.22 : density < 0.9 ? 1.28 : 1.32;
+  const body = esc(raw).replace(/\n/g, "<br/>");
+
+  return page(`
+${tealBanner("TERMS & CONDITIONS", params.teal, params.navy)}
+<div class="prose prose-terms" style="font-size:${termsPx}px;line-height:${lineHeight}">${body}</div>
+${checkboxes("Terms accepted", ["Yes"], params.termsAccepted)}
+<div class="sign-grid">
+  <div>${uline("Date", params.signDate)}${uline("Place", params.signPlace)}</div>
+  <div>
+    <div class="sign-line">Applicant Signature : 1</div>
+    <div class="sign-line">Applicant Signature : 2</div>
+  </div>
+</div>
+`);
+}
+
 export function digitalFormToPrintHtml(
   form: {
     page1Snapshot: Record<string, unknown>;
     formData: Record<string, unknown> | null;
   },
-  options?: {
-    templateHtml?: string;
-    branding?: PrintBranding;
-    customerName?: string;
-    customerPhone?: string;
-    customerEmail?: string;
-    preview?: boolean;
-  }
+  options?: PrintFormOptions
 ) {
   const page1 = form.page1Snapshot as unknown as CostSheetResult;
   const fd = (form.formData ?? {}) as Record<string, Record<string, unknown>>;
@@ -680,7 +728,12 @@ ${uline("Wire transfer / Cheque / Draft No.", val(deposit, "instrumentNo"), { fu
 ${uline("UPI Transaction No.", val(deposit, "upiNo"), { full: true })}
 ${ulinePair(["Dated", val(deposit, "dated")], ["Drawn on", val(deposit, "drawnOn")])}
 ${ulinePair(["Place", val(deposit, "place")], ["Amount", val(deposit, "amount")])}
-${uline("In words", val(deposit, "amountInWords"), { full: true })}
+${uline(
+  "In words",
+  val(deposit, "amountInWords") ||
+    amountToIndianWords(val(deposit, "amount")),
+  { full: true }
+)}
 <p style="margin-top:12px;font-weight:700">in favour of <strong>${esc(
       String(content.collectionAccountName || "")
     )}</strong> Payable at ${esc(String(content.payableAt || ""))}</p>
@@ -696,18 +749,15 @@ ${uline("In words", val(deposit, "amountInWords"), { full: true })}
     agents: "",
     earnestDeposit: "",
 
-    terms: page(`
-${tealBanner("TERMS & CONDITIONS", teal, navy)}
-<div class="prose">${esc(String(content.termsText || "")).replace(/\n/g, "<br/>")}</div>
-${checkboxes("Terms accepted", ["Yes"], termsAccepted)}
-<div class="sign-grid">
-  <div>${uline("Date", val(terms, "signDate"))}${uline("Place", val(terms, "signPlace"))}</div>
-  <div>
-    <div class="sign-line">Applicant Signature : 1</div>
-    <div class="sign-line">Applicant Signature : 2</div>
-  </div>
-</div>
-`),
+    terms: buildTermsPage({
+      termsText: String(content.termsText || ""),
+      teal,
+      navy,
+      termsAccepted,
+      signDate: val(terms, "signDate"),
+      signPlace: val(terms, "signPlace"),
+      fontScale: Number(layout?.fontScale ?? 1.35),
+    }),
 
     consent: showConsent
       ? page(`
@@ -728,8 +778,11 @@ ${checkboxes("Consent accepted", ["Yes"], consentAccepted)}
 <p style="margin-top:14px;font-weight:800">Declaration:</p>
 <div class="callout">${esc(String(content.consentDeclarationBox || content.declarationText || "")).replace(/\n/g, "<br/>")}</div>
 <p style="margin-top:28px;font-weight:700">For M/s ${esc(String(content.promoterName || branding.companyName || ""))}</p>
-${ulinePair(["SALES ADVISOR NAME", ""], ["APPROVED BY", ""])}
-${uline("AUTHORIZED SIGNATORY", "", { full: true })}
+${ulinePair(
+  ["SALES ADVISOR NAME", options?.salesAdvisorName || val(consent, "salesAdvisorName")],
+  ["APPROVED BY", options?.approvedByName || val(consent, "approvedBy")]
+)}
+${uline("AUTHORIZED SIGNATORY", options?.approvedByName || "", { full: true })}
 <div class="footer-block">
   <strong>${esc(String(content.promoterName || branding.companyName || ""))}</strong>
   ${esc(String(content.officeAddress || ""))}<br/>

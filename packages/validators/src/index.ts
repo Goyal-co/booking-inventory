@@ -35,6 +35,7 @@ export {
 } from "./print-layout";
 
 export { normalizeMediaUrl } from "./media-url";
+export { amountToIndianWords } from "./amount-words";
 
 
 export const loginSchema = z.object({
