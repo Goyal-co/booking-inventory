@@ -128,7 +128,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [selectedLeadId, setSelectedLeadId] = useState("");
   const [assignSalesId, setAssignSalesId] = useState("");
   const [searched, setSearched] = useState(false);
-  const [titanResult, setTitanResult] = useState<Record<string, unknown> | null>(null);
+  const [titanResult, setTitanResult] = useState<{
+    found?: boolean;
+    leadId?: string;
+    customerName?: string;
+    phone?: string;
+    [key: string]: unknown;
+  } | null>(null);
   const [sales, setSales] = useState<Array<{ id: string; name: string }>>([]);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [walkIn, setWalkIn] = useState({ customerName: "", customerPhone: "", customerEmail: "" });
@@ -169,7 +175,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     setLeads(nextLeads);
     setPartnerOptions(nextPartners);
     setScenario(nextScenario);
-    setTitanResult(d.titanResult ?? null);
+    setTitanResult((d.titanResult as typeof titanResult) ?? null);
     setSearched(true);
     setSelectedPartnerCpId(nextPartners[0]?.cpId ?? nextLeads[0]?.cpId ?? "");
     setSelectedLeadId(nextLeads[0]?.id ?? "");
@@ -720,14 +726,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       </label>
                     </div>
                   ))}
-                  {leads.length === 0 && titanResult?.found && (
+                  {leads.length === 0 && Boolean(titanResult?.found) && (
                     <div className="rounded-lg border border-dashed p-3 text-sm">
                       <p className="font-medium">
-                        {String(titanResult.customerName ?? "Titan guest")} —{" "}
-                        {String(titanResult.leadId ?? "")}
+                        {String(titanResult?.customerName ?? "Titan guest")} —{" "}
+                        {String(titanResult?.leadId ?? "")}
                       </p>
                       <p className="text-gray-500">
-                        {String(titanResult.phone ?? "")} · Titan
+                        {String(titanResult?.phone ?? "")} · Titan
                         {partnerOptions[0]
                           ? ` · Partner ${partnerOptions[0].partnerName}`
                           : ""}
