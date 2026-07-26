@@ -17,8 +17,6 @@ export const costSheetCalculateSchema = z.object({
 export const digitalFormStepSchema = z.object({
   step: z.enum([
     "cover",
-    "apartment",
-    "project",
     "applicant",
     "jointApplicant",
     "geographic",
@@ -30,7 +28,6 @@ export const digitalFormStepSchema = z.object({
     "realEstateAgents",
     "earnestDeposit",
     "terms",
-    "documents",
     "consent",
   ]),
   data: z.record(z.unknown()),
@@ -46,6 +43,9 @@ export const walkInLeadSchema = z.object({
 export const leadAssignSchema = z.object({
   salesUserId: z.string().cuid(),
   notes: z.string().optional(),
+  /** Channel partner the visitor is with today (when multiple CPs registered the same phone). */
+  visitingPartnerCpId: z.string().min(1).max(120).optional(),
+  visitingPartnerName: z.string().min(1).max(200).optional(),
 });
 
 export const integrationEventSchema = z.object({
@@ -90,31 +90,64 @@ function stepData(formData: Record<string, unknown>, step: string): Record<strin
     : {};
 }
 
-/** Maps nested digital form steps to flat Titan CRM payload fields */
+/** Maps nested digital form steps to flat Titan CRM payload fields (Rudra Step 4). */
 export function mapDigitalFormToTitanPayload(formData: Record<string, unknown>) {
   const applicant = stepData(formData, "applicant");
   const occupation = stepData(formData, "occupation");
   const communication = stepData(formData, "communication");
+  const geographic = stepData(formData, "geographic");
   const sourceOfFund = stepData(formData, "sourceOfFund");
   const sourceOfEnquiry = stepData(formData, "sourceOfEnquiry");
 
+  const str = (...vals: unknown[]) => {
+    for (const v of vals) {
+      if (typeof v === "string" && v.trim()) return v.trim();
+      if (Array.isArray(v) && v.length) {
+        const joined = v.map(String).filter(Boolean).join(", ");
+        if (joined) return joined;
+      }
+    }
+    return undefined;
+  };
+
   return titanBookingPayloadSchema.partial().parse({
-    fatherSpouseName:
-      (applicant.fatherSpouseName as string) ?? (formData.fatherSpouseName as string),
-    dateOfBirth: (applicant.dateOfBirth as string) ?? (formData.dateOfBirth as string),
-    maritalStatus: (applicant.maritalStatus as string) ?? (formData.maritalStatus as string),
-    nationality: (applicant.nationality as string) ?? (formData.nationality as string),
-    communicationAddress:
-      (communication.address as string) ?? (formData.communicationAddress as string),
-    permanentAddress:
-      (communication.permanentAddress as string) ?? (formData.permanentAddress as string),
-    occupation: (occupation.occupation as string) ?? (formData.occupation as string),
-    organizationName:
-      (occupation.organizationName as string) ?? (formData.organizationName as string),
-    designation: (occupation.designation as string) ?? (formData.designation as string),
-    sourceOfFund: (sourceOfFund.source as string) ?? (formData.sourceOfFund as string),
-    sourceOfEnquiry:
-      (sourceOfEnquiry.source as string) ?? (formData.sourceOfEnquiry as string),
+    fatherSpouseName: str(applicant.fatherSpouseName, formData.fatherSpouseName),
+    dateOfBirth: str(applicant.dateOfBirth, formData.dateOfBirth),
+    maritalStatus: str(applicant.maritalStatus, formData.maritalStatus),
+    nationality: str(applicant.nationality, formData.nationality),
+    // Customer form uses geographic.*; keep communication.* as legacy fallback
+    communicationAddress: str(
+      geographic.communicationAddress,
+      communication.address,
+      communication.communicationAddress,
+      formData.communicationAddress
+    ),
+    permanentAddress: str(
+      geographic.permanentAddress,
+      communication.permanentAddress,
+      formData.permanentAddress
+    ),
+    // Customer form: occupationType; legacy: occupation
+    occupation: str(
+      occupation.occupationType,
+      occupation.occupation,
+      formData.occupation
+    ),
+    organizationName: str(occupation.organizationName, formData.organizationName),
+    designation: str(occupation.designation, formData.designation),
+    // Customer form: fundingType; legacy: source
+    sourceOfFund: str(
+      sourceOfFund.fundingType,
+      sourceOfFund.source,
+      typeof formData.sourceOfFund === "string" ? formData.sourceOfFund : undefined
+    ),
+    // Customer form: sources[]; legacy: source
+    sourceOfEnquiry: str(
+      sourceOfEnquiry.sources,
+      sourceOfEnquiry.source,
+      sourceOfEnquiry.sourceDetails,
+      typeof formData.sourceOfEnquiry === "string" ? formData.sourceOfEnquiry : undefined
+    ),
   });
 }
 

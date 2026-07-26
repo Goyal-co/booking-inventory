@@ -3,11 +3,12 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma, assertNextAuthSecret } from "@booking/database";
 import { loginSchema } from "@booking/validators";
+import { authConfig } from "./auth.config";
 
 assertNextAuthSecret();
 
-export const { handlers, auth } = NextAuth({
-  trustHost: true,
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  ...authConfig,
   providers: [
     Credentials({
       async authorize(credentials) {
@@ -29,25 +30,4 @@ export const { handlers, auth } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        token.role = (user as { role: string }).role;
-        token.organizationId = (user as { organizationId: string }).organizationId;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id as string;
-        session.user.role = token.role as string;
-        session.user.organizationId = token.organizationId as string;
-      }
-      return session;
-    },
-  },
-  pages: { signIn: "/login" },
-  session: { strategy: "jwt" },
-  secret: process.env.NEXTAUTH_SECRET,
 });

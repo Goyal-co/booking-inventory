@@ -115,22 +115,30 @@ export async function GET_leadsSearch(req: NextRequest) {
   else if (partnerIds.size > 1 || channelPartnerLeads.length > 1) scenario = "found_multi_partner";
   else scenario = "found_single";
 
-  const localPartnerOpts = leads
+  type PartnerOpt = {
+    leadId: string | null;
+    publicLeadId: string;
+    cpId: string;
+    partnerName: string;
+    submittedAt: string;
+    source: string;
+    tag?: string;
+  };
+
+  const localPartnerOpts: PartnerOpt[] = leads
     .filter((l) => l.cpId)
     .map((l) => ({
-      leadId: l.id as string | null,
+      leadId: l.id,
       publicLeadId: l.leadId,
       cpId: l.cpId as string,
-      partnerName: (l.cpId as string).startsWith("CP-")
-        ? String(l.cpId)
-        : String(l.cpId),
+      partnerName: String(l.cpId),
       submittedAt: l.createdAt.toISOString(),
-      source: l.source,
+      source: String(l.source),
       tag: l.intentType ?? undefined,
     }));
 
-  const titanPartnerOpts = (titanPartners as Array<Record<string, unknown>>).map((p) => ({
-    leadId: null as string | null,
+  const titanPartnerOpts: PartnerOpt[] = (titanPartners as Array<Record<string, unknown>>).map((p) => ({
+    leadId: null,
     publicLeadId: String(titanResult?.leadId ?? ""),
     cpId: String(p.cpId ?? ""),
     partnerName: String(p.partnerName ?? p.cpId ?? "Partner"),
@@ -139,7 +147,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     tag: p.tag ? String(p.tag) : undefined,
   }));
 
-  const partnerByCp = new Map<string, (typeof localPartnerOpts)[number]>();
+  const partnerByCp = new Map<string, PartnerOpt>();
   for (const p of [...titanPartnerOpts, ...localPartnerOpts]) {
     if (!p.cpId) continue;
     const existing = partnerByCp.get(p.cpId);

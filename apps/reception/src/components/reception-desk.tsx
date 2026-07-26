@@ -696,7 +696,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               </div>
             )}
 
-            {searched && scenario === "found_single" && (leads.length > 0 || Boolean(titanResult?.found)) && (
+            {searched &&
+              scenario === "found_single" &&
+              (leads.length > 0 || titanResult?.found === true) && (
               <div className="rounded-xl border bg-white p-5">
                 <h3 className="font-semibold">Lead found — confirm partner</h3>
                 <div className="mt-3 space-y-3">
@@ -726,14 +728,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       </label>
                     </div>
                   ))}
-                  {leads.length === 0 && Boolean(titanResult?.found) && (
+                  {leads.length === 0 && titanResult?.found === true ? (
                     <div className="rounded-lg border border-dashed p-3 text-sm">
                       <p className="font-medium">
-                        {String(titanResult?.customerName ?? "Titan guest")} —{" "}
-                        {String(titanResult?.leadId ?? "")}
+                        {String(titanResult.customerName ?? "Titan guest")} —{" "}
+                        {String(titanResult.leadId ?? "")}
                       </p>
                       <p className="text-gray-500">
-                        {String(titanResult?.phone ?? "")} · Titan
+                        {String(titanResult.phone ?? "")} · Titan
                         {partnerOptions[0]
                           ? ` · Partner ${partnerOptions[0].partnerName}`
                           : ""}
@@ -742,7 +744,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                         Will be saved to local registry on assign.
                       </p>
                     </div>
-                  )}
+                  ) : null}
                 </div>
                 <div className="mt-4 flex flex-wrap items-end gap-2">
                   <div className="min-w-[200px] flex-1">
