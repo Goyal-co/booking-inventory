@@ -410,7 +410,7 @@ function buildTermsPage(params: {
   termsText: string;
   teal: string;
   navy: string;
-  termsAccepted: string[];
+  termsAccepted: string | string[];
   signDate: string;
   signPlace: string;
   fontScale: number;

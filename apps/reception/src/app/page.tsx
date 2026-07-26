@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
+import { redirect } from "next/navigation";
 
-export async function GET() {
-  return NextResponse.redirect(new URL("/dashboard", process.env.NEXTAUTH_URL ?? "http://localhost:3004"));
+export default function Home() {
+  redirect("/dashboard");
 }

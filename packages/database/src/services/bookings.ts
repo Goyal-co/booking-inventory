@@ -299,7 +299,16 @@ export async function approveBooking(bookingId: string, adminUserId: string) {
       unitNumber: booking.unit.unitNumber,
       projectId,
     };
-  }, { maxWait: 10_000, timeout: 60_000 });
+  }, { maxWait: 10_000, timeout: 60_000 }).then(async (result) => {
+    // Re-sync Titan/Post CRM on approve so confirmed status + KYC reach CRM (Rudra Step 4)
+    try {
+      const { syncBookingToIntegrations } = await import("./integration");
+      await syncBookingToIntegrations(bookingId);
+    } catch (e) {
+      console.error("[approveBooking] integration sync failed", e);
+    }
+    return result;
+  });
 }
 
 export async function rejectBooking(

@@ -221,6 +221,8 @@ export async function searchLeads(organizationId: string, query: string) {
         { leadId: { contains: q, mode: "insensitive" } },
         { customerPhone: { contains: q } },
         { customerName: { contains: q, mode: "insensitive" } },
+        { titanCrmId: { contains: q, mode: "insensitive" } },
+        { cpId: { contains: q, mode: "insensitive" } },
       ],
     },
     include: {
@@ -228,23 +230,45 @@ export async function searchLeads(organizationId: string, query: string) {
       assignedSales: { select: { id: true, name: true } },
       siteVisits: { orderBy: { checkedInAt: "desc" }, take: 3 },
     },
-    take: 20,
+    orderBy: { createdAt: "desc" },
+    take: 30,
   });
 }
 
-export async function assignLeadToSales(leadId: string, salesUserId: string, notes?: string) {
+export async function assignLeadToSales(
+  leadId: string,
+  salesUserId: string,
+  notes?: string,
+  visiting?: { visitingPartnerCpId?: string; visitingPartnerName?: string }
+) {
+  const partnerNote =
+    visiting?.visitingPartnerName || visiting?.visitingPartnerCpId
+      ? `Visiting with partner: ${visiting.visitingPartnerName ?? visiting.visitingPartnerCpId}${
+          visiting.visitingPartnerCpId ? ` (${visiting.visitingPartnerCpId})` : ""
+        }`
+      : undefined;
+  const combinedNotes = [partnerNote, notes].filter(Boolean).join(" — ") || undefined;
+
   const lead = await prisma.leadRegistry.update({
     where: { id: leadId },
-    data: { assignedSalesId: salesUserId, siteVisitStatus: "CHECKED_IN" },
+    data: {
+      assignedSalesId: salesUserId,
+      siteVisitStatus: "CHECKED_IN",
+      ...(visiting?.visitingPartnerCpId ? { cpId: visiting.visitingPartnerCpId } : {}),
+    },
   });
 
   await prisma.siteVisit.create({
-    data: { leadId, salesUserId, notes, status: "CHECKED_IN" },
+    data: { leadId, salesUserId, notes: combinedNotes, status: "CHECKED_IN" },
   });
 
   const { getTitanCRMProvider } = await import("@booking/integrations");
   try {
-    await getTitanCRMProvider().syncSiteVisit({ leadId: lead.leadId, salesUserId, notes });
+    await getTitanCRMProvider().syncSiteVisit({
+      leadId: lead.leadId,
+      salesUserId,
+      notes: combinedNotes,
+    });
   } catch {
     /* non-blocking */
   }
@@ -286,8 +310,88 @@ export async function upsertLeadFromEoiCp(input: {
       customerPhone: input.customerPhone,
       titanCrmId: input.titanCrmId ?? undefined,
       intentType: input.intentType,
+      ...(input.cpId ? { cpId: input.cpId } : {}),
     },
   });
+}
+
+/** Materialize a Titan search hit into LeadRegistry so reception can assign. */
+export async function upsertLeadFromTitanSearch(input: {
+  organizationId: string;
+  registeredById?: string;
+  titanCrmId: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  cpId?: string;
+  partnerName?: string;
+  intentType?: string;
+  publicLeadId?: string;
+}) {
+  const phone = input.customerPhone.replace(/\D/g, "").slice(-10) || input.customerPhone;
+  const leadId =
+    input.publicLeadId?.trim() ||
+    (input.cpId
+      ? `TITAN-${input.cpId}-${phone.slice(-4)}`
+      : `TITAN-${input.titanCrmId}`.slice(0, 40));
+
+  const existingByTitan = await prisma.leadRegistry.findFirst({
+    where: {
+      organizationId: input.organizationId,
+      OR: [
+        { leadId },
+        { titanCrmId: input.titanCrmId, ...(input.cpId ? { cpId: input.cpId } : {}) },
+        ...(input.cpId
+          ? [{ customerPhone: { contains: phone }, cpId: input.cpId }]
+          : []),
+      ],
+    },
+  });
+
+  if (existingByTitan) {
+    return prisma.leadRegistry.update({
+      where: { id: existingByTitan.id },
+      data: {
+        customerName: input.customerName,
+        customerPhone: phone,
+        customerEmail: input.customerEmail,
+        titanCrmId: input.titanCrmId,
+        ...(input.cpId ? { cpId: input.cpId } : {}),
+        ...(input.intentType ? { intentType: input.intentType } : {}),
+        source: input.cpId ? LeadSource.CHANNEL_PARTNER : existingByTitan.source,
+      },
+    });
+  }
+
+  try {
+    return await prisma.leadRegistry.create({
+      data: {
+        leadId,
+        organizationId: input.organizationId,
+        customerName: input.customerName,
+        customerPhone: phone,
+        customerEmail: input.customerEmail,
+        source: input.cpId ? LeadSource.CHANNEL_PARTNER : LeadSource.OTHER,
+        cpId: input.cpId,
+        titanCrmId: input.titanCrmId,
+        intentType: input.intentType ?? input.partnerName,
+        registeredById: input.registeredById,
+      },
+    });
+  } catch {
+    // Race / unique leadId — fetch and update
+    const again = await prisma.leadRegistry.findUnique({ where: { leadId } });
+    if (!again) throw new Error("Failed to upsert Titan lead");
+    return prisma.leadRegistry.update({
+      where: { id: again.id },
+      data: {
+        customerName: input.customerName,
+        customerPhone: phone,
+        titanCrmId: input.titanCrmId,
+        ...(input.cpId ? { cpId: input.cpId } : {}),
+      },
+    });
+  }
 }
 
 export async function getLeadBookingStatus(leadId: string) {

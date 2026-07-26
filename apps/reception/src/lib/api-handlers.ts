@@ -1,18 +1,74 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/auth";
 import {
   prisma,
   searchLeads,
   registerWalkInLead,
   assignLeadToSales,
+  upsertLeadFromTitanSearch,
 } from "@booking/database";
 import { walkInLeadSchema, leadAssignSchema } from "@booking/validators";
+import {
+  GoyalCrmError,
+  listGoyalLeads,
+  getGoyalLead,
+  createGoyalEoiLead,
+  createGoyalEoiLeadViaWebhook,
+  bookGoyalLead,
+} from "@booking/integrations";
 
 async function getReceptionUser() {
   const session = await auth();
   if (!session?.user?.id || session.user.role !== "RECEPTION") return null;
   return session.user;
 }
+
+function crmErrorResponse(err: unknown) {
+  if (err instanceof GoyalCrmError) {
+    return NextResponse.json(
+      { error: err.message, details: err.body },
+      { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+    );
+  }
+  console.error("[reception] CRM error", err);
+  return NextResponse.json({ error: "CRM request failed" }, { status: 502 });
+}
+
+const createEoiLeadSchema = z.object({
+  fullName: z.string().min(2).max(120),
+  phone: z.string().min(10).max(15),
+  email: z.string().email().optional().or(z.literal("")),
+  projectName: z.string().max(200).optional(),
+  projectId: z.string().uuid().optional(),
+  city: z.string().max(120).optional(),
+  assignedToId: z.string().uuid().optional(),
+  dateOfBirth: z.string().optional(),
+  maritalStatus: z.string().optional(),
+  nationality: z.string().optional(),
+  communicationAddress: z.string().optional(),
+  permanentAddress: z.string().optional(),
+  occupation: z.string().optional(),
+  organizationName: z.string().optional(),
+  designation: z.string().optional(),
+  sourceOfFund: z.string().optional(),
+  sourceOfEnquiry: z.string().optional(),
+});
+
+const bookEoiLeadSchema = z.object({
+  booked: z.boolean().default(true),
+  bookedDate: z.string().optional(),
+  dateOfBirth: z.string().min(1),
+  maritalStatus: z.string().min(1),
+  nationality: z.string().min(1),
+  communicationAddress: z.string().min(1),
+  permanentAddress: z.string().min(1),
+  occupation: z.string().min(1),
+  organizationName: z.string().min(1),
+  designation: z.string().min(1),
+  sourceOfFund: z.string().min(1),
+  sourceOfEnquiry: z.string().min(1),
+});
 
 export async function GET_leadsSearch(req: NextRequest) {
   const user = await getReceptionUser();
@@ -21,19 +77,87 @@ export async function GET_leadsSearch(req: NextRequest) {
   const leads = await searchLeads(user.organizationId, q);
 
   const { getTitanCRMProvider } = await import("@booking/integrations");
-  let titanResult = null;
+  let titanResult: Record<string, unknown> | null = null;
   if (q.trim()) {
     try {
+      const digits = q.replace(/\D/g, "");
       titanResult = await getTitanCRMProvider().searchLead({
-        leadId: q.startsWith("TITAN") ? q : undefined,
-        phone: /^\d+$/.test(q) ? q : undefined,
+        leadId: /^(TITAN|CP-|WALKIN-|EOI-)/i.test(q) ? q : undefined,
+        phone: digits.length >= 10 ? digits.slice(-10) : /^\d+$/.test(q) ? q : undefined,
       });
     } catch {
       /* optional */
     }
   }
 
-  return NextResponse.json({ leads, titanResult });
+  const partnerIds = new Set(
+    leads.map((l) => l.cpId).filter((id): id is string => Boolean(id && String(id).trim()))
+  );
+  const channelPartnerLeads = leads.filter((l) => l.source === "CHANNEL_PARTNER");
+  const titanPartners = Array.isArray(titanResult?.partners) ? titanResult!.partners : [];
+  const titanNeedsPartner = Boolean(titanResult?.needsPartnerRegistration);
+
+  let scenario:
+    | "found_single"
+    | "found_multi_partner"
+    | "titan_needs_partner"
+    | "not_found"
+    | "empty_query" = "empty_query";
+
+  if (!q.trim()) scenario = "empty_query";
+  else if (leads.length === 0 && titanNeedsPartner) scenario = "titan_needs_partner";
+  else if (leads.length === 0 && titanPartners.length > 1) scenario = "found_multi_partner";
+  else if (leads.length === 0 && titanResult?.found && titanPartners.length === 1) {
+    scenario = "found_single";
+  } else if (leads.length === 0 && titanResult?.found && titanPartners.length === 0) {
+    scenario = "titan_needs_partner";
+  } else if (leads.length === 0) scenario = "not_found";
+  else if (partnerIds.size > 1 || channelPartnerLeads.length > 1) scenario = "found_multi_partner";
+  else scenario = "found_single";
+
+  const localPartnerOpts = leads
+    .filter((l) => l.cpId)
+    .map((l) => ({
+      leadId: l.id as string | null,
+      publicLeadId: l.leadId,
+      cpId: l.cpId as string,
+      partnerName: (l.cpId as string).startsWith("CP-")
+        ? String(l.cpId)
+        : String(l.cpId),
+      submittedAt: l.createdAt.toISOString(),
+      source: l.source,
+      tag: l.intentType ?? undefined,
+    }));
+
+  const titanPartnerOpts = (titanPartners as Array<Record<string, unknown>>).map((p) => ({
+    leadId: null as string | null,
+    publicLeadId: String(titanResult?.leadId ?? ""),
+    cpId: String(p.cpId ?? ""),
+    partnerName: String(p.partnerName ?? p.cpId ?? "Partner"),
+    submittedAt: String(p.submittedAt ?? ""),
+    source: "TITAN",
+    tag: p.tag ? String(p.tag) : undefined,
+  }));
+
+  const partnerByCp = new Map<string, (typeof localPartnerOpts)[number]>();
+  for (const p of [...titanPartnerOpts, ...localPartnerOpts]) {
+    if (!p.cpId) continue;
+    const existing = partnerByCp.get(p.cpId);
+    // Prefer local lead id when available
+    if (!existing || (!existing.leadId && p.leadId)) partnerByCp.set(p.cpId, p);
+    else if (existing && p.partnerName && existing.partnerName === existing.cpId && p.partnerName !== p.cpId) {
+      partnerByCp.set(p.cpId, { ...existing, partnerName: p.partnerName, tag: p.tag ?? existing.tag });
+    }
+  }
+
+  return NextResponse.json({
+    leads,
+    titanResult,
+    scenario,
+    partnerOptions: Array.from(partnerByCp.values()).sort((a, b) =>
+      String(a.submittedAt).localeCompare(String(b.submittedAt))
+    ),
+  });
 }
 
 export async function POST_walkInLead(req: NextRequest) {
@@ -57,8 +181,41 @@ export async function POST_assignLead(req: NextRequest, { params }: { params: Pr
   const body = await req.json();
   const parsed = leadAssignSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  const lead = await assignLeadToSales(id, parsed.data.salesUserId, parsed.data.notes);
+  const lead = await assignLeadToSales(id, parsed.data.salesUserId, parsed.data.notes, {
+    visitingPartnerCpId: parsed.data.visitingPartnerCpId,
+    visitingPartnerName: parsed.data.visitingPartnerName,
+  });
   return NextResponse.json({ lead });
+}
+
+const materializeTitanSchema = z.object({
+  titanCrmId: z.string().min(1),
+  customerName: z.string().min(1),
+  customerPhone: z.string().min(8),
+  customerEmail: z.string().email().optional().or(z.literal("")),
+  cpId: z.string().optional(),
+  partnerName: z.string().optional(),
+  intentType: z.string().optional(),
+  publicLeadId: z.string().optional(),
+});
+
+/** Upsert Titan search hit into local LeadRegistry (Rudra Step 3). */
+export async function POST_materializeTitanLead(req: NextRequest) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const body = await req.json();
+  const parsed = materializeTitanSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+  const { customerEmail, ...rest } = parsed.data;
+  const lead = await upsertLeadFromTitanSearch({
+    organizationId: user.organizationId,
+    registeredById: user.id,
+    ...rest,
+    ...(customerEmail ? { customerEmail } : {}),
+  });
+  return NextResponse.json({ lead }, { status: 201 });
 }
 
 export async function GET_availableSalespersons() {
@@ -89,4 +246,98 @@ export async function GET_visitsToday() {
     orderBy: { checkedInAt: "desc" },
   });
   return NextResponse.json({ visits });
+}
+
+export async function GET_eoiLeads(req: NextRequest) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const sp = req.nextUrl.searchParams;
+  const page = Number(sp.get("page") ?? 1) || 1;
+  const limit = Math.min(100, Number(sp.get("limit") ?? 20) || 20);
+  const bookedRaw = sp.get("booked");
+
+  try {
+    const result = await listGoyalLeads({
+      page,
+      limit,
+      source: sp.get("source") ?? "eoi",
+      search: sp.get("search") ?? undefined,
+      phone: sp.get("phone") ?? undefined,
+      fullName: sp.get("fullName") ?? undefined,
+      projectName: sp.get("projectName") ?? undefined,
+      assignedToId: sp.get("assignedToId") ?? undefined,
+      booked: bookedRaw === null || bookedRaw === "" ? undefined : bookedRaw,
+      leadQuality: sp.get("leadQuality") ?? undefined,
+      dateFrom: sp.get("dateFrom") ?? undefined,
+      dateTo: sp.get("dateTo") ?? undefined,
+    });
+    return NextResponse.json(result);
+  } catch (err) {
+    return crmErrorResponse(err);
+  }
+}
+
+export async function POST_eoiLead(req: NextRequest) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const body = await req.json();
+  const parsed = createEoiLeadSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+  const { email, ...rest } = parsed.data;
+  const payload = {
+    ...rest,
+    ...(email ? { email } : {}),
+  };
+
+  try {
+    const lead = await createGoyalEoiLead(payload);
+    return NextResponse.json({ lead }, { status: 201 });
+  } catch (err) {
+    // Staff Bearer may be revoked; fall back to website webhook when EOI_API_KEY works
+    if (err instanceof GoyalCrmError && (err.status === 401 || err.status === 403)) {
+      try {
+        const webhookResult = await createGoyalEoiLeadViaWebhook(payload);
+        return NextResponse.json(
+          { lead: webhookResult, via: "webhook" },
+          { status: 201 }
+        );
+      } catch (webhookErr) {
+        return crmErrorResponse(webhookErr);
+      }
+    }
+    return crmErrorResponse(err);
+  }
+}
+
+export async function GET_eoiLead(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  try {
+    const lead = await getGoyalLead(id);
+    return NextResponse.json({ lead });
+  } catch (err) {
+    return crmErrorResponse(err);
+  }
+}
+
+export async function POST_eoiBook(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json();
+  const parsed = bookEoiLeadSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  try {
+    const lead = await bookGoyalLead(id, parsed.data);
+    return NextResponse.json({ lead });
+  } catch (err) {
+    return crmErrorResponse(err);
+  }
 }

@@ -403,7 +403,68 @@ async function main() {
     where: { floor: { tower: { projectId: { in: allProjects.map((p) => p.id) } } } },
   });
 
-  const { NotificationType } = await import("@prisma/client");
+  const { NotificationType, LeadSource } = await import("@prisma/client");
+
+  // Reception demo leads (Rudra Step 3 — multi channel partner on same phone)
+  await prisma.leadRegistry.upsert({
+    where: { leadId: "CP-ABC-000001" },
+    update: {
+      customerName: "Multi Partner Guest",
+      customerPhone: "9876500001",
+      cpId: "CP-ABC",
+      source: LeadSource.CHANNEL_PARTNER,
+      titanCrmId: "TITAN-MULTI-CP",
+    },
+    create: {
+      leadId: "CP-ABC-000001",
+      organizationId: org.id,
+      customerName: "Multi Partner Guest",
+      customerPhone: "9876500001",
+      cpId: "CP-ABC",
+      source: LeadSource.CHANNEL_PARTNER,
+      titanCrmId: "TITAN-MULTI-CP",
+      intentType: "EOI",
+      registeredById: receptionUser.id,
+      createdAt: new Date("2026-07-20T10:15:00.000Z"),
+    },
+  });
+  await prisma.leadRegistry.upsert({
+    where: { leadId: "CP-XYZ-000001" },
+    update: {
+      customerName: "Multi Partner Guest",
+      customerPhone: "9876500001",
+      cpId: "CP-XYZ",
+      source: LeadSource.CHANNEL_PARTNER,
+      titanCrmId: "TITAN-MULTI-CP",
+    },
+    create: {
+      leadId: "CP-XYZ-000001",
+      organizationId: org.id,
+      customerName: "Multi Partner Guest",
+      customerPhone: "9876500001",
+      cpId: "CP-XYZ",
+      source: LeadSource.CHANNEL_PARTNER,
+      titanCrmId: "TITAN-MULTI-CP",
+      intentType: "Leads",
+      registeredById: receptionUser.id,
+      createdAt: new Date("2026-07-22T14:40:00.000Z"),
+    },
+  });
+  await prisma.leadRegistry.upsert({
+    where: { leadId: "CP-SINGLE-000001" },
+    update: {},
+    create: {
+      leadId: "CP-SINGLE-000001",
+      organizationId: org.id,
+      customerName: "Single Partner Guest",
+      customerPhone: "9876500002",
+      cpId: "CP-ABC",
+      source: LeadSource.CHANNEL_PARTNER,
+      titanCrmId: "TITAN-SINGLE",
+      registeredById: receptionUser.id,
+    },
+  });
+
   await prisma.notification.deleteMany({ where: { userId: salesUser.id } });
   await prisma.notification.createMany({
     data: [
@@ -448,6 +509,7 @@ async function main() {
   console.log("  Sales: priya@demo.com / password123 (2 projects)");
   console.log(`  Projects: Skyline Heights (LAUNCH_DAY), Green Valley (UPCOMING), Metro Residences (ONGOING)`);
   console.log(`  Total units: ${totalUnits} (${skylineUnits + greenValleyUnits + metroUnits} newly created)`);
+  console.log("  Reception demo phones: 9876500001 (multi-CP), 9876500002 (single CP), 9876500003 (Titan-only), 8888888888 (Titan no partner)");
 }
 
 main()
