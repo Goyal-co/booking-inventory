@@ -135,6 +135,40 @@ export async function syncBookingToIntegrations(bookingId: string) {
     });
     await prisma.booking.update({ where: { id: bookingId }, data: { titanCrmId: res.crmId } });
     await logIntegrationSync(IntegrationSystem.TITAN, "booking", bookingId, mapped, res.crmId, IntegrationSyncStatus.SUCCESS);
+
+    // Rudra / Partner Portal EOI tag path — also push EOI sync when lead is CP/EOI
+    const isEoiOrCp =
+      booking.lead?.source === "CHANNEL_PARTNER" || Boolean(booking.lead?.eoiCpLeadId);
+    if (isEoiOrCp) {
+      try {
+        const eoiRes = await titan.syncEOI({
+          bookingId: booking.id,
+          leadId: booking.lead?.leadId,
+          eoiCpLeadId: booking.lead?.eoiCpLeadId,
+          unitNumber: booking.unit.unitNumber,
+          projectName: booking.unit.floor.tower.project.name,
+          ...mapped,
+        });
+        await logIntegrationSync(
+          IntegrationSystem.TITAN,
+          "eoi",
+          bookingId,
+          { leadId: booking.lead?.leadId, ...mapped },
+          eoiRes.crmId,
+          IntegrationSyncStatus.SUCCESS
+        );
+      } catch (eoiErr) {
+        await logIntegrationSync(
+          IntegrationSystem.TITAN,
+          "eoi",
+          bookingId,
+          mapped,
+          undefined,
+          IntegrationSyncStatus.FAILED,
+          eoiErr instanceof Error ? eoiErr.message : "EOI sync failed"
+        );
+      }
+    }
   } catch (e) {
     await logIntegrationSync(IntegrationSystem.TITAN, "booking", bookingId, mapped, undefined, IntegrationSyncStatus.FAILED, e instanceof Error ? e.message : "Failed");
   }

@@ -11,10 +11,11 @@ import {
 import { walkInLeadSchema, leadAssignSchema } from "@booking/validators";
 import {
   GoyalCrmError,
+  getGoyalCrmCapabilities,
   listGoyalLeads,
+  listMyGoyalLeads,
   getGoyalLead,
-  createGoyalEoiLead,
-  createGoyalEoiLeadViaWebhook,
+  createEoiLeadBestEffort,
   bookGoyalLead,
 } from "@booking/integrations";
 
@@ -256,6 +257,20 @@ export async function GET_visitsToday() {
   return NextResponse.json({ visits });
 }
 
+function staffTokenHint(err: unknown) {
+  if (!(err instanceof GoyalCrmError)) return undefined;
+  if (err.status === 401 || err.status === 403 || err.message.includes("not configured")) {
+    return "List/get/book need a valid staff Bearer (GOYAL_CRM_API_TOKEN). Create still works with EOI_API_KEY via webhook.";
+  }
+  return undefined;
+}
+
+export async function GET_eoiCapabilities() {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json({ capabilities: getGoyalCrmCapabilities() });
+}
+
 export async function GET_eoiLeads(req: NextRequest) {
   const user = await getReceptionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -264,24 +279,41 @@ export async function GET_eoiLeads(req: NextRequest) {
   const page = Number(sp.get("page") ?? 1) || 1;
   const limit = Math.min(100, Number(sp.get("limit") ?? 20) || 20);
   const bookedRaw = sp.get("booked");
+  const mine = sp.get("mine") === "1" || sp.get("mine") === "true";
+
+  const listParams = {
+    page,
+    limit,
+    source: sp.get("source") ?? "eoi",
+    search: sp.get("search") ?? undefined,
+    phone: sp.get("phone") ?? undefined,
+    fullName: sp.get("fullName") ?? undefined,
+    projectName: sp.get("projectName") ?? undefined,
+    assignedToId: sp.get("assignedToId") ?? undefined,
+    booked: bookedRaw === null || bookedRaw === "" ? undefined : bookedRaw,
+    leadQuality: sp.get("leadQuality") ?? undefined,
+    dateFrom: sp.get("dateFrom") ?? undefined,
+    dateTo: sp.get("dateTo") ?? undefined,
+  };
 
   try {
-    const result = await listGoyalLeads({
-      page,
-      limit,
-      source: sp.get("source") ?? "eoi",
-      search: sp.get("search") ?? undefined,
-      phone: sp.get("phone") ?? undefined,
-      fullName: sp.get("fullName") ?? undefined,
-      projectName: sp.get("projectName") ?? undefined,
-      assignedToId: sp.get("assignedToId") ?? undefined,
-      booked: bookedRaw === null || bookedRaw === "" ? undefined : bookedRaw,
-      leadQuality: sp.get("leadQuality") ?? undefined,
-      dateFrom: sp.get("dateFrom") ?? undefined,
-      dateTo: sp.get("dateTo") ?? undefined,
-    });
-    return NextResponse.json(result);
+    const result = mine
+      ? await listMyGoyalLeads(listParams)
+      : await listGoyalLeads(listParams);
+    return NextResponse.json({ ...result, capabilities: getGoyalCrmCapabilities() });
   } catch (err) {
+    const hint = staffTokenHint(err);
+    if (err instanceof GoyalCrmError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          details: err.body,
+          hint,
+          capabilities: getGoyalCrmCapabilities(),
+        },
+        { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+      );
+    }
     return crmErrorResponse(err);
   }
 }
@@ -301,21 +333,13 @@ export async function POST_eoiLead(req: NextRequest) {
   };
 
   try {
-    const lead = await createGoyalEoiLead(payload);
-    return NextResponse.json({ lead }, { status: 201 });
+    // Prefer EOI_API_KEY webhook (works without staff JWT); fall back to staff POST
+    const { lead, via } = await createEoiLeadBestEffort(payload);
+    return NextResponse.json(
+      { lead, via, capabilities: getGoyalCrmCapabilities() },
+      { status: 201 }
+    );
   } catch (err) {
-    // Staff Bearer may be revoked; fall back to website webhook when EOI_API_KEY works
-    if (err instanceof GoyalCrmError && (err.status === 401 || err.status === 403)) {
-      try {
-        const webhookResult = await createGoyalEoiLeadViaWebhook(payload);
-        return NextResponse.json(
-          { lead: webhookResult, via: "webhook" },
-          { status: 201 }
-        );
-      } catch (webhookErr) {
-        return crmErrorResponse(webhookErr);
-      }
-    }
     return crmErrorResponse(err);
   }
 }
@@ -328,6 +352,54 @@ export async function GET_eoiLead(_req: NextRequest, { params }: { params: Promi
     const lead = await getGoyalLead(id);
     return NextResponse.json({ lead });
   } catch (err) {
+    const hint = staffTokenHint(err);
+    if (err instanceof GoyalCrmError) {
+      return NextResponse.json(
+        { error: err.message, details: err.body, hint },
+        { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+      );
+    }
+    return crmErrorResponse(err);
+  }
+}
+
+export async function GET_eoiMyLeads(req: NextRequest) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const sp = req.nextUrl.searchParams;
+  const page = Number(sp.get("page") ?? 1) || 1;
+  const limit = Math.min(100, Number(sp.get("limit") ?? 20) || 20);
+  const bookedRaw = sp.get("booked");
+
+  try {
+    const result = await listMyGoyalLeads({
+      page,
+      limit,
+      source: sp.get("source") ?? "eoi",
+      search: sp.get("search") ?? undefined,
+      phone: sp.get("phone") ?? undefined,
+      fullName: sp.get("fullName") ?? undefined,
+      projectName: sp.get("projectName") ?? undefined,
+      booked: bookedRaw === null || bookedRaw === "" ? undefined : bookedRaw,
+      leadQuality: sp.get("leadQuality") ?? undefined,
+      dateFrom: sp.get("dateFrom") ?? undefined,
+      dateTo: sp.get("dateTo") ?? undefined,
+    });
+    return NextResponse.json({ ...result, capabilities: getGoyalCrmCapabilities() });
+  } catch (err) {
+    const hint = staffTokenHint(err);
+    if (err instanceof GoyalCrmError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          details: err.body,
+          hint,
+          capabilities: getGoyalCrmCapabilities(),
+        },
+        { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+      );
+    }
     return crmErrorResponse(err);
   }
 }
@@ -342,10 +414,44 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Webhook-created rows may only expose leadCode until staff API can resolve UUID
+  if (id.startsWith("webhook-")) {
+    return NextResponse.json(
+      {
+        error:
+          "Cannot book this lead yet — CRM returned no staff lead id. Set GOYAL_CRM_API_TOKEN and open the lead from the list.",
+        hint: "List/get/book need a valid staff Bearer (GOYAL_CRM_API_TOKEN). Create still works with EOI_API_KEY via webhook.",
+      },
+      { status: 400 }
+    );
+  }
+
+  let bookId = id;
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRe.test(id)) {
+    try {
+      const listed = await listGoyalLeads({ search: id, source: "eoi", limit: 10, page: 1 });
+      const match =
+        listed.leads.find((l) => l.leadCode === id) ||
+        listed.leads.find((l) => l.id === id);
+      if (match?.id) bookId = match.id;
+    } catch {
+      /* book with original id */
+    }
+  }
+
   try {
-    const lead = await bookGoyalLead(id, parsed.data);
+    const lead = await bookGoyalLead(bookId, parsed.data);
     return NextResponse.json({ lead });
   } catch (err) {
+    const hint = staffTokenHint(err);
+    if (err instanceof GoyalCrmError) {
+      return NextResponse.json(
+        { error: err.message, details: err.body, hint },
+        { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+      );
+    }
     return crmErrorResponse(err);
   }
 }

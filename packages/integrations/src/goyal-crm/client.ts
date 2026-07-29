@@ -22,16 +22,33 @@ function baseUrl() {
   return (process.env.GOYAL_CRM_API_URL ?? "https://goyalhariyanacrm.in/api").replace(/\/$/, "");
 }
 
-function apiToken() {
-  return (
-    process.env.GOYAL_CRM_API_TOKEN?.trim() ||
-    process.env.EOI_API_KEY?.trim() ||
-    ""
-  );
+/** Staff Bearer only — never fall back to website EOI_API_KEY. */
+function staffToken() {
+  return process.env.GOYAL_CRM_API_TOKEN?.trim() || "";
 }
 
+/** Website webhook key only — never fall back to staff Bearer. */
 function eoiWebhookKey() {
-  return process.env.EOI_API_KEY?.trim() || process.env.GOYAL_CRM_API_TOKEN?.trim() || "";
+  return process.env.EOI_API_KEY?.trim() || "";
+}
+
+export function getGoyalCrmCapabilities() {
+  return {
+    staffApi: Boolean(staffToken()),
+    webhookCreate: Boolean(eoiWebhookKey()),
+    baseUrl: baseUrl(),
+  };
+}
+
+/** Drop empty optional strings so CRM validators don't see "". */
+export function compactEoiPayload<T extends Record<string, unknown>>(input: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === "string" && v.trim() === "") continue;
+    out[k] = typeof v === "string" ? v.trim() : v;
+  }
+  return out as T;
 }
 
 function messageFromBody(body: unknown, fallback: string) {
@@ -54,10 +71,10 @@ async function parseJson(res: Response): Promise<unknown> {
 }
 
 async function crmFetch(path: string, init: RequestInit = {}): Promise<unknown> {
-  const token = apiToken();
+  const token = staffToken();
   if (!token) {
     throw new GoyalCrmError(
-      "GOYAL_CRM_API_TOKEN is not configured (Bearer token for CRM staff/API access)",
+      "GOYAL_CRM_API_TOKEN is not configured (staff Bearer for list/get/book)",
       500
     );
   }
@@ -138,6 +155,78 @@ function toQuery(params: GoyalCrmLeadListParams): string {
   return s ? `?${s}` : "";
 }
 
+function normalizeStaffLead(raw: unknown): GoyalCrmLead {
+  const obj = asRecord(raw);
+  if (obj?.lead && typeof obj.lead === "object") return obj.lead as GoyalCrmLead;
+  if (obj?.data && typeof obj.data === "object" && !Array.isArray(obj.data)) {
+    return obj.data as GoyalCrmLead;
+  }
+  return raw as GoyalCrmLead;
+}
+
+function looksLikeUuid(id: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    id
+  );
+}
+
+/** Map website webhook response into a lead-shaped object for the UI. */
+export function normalizeWebhookLead(
+  body: unknown,
+  input: CreateEoiLeadInput
+): GoyalCrmLead {
+  const obj = asRecord(body) ?? {};
+  const leadCode = typeof obj.leadCode === "string" ? obj.leadCode : undefined;
+  const id =
+    (typeof obj.id === "string" && obj.id) ||
+    leadCode ||
+    `webhook-${input.phone}`;
+  return {
+    id,
+    leadCode,
+    source: "eoi",
+    fullName: input.fullName,
+    phone: input.phone,
+    email: input.email ?? null,
+    projectName: input.projectName ?? null,
+    city: input.city ?? null,
+    booked: false,
+    duplicate: Boolean(obj.duplicate),
+    message: typeof obj.message === "string" ? obj.message : undefined,
+  };
+}
+
+/** When webhook only returns leadCode, resolve CRM UUID via staff list. */
+export async function enrichLeadIdFromStaffList(
+  lead: GoyalCrmLead,
+  phone: string
+): Promise<GoyalCrmLead> {
+  if (lead.id && looksLikeUuid(lead.id)) return lead;
+  if (!staffToken()) return lead;
+
+  try {
+    const digits = phone.replace(/\D/g, "").slice(-10);
+    const { leads } = await listGoyalLeads({
+      phone: digits || phone,
+      source: "eoi",
+      limit: 10,
+      page: 1,
+    });
+    const match =
+      leads.find((l) => l.leadCode && lead.leadCode && l.leadCode === lead.leadCode) ||
+      leads.find((l) => {
+        const p = String(l.phone ?? "").replace(/\D/g, "");
+        return digits && p.endsWith(digits);
+      });
+    if (match?.id) {
+      return { ...lead, ...match, id: match.id };
+    }
+  } catch {
+    /* keep webhook-shaped lead */
+  }
+  return lead;
+}
+
 export async function listGoyalLeads(
   params: GoyalCrmLeadListParams = {}
 ): Promise<GoyalCrmLeadListResult> {
@@ -155,43 +244,31 @@ export async function listGoyalLeads(
 }
 
 export async function getGoyalLead(leadId: string): Promise<GoyalCrmLead> {
-  const raw = await crmFetch(`/leads/${encodeURIComponent(leadId)}`);
-  const obj = asRecord(raw);
-  if (obj?.lead && typeof obj.lead === "object") return obj.lead as GoyalCrmLead;
-  if (obj?.data && typeof obj.data === "object" && !Array.isArray(obj.data)) {
-    return obj.data as GoyalCrmLead;
-  }
-  return raw as GoyalCrmLead;
+  return normalizeStaffLead(await crmFetch(`/leads/${encodeURIComponent(leadId)}`));
 }
 
 export async function createGoyalEoiLead(input: CreateEoiLeadInput): Promise<GoyalCrmLead> {
-  const raw = await crmFetch("/leads/eoi", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  const obj = asRecord(raw);
-  if (obj?.lead && typeof obj.lead === "object") return obj.lead as GoyalCrmLead;
-  if (obj?.data && typeof obj.data === "object" && !Array.isArray(obj.data)) {
-    return obj.data as GoyalCrmLead;
-  }
-  return raw as GoyalCrmLead;
+  const payload = compactEoiPayload(input as unknown as Record<string, unknown>);
+  return normalizeStaffLead(
+    await crmFetch("/leads/eoi", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  );
 }
 
-/** Public website webhook — uses EOI_API_KEY (no staff JWT). */
-export async function createGoyalEoiLeadViaWebhook(
-  input: CreateEoiLeadInput
-): Promise<unknown> {
-  const key = eoiWebhookKey();
-  if (!key) {
-    throw new GoyalCrmError("EOI_API_KEY is not configured for webhook create", 500);
-  }
-  const res = await fetch(`${baseUrl()}/webhooks/eoi`, {
+async function postWebhook(path: string, input: CreateEoiLeadInput, key: string) {
+  const payload = compactEoiPayload({
+    ...(input as unknown as Record<string, unknown>),
+    api_key: key,
+  });
+  const res = await fetch(`${baseUrl()}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-EOI-Api-Key": key,
     },
-    body: JSON.stringify({ ...input, api_key: key }),
+    body: JSON.stringify(payload),
   });
   const body = await parseJson(res);
   if (!res.ok) {
@@ -201,23 +278,80 @@ export async function createGoyalEoiLeadViaWebhook(
       body
     );
   }
+  const obj = asRecord(body);
+  if (obj && obj.success === false) {
+    throw new GoyalCrmError(messageFromBody(body, "EOI webhook rejected"), 400, body);
+  }
   return body;
+}
+
+/** Public website webhook — uses EOI_API_KEY only. Tries /webhooks/eoi then /eoi/create. */
+export async function createGoyalEoiLeadViaWebhook(
+  input: CreateEoiLeadInput
+): Promise<unknown> {
+  const key = eoiWebhookKey();
+  if (!key) {
+    throw new GoyalCrmError("EOI_API_KEY is not configured for webhook create", 500);
+  }
+  try {
+    return await postWebhook("/webhooks/eoi", input, key);
+  } catch (err) {
+    if (err instanceof GoyalCrmError && err.status >= 500) {
+      return await postWebhook("/eoi/create", input, key);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Prefer staff POST /leads/eoi when GOYAL_CRM_API_TOKEN is set (EOI_LEADS_API).
+ * Fall back to website webhook (EOI_API_KEY) when staff missing or unauthorized.
+ */
+export async function createEoiLeadBestEffort(
+  input: CreateEoiLeadInput
+): Promise<{ lead: GoyalCrmLead; via: "webhook" | "staff" }> {
+  const webhookKey = eoiWebhookKey();
+  const staff = staffToken();
+
+  if (staff) {
+    try {
+      const lead = await createGoyalEoiLead(input);
+      return { lead, via: "staff" };
+    } catch (err) {
+      if (!webhookKey) throw err;
+      const authFail =
+        err instanceof GoyalCrmError && (err.status === 401 || err.status === 403);
+      if (!authFail) throw err;
+      console.warn("[Goyal CRM] staff create unauthorized, trying webhook", err);
+    }
+  }
+
+  if (webhookKey) {
+    const body = await createGoyalEoiLeadViaWebhook(input);
+    let lead = normalizeWebhookLead(body, input);
+    if (staff) {
+      lead = await enrichLeadIdFromStaffList(lead, input.phone);
+    }
+    return { lead, via: "webhook" };
+  }
+
+  throw new GoyalCrmError(
+    "Configure GOYAL_CRM_API_TOKEN (staff POST /leads/eoi) and/or EOI_API_KEY (webhook)",
+    500
+  );
 }
 
 export async function bookGoyalLead(
   leadId: string,
   input: BookEoiLeadInput
 ): Promise<GoyalCrmLead> {
-  const raw = await crmFetch(`/leads/${encodeURIComponent(leadId)}/book`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  const obj = asRecord(raw);
-  if (obj?.lead && typeof obj.lead === "object") return obj.lead as GoyalCrmLead;
-  if (obj?.data && typeof obj.data === "object" && !Array.isArray(obj.data)) {
-    return obj.data as GoyalCrmLead;
-  }
-  return raw as GoyalCrmLead;
+  const payload = compactEoiPayload(input as unknown as Record<string, unknown>);
+  return normalizeStaffLead(
+    await crmFetch(`/leads/${encodeURIComponent(leadId)}/book`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  );
 }
 
 export async function listMyGoyalLeads(

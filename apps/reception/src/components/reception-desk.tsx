@@ -79,6 +79,16 @@ const emptyCreate = {
   email: "",
   projectName: "",
   city: "",
+  dateOfBirth: "",
+  maritalStatus: "",
+  nationality: "",
+  communicationAddress: "",
+  permanentAddress: "",
+  occupation: "",
+  organizationName: "",
+  designation: "",
+  sourceOfFund: "",
+  sourceOfEnquiry: "",
 };
 
 const emptyBook = {
@@ -143,11 +153,19 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   // EOI CRM
   const [eoiLeads, setEoiLeads] = useState<EoiLead[]>([]);
   const [eoiSearch, setEoiSearch] = useState("");
+  const [eoiPhone, setEoiPhone] = useState("");
+  const [eoiMine, setEoiMine] = useState(false);
   const [eoiBookedFilter, setEoiBookedFilter] = useState<"all" | "false" | "true">("all");
+  const [showCreateKyc, setShowCreateKyc] = useState(false);
   const [eoiPage, setEoiPage] = useState(1);
   const [eoiTotal, setEoiTotal] = useState<number | null>(null);
   const [eoiLoading, setEoiLoading] = useState(false);
   const [eoiError, setEoiError] = useState("");
+  const [eoiHint, setEoiHint] = useState("");
+  const [eoiCaps, setEoiCaps] = useState<{ staffApi: boolean; webhookCreate: boolean } | null>(
+    null
+  );
+  const [recentCreates, setRecentCreates] = useState<EoiLead[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
   const [createBusy, setCreateBusy] = useState(false);
@@ -156,6 +174,11 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [bookOpen, setBookOpen] = useState(false);
   const [bookForm, setBookForm] = useState(emptyBook);
   const [bookBusy, setBookBusy] = useState(false);
+
+  const canUseStaffEoi = eoiCaps?.staffApi === true;
+  const canCreateEoi = eoiCaps == null || eoiCaps.webhookCreate || eoiCaps.staffApi;
+  const canBookLead = (lead: EoiLead) =>
+    canUseStaffEoi && Boolean(lead.id) && !String(lead.id).startsWith("webhook-");
 
   const refreshVisits = async () => {
     const v = await fetch("/api/visits/today").then((r) => r.json());
@@ -193,21 +216,39 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const loadEoi = useCallback(async (page = 1) => {
     setEoiLoading(true);
     setEoiError("");
+    setEoiHint("");
     const params = new URLSearchParams({
       page: String(page),
       limit: "20",
       source: "eoi",
     });
     if (eoiSearch.trim()) params.set("search", eoiSearch.trim());
+    if (eoiPhone.trim()) params.set("phone", eoiPhone.trim());
     if (eoiBookedFilter !== "all") params.set("booked", eoiBookedFilter);
 
+    const url = eoiMine ? `/api/eoi/my-leads?${params}` : `/api/eoi/leads?${params}`;
+
     try {
-      const res = await fetch(`/api/eoi/leads?${params}`);
+      const res = await fetch(url);
       const d = await res.json();
+      if (d.capabilities) {
+        setEoiCaps({
+          staffApi: Boolean(d.capabilities.staffApi),
+          webhookCreate: Boolean(d.capabilities.webhookCreate),
+        });
+      }
       if (!res.ok) {
         setEoiLeads([]);
         setEoiTotal(null);
         setEoiError(typeof d.error === "string" ? d.error : "Failed to load EOI leads");
+        setEoiHint(typeof d.hint === "string" ? d.hint : "");
+        // Token present but rejected — treat staff list/book as unavailable in UI
+        if (res.status === 401 || res.status === 403) {
+          setEoiCaps((prev) => ({
+            staffApi: false,
+            webhookCreate: Boolean(d.capabilities?.webhookCreate ?? prev?.webhookCreate),
+          }));
+        }
         return;
       }
       setEoiLeads(d.leads ?? []);
@@ -219,7 +260,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     } finally {
       setEoiLoading(false);
     }
-  }, [eoiSearch, eoiBookedFilter]);
+  }, [eoiSearch, eoiPhone, eoiBookedFilter, eoiMine]);
 
   useEffect(() => {
     fetch("/api/salespersons/available")
@@ -384,15 +425,28 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const createEoi = async () => {
     setCreateBusy(true);
     try {
+      const optional = {
+        email: createForm.email || undefined,
+        projectName: createForm.projectName || undefined,
+        city: createForm.city || undefined,
+        dateOfBirth: createForm.dateOfBirth || undefined,
+        maritalStatus: createForm.maritalStatus || undefined,
+        nationality: createForm.nationality || undefined,
+        communicationAddress: createForm.communicationAddress || undefined,
+        permanentAddress: createForm.permanentAddress || undefined,
+        occupation: createForm.occupation || undefined,
+        organizationName: createForm.organizationName || undefined,
+        designation: createForm.designation || undefined,
+        sourceOfFund: createForm.sourceOfFund || undefined,
+        sourceOfEnquiry: createForm.sourceOfEnquiry || undefined,
+      };
       const res = await fetch("/api/eoi/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fullName: createForm.fullName,
           phone: createForm.phone,
-          email: createForm.email || undefined,
-          projectName: createForm.projectName || undefined,
-          city: createForm.city || undefined,
+          ...optional,
         }),
       });
       const d = await res.json();
@@ -400,9 +454,20 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         toast.error(typeof d.error === "string" ? d.error : "Create failed");
         return;
       }
-      toast.success(`EOI lead created${d.lead?.leadCode ? `: ${d.lead.leadCode}` : ""}`);
+      const lead = d.lead as EoiLead | undefined;
+      const code = lead?.leadCode ? ` ${lead.leadCode}` : "";
+      const via = d.via === "webhook" ? " (webhook)" : d.via === "staff" ? " (staff API)" : "";
+      toast.success(
+        d.lead?.duplicate
+          ? `EOI lead already exists${code}`
+          : `EOI lead created${code}${via}`
+      );
+      if (lead) {
+        setRecentCreates((prev) => [lead, ...prev.filter((x) => x.id !== lead.id)].slice(0, 8));
+      }
       setCreateOpen(false);
       setCreateForm(emptyCreate);
+      setShowCreateKyc(false);
       void loadEoi(1);
     } finally {
       setCreateBusy(false);
@@ -450,7 +515,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       });
       const d = await res.json();
       if (!res.ok) {
-        toast.error(typeof d.error === "string" ? d.error : "Booking failed");
+        toast.error(
+          typeof d.error === "string"
+            ? d.hint
+              ? `${d.error} — ${d.hint}`
+              : d.error
+            : "Booking failed"
+        );
         return;
       }
       toast.success("Lead marked as booked");
@@ -478,12 +549,21 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         {tab === "eoi" && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-white p-4">
-              <div className="min-w-[200px] flex-1">
+              <div className="min-w-[180px] flex-1">
                 <Label>Search</Label>
                 <Input
-                  placeholder="Name, phone, lead code…"
+                  placeholder="Name, lead code…"
                   value={eoiSearch}
                   onChange={(e) => setEoiSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void loadEoi(1)}
+                />
+              </div>
+              <div className="min-w-[140px]">
+                <Label>Phone</Label>
+                <Input
+                  placeholder="Phone"
+                  value={eoiPhone}
+                  onChange={(e) => setEoiPhone(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void loadEoi(1)}
                 />
               </div>
@@ -499,19 +579,68 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   <option value="true">Booked</option>
                 </select>
               </div>
+              <label className="mb-2 flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={eoiMine}
+                  onChange={(e) => setEoiMine(e.target.checked)}
+                  disabled={!canUseStaffEoi}
+                />
+                My leads
+              </label>
               <Button onClick={() => void loadEoi(1)} disabled={eoiLoading}>
                 {eoiLoading ? "Loading…" : "Refresh"}
               </Button>
-              <Button onClick={() => setCreateOpen(true)}>Create EOI lead</Button>
+              <Button onClick={() => setCreateOpen(true)} disabled={!canCreateEoi}>
+                Create EOI lead
+              </Button>
             </div>
+
+            {eoiCaps && !eoiCaps.staffApi && eoiCaps.webhookCreate && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+                Create works via website webhook (<code className="rounded bg-sky-100 px-1">EOI_API_KEY</code>).
+                List, view, and book need a valid staff Bearer (
+                <code className="rounded bg-sky-100 px-1">GOYAL_CRM_API_TOKEN</code>) from Goyal CRM —
+                do not reuse the webhook key as Bearer.
+              </div>
+            )}
 
             {eoiError && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {eoiError}
                 <p className="mt-1 text-amber-800/80">
-                  Set a valid <code className="rounded bg-amber-100 px-1">GOYAL_CRM_API_TOKEN</code>{" "}
-                  (Bearer) on the reception service. CRM may reject revoked keys.
+                  {eoiHint ||
+                    "Set a valid GOYAL_CRM_API_TOKEN (staff Bearer). EOI_API_KEY is only for webhook create."}
                 </p>
+              </div>
+            )}
+
+            {recentCreates.length > 0 && (
+              <div className="rounded-xl border bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Recently punched</h3>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Shown when CRM list is unavailable or after webhook create.
+                </p>
+                <ul className="mt-3 divide-y text-sm">
+                  {recentCreates.map((l) => (
+                    <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <span>
+                        <span className="font-medium">{l.fullName}</span>
+                        <span className="text-gray-500"> · {l.phone}</span>
+                        {l.leadCode ? (
+                          <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs">
+                            {l.leadCode}
+                          </span>
+                        ) : null}
+                      </span>
+                      {canBookLead(l) && !l.booked ? (
+                        <Button size="sm" variant="outline" onClick={() => openBook(l)}>
+                          Book
+                        </Button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -530,7 +659,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   {eoiLeads.length === 0 && !eoiLoading && (
                     <tr>
                       <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
-                        No EOI leads found
+                        {eoiError
+                          ? "CRM list unavailable — you can still create via webhook if EOI_API_KEY is set"
+                          : "No EOI leads found"}
                       </td>
                     </tr>
                   )}
@@ -558,10 +689,15 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => void openDetail(l)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void openDetail(l)}
+                            disabled={!canUseStaffEoi}
+                          >
                             View
                           </Button>
-                          {!l.booked && (
+                          {!l.booked && canBookLead(l) && (
                             <Button size="sm" onClick={() => openBook(l)}>
                               Book
                             </Button>
@@ -886,10 +1022,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         open={createOpen}
         onOpenChange={setCreateOpen}
         title="Create EOI lead"
-        description="Punches a lead into Goyal Hariyana CRM with source = eoi."
-        className="sm:max-w-md"
+        description={
+          canUseStaffEoi
+            ? "Staff API POST /leads/eoi (falls back to webhook if unauthorized)."
+            : "Website webhook punch-in (set GOYAL_CRM_API_TOKEN for staff create/list/book)."
+        }
+        className="sm:max-w-xl"
       >
-        <div className="space-y-3">
+        <div className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
           <div>
             <Label>Full name *</Label>
             <Input
@@ -926,6 +1066,59 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               onChange={(e) => setCreateForm({ ...createForm, city: e.target.value })}
             />
           </div>
+
+          <button
+            type="button"
+            className="text-sm font-medium text-brand-700 hover:underline"
+            onClick={() => setShowCreateKyc((v) => !v)}
+          >
+            {showCreateKyc ? "Hide optional KYC" : "Add optional KYC (saved for booking)"}
+          </button>
+
+          {showCreateKyc && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(
+                [
+                  ["dateOfBirth", "Date of birth", "date"],
+                  ["maritalStatus", "Marital status", "text"],
+                  ["nationality", "Nationality", "text"],
+                  ["occupation", "Occupation", "text"],
+                  ["organizationName", "Organization", "text"],
+                  ["designation", "Designation", "text"],
+                  ["sourceOfFund", "Source of fund", "text"],
+                  ["sourceOfEnquiry", "Source of enquiry", "text"],
+                ] as const
+              ).map(([key, label, type]) => (
+                <div key={key}>
+                  <Label>{label}</Label>
+                  <Input
+                    type={type}
+                    value={createForm[key]}
+                    onChange={(e) => setCreateForm({ ...createForm, [key]: e.target.value })}
+                  />
+                </div>
+              ))}
+              <div className="sm:col-span-2">
+                <Label>Communication address</Label>
+                <Input
+                  value={createForm.communicationAddress}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, communicationAddress: e.target.value })
+                  }
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Label>Permanent address</Label>
+                <Input
+                  value={createForm.permanentAddress}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, permanentAddress: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
               Cancel
@@ -974,11 +1167,37 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 <dt className="text-xs text-gray-500">Source</dt>
                 <dd>{selected.source || "eoi"}</dd>
               </div>
+              {(
+                [
+                  ["dateOfBirth", "Date of birth"],
+                  ["maritalStatus", "Marital status"],
+                  ["nationality", "Nationality"],
+                  ["occupation", "Occupation"],
+                  ["organizationName", "Organization"],
+                  ["designation", "Designation"],
+                  ["sourceOfFund", "Source of fund"],
+                  ["sourceOfEnquiry", "Source of enquiry"],
+                  ["communicationAddress", "Communication address"],
+                  ["permanentAddress", "Permanent address"],
+                ] as const
+              ).map(([key, label]) =>
+                selected[key] ? (
+                  <div key={key} className={key.includes("Address") ? "col-span-2" : ""}>
+                    <dt className="text-xs text-gray-500">{label}</dt>
+                    <dd>{selected[key]}</dd>
+                  </div>
+                ) : null
+              )}
             </dl>
-            {!selected.booked && (
+            {!selected.booked && canBookLead(selected) && (
               <Button className="w-full" onClick={() => { setDetailOpen(false); openBook(selected); }}>
                 Book with KYC
               </Button>
+            )}
+            {!selected.booked && !canBookLead(selected) && (
+              <p className="text-xs text-amber-800">
+                Booking needs a staff lead UUID and GOYAL_CRM_API_TOKEN.
+              </p>
             )}
           </div>
         )}

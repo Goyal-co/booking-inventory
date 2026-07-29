@@ -7,10 +7,15 @@ export * from "./types";
 export * from "./goyal-crm/types";
 export {
   GoyalCrmError,
+  getGoyalCrmCapabilities,
+  compactEoiPayload,
   listGoyalLeads,
   getGoyalLead,
   createGoyalEoiLead,
   createGoyalEoiLeadViaWebhook,
+  createEoiLeadBestEffort,
+  normalizeWebhookLead,
+  enrichLeadIdFromStaffList,
   bookGoyalLead,
   listMyGoyalLeads,
 } from "./goyal-crm/client";
