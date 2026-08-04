@@ -25,10 +25,12 @@ const RECEPTION_FEATURES = [
 export function LoginSplitLayout({
   variant = "admin",
   backgroundImage = DEFAULT_LOGIN_BG,
+  logoSrc = "/new_logo.jpeg",
   children,
 }: {
   variant?: "admin" | "sales" | "reception";
   backgroundImage?: string;
+  logoSrc?: string;
   children: React.ReactNode;
 }) {
   const features =
@@ -62,12 +64,9 @@ export function LoginSplitLayout({
       <div className="relative flex min-h-[100dvh] flex-col lg:flex-row">
         <aside className="hidden w-[48%] shrink-0 flex-col justify-between p-10 xl:p-12 lg:flex">
           <div>
-            <div className="flex items-center gap-3">
-              <GhcLogo size={48} />
-              <div>
-                <h1 className="text-xl font-bold text-navy-600">Goyal Hariyana Sales</h1>
-                <p className="text-sm font-medium text-brand-600">{portalLabel}</p>
-              </div>
+            <div>
+              <GhcLogo size={56} src={logoSrc} className="max-w-[320px]" />
+              <p className="mt-3 text-sm font-medium text-brand-600">{portalLabel}</p>
             </div>
             <p className="mt-8 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand-600">
               <Building2 className="h-4 w-4" />
@@ -92,12 +91,9 @@ export function LoginSplitLayout({
         </aside>
 
         <main className="flex flex-1 flex-col items-center justify-center px-4 py-10 sm:px-8">
-          <div className="mb-6 flex w-full max-w-md items-center gap-2 lg:hidden">
-            <GhcLogo size={40} />
-            <div>
-              <p className="font-bold text-navy-600">Goyal Hariyana Sales</p>
-              <p className="text-xs text-brand-600">{portalLabel}</p>
-            </div>
+          <div className="mb-6 w-full max-w-md lg:hidden">
+            <GhcLogo size={44} src={logoSrc} className="max-w-[260px]" />
+            <p className="mt-2 text-xs text-brand-600">{portalLabel}</p>
           </div>
           <div className="w-full max-w-md rounded-2xl border border-gray-200/60 bg-white p-6 shadow-lg sm:p-8">
             <div className="mb-6 flex justify-center">

@@ -154,7 +154,7 @@ export default function BookingFormPage() {
 
   const content = branding.content;
   const teal = content.accentTeal || FORM_TEAL;
-  const companyLogoUrl = normalizeMediaUrl(branding.logoUrl) || "/logo.svg";
+  const companyLogoUrl = normalizeMediaUrl(branding.logoUrl) || "/new_logo.jpeg";
   const projectLogoUrl = normalizeMediaUrl(content.projectLogoUrl || content.heroImageUrl);
   const secondaryLogoUrl = normalizeMediaUrl(content.secondaryLogoUrl);
 

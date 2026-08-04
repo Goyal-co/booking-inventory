@@ -20,7 +20,7 @@ export function getEmailBaseUrl(): string {
 export function getEmailLogoUrl(): string {
   return (
     process.env.EMAIL_LOGO_URL?.trim() ||
-    `${getEmailBaseUrl()}/logo.svg`
+    `${getEmailBaseUrl()}/new_logo.jpeg`
   );
 }
 
@@ -69,14 +69,7 @@ export function emailHeader(stepLabel?: string): string {
   return `
     <tr>
       <td style="padding:32px 32px 24px;text-align:center;background:#ffffff;">
-        <img src="${logoUrl}" alt="Goyal & Co. | Hariyana Group" width="280" style="max-width:280px;width:100%;height:auto;display:block;margin:0 auto;" />
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;">
-          <tr>
-            <td width="30%" style="border-bottom:1px solid ${GOLD};">&nbsp;</td>
-            <td style="padding:0 12px;font-size:11px;color:${MUTED};white-space:nowrap;font-style:italic;">creating landmarks since 1971</td>
-            <td width="30%" style="border-bottom:1px solid ${GOLD};">&nbsp;</td>
-          </tr>
-        </table>
+        <img src="${logoUrl}" alt="Goyal & Co. | Hariyana Group — creating landmarks since 1971" width="280" style="max-width:280px;width:100%;height:auto;display:block;margin:0 auto;" />
         ${stepBlock}
       </td>
     </tr>`;

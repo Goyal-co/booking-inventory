@@ -34,12 +34,18 @@ export type GoyalCrmLeadListParams = {
   search?: string;
   phone?: string;
   fullName?: string;
+  email?: string;
+  city?: string;
   projectName?: string;
   assignedToId?: string;
   booked?: boolean | string;
+  called?: boolean | string;
+  siteVisit?: boolean | string;
   leadQuality?: string;
   dateFrom?: string;
   dateTo?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
 };
 
 export type GoyalCrmLeadListResult = {

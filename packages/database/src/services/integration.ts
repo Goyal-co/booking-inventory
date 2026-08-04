@@ -187,6 +187,23 @@ export async function syncBookingToIntegrations(bookingId: string) {
   } catch (e) {
     await logIntegrationSync(IntegrationSystem.POST_CRM, "booking", bookingId, {}, undefined, IntegrationSyncStatus.FAILED, e instanceof Error ? e.message : "Failed");
   }
+
+  // Notify EOI Partner Portal that the lead is booked
+  const isEoiCpLead =
+    booking.lead?.source === "CHANNEL_PARTNER" || Boolean(booking.lead?.eoiCpLeadId);
+  if (isEoiCpLead) {
+    try {
+      const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+      await notifyEoiPartnerPortal({
+        event: "booking.confirmed",
+        leadId: booking.lead?.leadId,
+        eoiCpLeadId: booking.lead?.eoiCpLeadId,
+        phone: booking.lead?.customerPhone || booking.customerPhone,
+      });
+    } catch (e) {
+      console.error("[syncBookingToIntegrations] EOI_CP booking notify failed", e);
+    }
+  }
 }
 
 export async function retryIntegrationSync(logId: string) {
@@ -305,6 +322,21 @@ export async function assignLeadToSales(
     });
   } catch {
     /* non-blocking */
+  }
+
+  // Push site-visit completed to EOI Partner Portal (Channel Partner leads)
+  if (lead.eoiCpLeadId || lead.source === "CHANNEL_PARTNER") {
+    try {
+      const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+      await notifyEoiPartnerPortal({
+        event: "site_visit.completed",
+        leadId: lead.leadId,
+        eoiCpLeadId: lead.eoiCpLeadId,
+        phone: lead.customerPhone,
+      });
+    } catch (e) {
+      console.error("[assignLeadToSales] EOI_CP site visit notify failed", e);
+    }
   }
 
   return lead;

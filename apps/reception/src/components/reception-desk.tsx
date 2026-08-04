@@ -162,9 +162,12 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [eoiLoading, setEoiLoading] = useState(false);
   const [eoiError, setEoiError] = useState("");
   const [eoiHint, setEoiHint] = useState("");
-  const [eoiCaps, setEoiCaps] = useState<{ staffApi: boolean; webhookCreate: boolean } | null>(
-    null
-  );
+  const [eoiCaps, setEoiCaps] = useState<{
+    staffApi: boolean;
+    webhookCreate: boolean;
+    webhookList?: boolean;
+    canBook?: boolean;
+  } | null>(null);
   const [recentCreates, setRecentCreates] = useState<EoiLead[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
@@ -176,9 +179,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [bookBusy, setBookBusy] = useState(false);
 
   const canUseStaffEoi = eoiCaps?.staffApi === true;
+  const canListEoi =
+    eoiCaps == null || eoiCaps.webhookList || eoiCaps.webhookCreate || eoiCaps.staffApi;
   const canCreateEoi = eoiCaps == null || eoiCaps.webhookCreate || eoiCaps.staffApi;
+  const canBookWithStaff = eoiCaps?.canBook === true || canUseStaffEoi;
+  const looksLikeUuid = (id: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
   const canBookLead = (lead: EoiLead) =>
-    canUseStaffEoi && Boolean(lead.id) && !String(lead.id).startsWith("webhook-");
+    canBookWithStaff && Boolean(lead.id) && looksLikeUuid(String(lead.id));
 
   const refreshVisits = async () => {
     const v = await fetch("/api/visits/today").then((r) => r.json());
@@ -235,6 +243,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         setEoiCaps({
           staffApi: Boolean(d.capabilities.staffApi),
           webhookCreate: Boolean(d.capabilities.webhookCreate),
+          webhookList: Boolean(d.capabilities.webhookList ?? d.capabilities.webhookCreate),
+          canBook: Boolean(d.capabilities.canBook ?? d.capabilities.staffApi),
         });
       }
       if (!res.ok) {
@@ -242,11 +252,15 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         setEoiTotal(null);
         setEoiError(typeof d.error === "string" ? d.error : "Failed to load EOI leads");
         setEoiHint(typeof d.hint === "string" ? d.hint : "");
-        // Token present but rejected — treat staff list/book as unavailable in UI
-        if (res.status === 401 || res.status === 403) {
+        // My-leads / staff-only path rejected
+        if (eoiMine && (res.status === 401 || res.status === 403)) {
           setEoiCaps((prev) => ({
             staffApi: false,
             webhookCreate: Boolean(d.capabilities?.webhookCreate ?? prev?.webhookCreate),
+            webhookList: Boolean(
+              d.capabilities?.webhookList ?? d.capabilities?.webhookCreate ?? prev?.webhookList
+            ),
+            canBook: false,
           }));
         }
         return;
@@ -596,12 +610,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               </Button>
             </div>
 
-            {eoiCaps && !eoiCaps.staffApi && eoiCaps.webhookCreate && (
+            {eoiCaps && eoiCaps.webhookList && !eoiCaps.staffApi && (
               <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-                Create works via website webhook (<code className="rounded bg-sky-100 px-1">EOI_API_KEY</code>).
-                List, view, and book need a valid staff Bearer (
-                <code className="rounded bg-sky-100 px-1">GOYAL_CRM_API_TOKEN</code>) from Goyal CRM —
-                do not reuse the webhook key as Bearer.
+                List and create use <code className="rounded bg-sky-100 px-1">EOI_API_KEY</code>{" "}
+                (<code className="rounded bg-sky-100 px-1">GET /eoi/leads</code> + webhook). Booking and
+                My leads need a staff JWT (
+                <code className="rounded bg-sky-100 px-1">GOYAL_CRM_API_TOKEN</code>) — do not reuse the
+                webhook key as staff Bearer.
               </div>
             )}
 
@@ -610,7 +625,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 {eoiError}
                 <p className="mt-1 text-amber-800/80">
                   {eoiHint ||
-                    "Set a valid GOYAL_CRM_API_TOKEN (staff Bearer). EOI_API_KEY is only for webhook create."}
+                    "Check EOI_API_KEY for list/create. Book/My leads need GOYAL_CRM_API_TOKEN."}
                 </p>
               </div>
             )}
@@ -619,7 +634,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               <div className="rounded-xl border bg-white p-4">
                 <h3 className="text-sm font-semibold text-gray-900">Recently punched</h3>
                 <p className="mt-0.5 text-xs text-gray-500">
-                  Shown when CRM list is unavailable or after webhook create.
+                  Local session list after create (also refresh the CRM table below).
                 </p>
                 <ul className="mt-3 divide-y text-sm">
                   {recentCreates.map((l) => (
@@ -633,11 +648,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                           </span>
                         ) : null}
                       </span>
-                      {canBookLead(l) && !l.booked ? (
-                        <Button size="sm" variant="outline" onClick={() => openBook(l)}>
-                          Book
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void openDetail(l)}>
+                          View
                         </Button>
-                      ) : null}
+                        {canBookLead(l) && !l.booked ? (
+                          <Button size="sm" variant="outline" onClick={() => openBook(l)}>
+                            Book
+                          </Button>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -660,7 +680,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                     <tr>
                       <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
                         {eoiError
-                          ? "CRM list unavailable — you can still create via webhook if EOI_API_KEY is set"
+                          ? canListEoi
+                            ? "Could not load leads — check EOI_API_KEY"
+                            : "CRM list unavailable — set EOI_API_KEY"
                           : "No EOI leads found"}
                       </td>
                     </tr>
@@ -689,18 +711,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void openDetail(l)}
-                            disabled={!canUseStaffEoi}
-                          >
+                          <Button variant="outline" size="sm" onClick={() => void openDetail(l)}>
                             View
                           </Button>
                           {!l.booked && canBookLead(l) && (
                             <Button size="sm" onClick={() => openBook(l)}>
                               Book
                             </Button>
+                          )}
+                          {!l.booked && !canBookLead(l) && canBookWithStaff === false && (
+                            <span className="self-center text-xs text-gray-400">Book needs staff token</span>
                           )}
                         </div>
                       </td>
@@ -1196,7 +1216,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
             )}
             {!selected.booked && !canBookLead(selected) && (
               <p className="text-xs text-amber-800">
-                Booking needs a staff lead UUID and GOYAL_CRM_API_TOKEN.
+                Booking needs GOYAL_CRM_API_TOKEN (staff JWT). List/create already work with EOI_API_KEY.
               </p>
             )}
           </div>

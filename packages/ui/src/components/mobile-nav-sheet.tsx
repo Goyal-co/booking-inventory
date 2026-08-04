@@ -3,6 +3,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { GhcLogo } from "../assets/ghc-logo";
 
 export interface MobileNavItem {
   href: string;
@@ -17,6 +18,7 @@ interface MobileNavSheetProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   subtitle?: string;
+  logoSrc?: string;
   items: MobileNavItem[];
   footer?: React.ReactNode;
 }
@@ -26,6 +28,7 @@ export function MobileNavSheet({
   onOpenChange,
   title,
   subtitle,
+  logoSrc = "/new_logo.jpeg",
   items,
   footer,
 }: MobileNavSheetProps) {
@@ -39,15 +42,20 @@ export function MobileNavSheet({
             "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left lg:hidden"
           )}
         >
-          <div className="flex items-start justify-between border-b border-gray-200 p-4">
-            <div>
-              <Dialog.Title className="text-lg font-bold text-brand-600">{title}</Dialog.Title>
-              {subtitle && (
-                <Dialog.Description className="text-xs text-gray-500">{subtitle}</Dialog.Description>
+          <div className="flex items-start justify-between gap-2 border-b border-gray-200 p-4">
+            <div className="min-w-0 flex-1">
+              <GhcLogo size={32} src={logoSrc} className="max-w-[200px]" />
+              <Dialog.Title className="sr-only">{title}</Dialog.Title>
+              {subtitle ? (
+                <Dialog.Description className="mt-2 text-xs font-medium text-brand-600">
+                  {subtitle}
+                </Dialog.Description>
+              ) : (
+                <Dialog.Description className="sr-only">{title}</Dialog.Description>
               )}
             </div>
             <Dialog.Close
-              className="rounded-lg p-1 hover:bg-gray-100"
+              className="shrink-0 rounded-lg p-1 hover:bg-gray-100"
               aria-label="Close navigation"
             >
               <X className="h-4 w-4" />
@@ -81,7 +89,7 @@ export function MobileNavSheet({
               );
             })}
           </nav>
-          {footer && <div className="border-t border-gray-200 p-3">{footer}</div>}
+          {footer ? <div className="border-t border-gray-200 p-3">{footer}</div> : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

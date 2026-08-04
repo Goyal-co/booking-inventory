@@ -189,6 +189,16 @@ export async function submitBooking(
       unitNumber: block.unit.unitNumber,
       projectId: block.unit.floor.tower.projectId,
     };
+  }).then(async (result) => {
+    if (!result.pending) {
+      try {
+        const { syncBookingToIntegrations } = await import("./integration");
+        await syncBookingToIntegrations(result.booking.id);
+      } catch (e) {
+        console.error("[submitBooking] integration sync failed", e);
+      }
+    }
+    return result;
   });
 }
 

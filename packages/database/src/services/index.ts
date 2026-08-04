@@ -16,4 +16,5 @@ export * from "./profile";
 export * from "./cost-sheet-engine";
 export * from "./block-customer";
 export * from "./integration";
+export * from "./eoi-cp-notify";
 export * from "./digital-booking";

@@ -38,7 +38,7 @@ function ReceptionLoginForm() {
   };
 
   return (
-    <LoginSplitLayout variant="reception">
+    <LoginSplitLayout variant="reception" logoSrc="/images/auth/new_logo.jpeg">
       <h2 className="text-center text-2xl font-serif font-bold text-navy-600">Reception Login</h2>
       <p className="mb-6 text-center text-sm text-gray-500">Sign in to access the reception desk</p>
       <form onSubmit={handleSubmit} className="space-y-4">

@@ -260,7 +260,7 @@ export async function GET_visitsToday() {
 function staffTokenHint(err: unknown) {
   if (!(err instanceof GoyalCrmError)) return undefined;
   if (err.status === 401 || err.status === 403 || err.message.includes("not configured")) {
-    return "List/get/book need a valid staff Bearer (GOYAL_CRM_API_TOKEN). Create still works with EOI_API_KEY via webhook.";
+    return "Book / My leads need GOYAL_CRM_API_TOKEN (staff JWT). List and create work with EOI_API_KEY via GET /eoi/leads and webhook.";
   }
   return undefined;
 }
@@ -279,6 +279,8 @@ export async function GET_eoiLeads(req: NextRequest) {
   const page = Number(sp.get("page") ?? 1) || 1;
   const limit = Math.min(100, Number(sp.get("limit") ?? 20) || 20);
   const bookedRaw = sp.get("booked");
+  const calledRaw = sp.get("called");
+  const siteVisitRaw = sp.get("siteVisit");
   const mine = sp.get("mine") === "1" || sp.get("mine") === "true";
 
   const listParams = {
@@ -288,12 +290,18 @@ export async function GET_eoiLeads(req: NextRequest) {
     search: sp.get("search") ?? undefined,
     phone: sp.get("phone") ?? undefined,
     fullName: sp.get("fullName") ?? undefined,
+    email: sp.get("email") ?? undefined,
+    city: sp.get("city") ?? undefined,
     projectName: sp.get("projectName") ?? undefined,
     assignedToId: sp.get("assignedToId") ?? undefined,
     booked: bookedRaw === null || bookedRaw === "" ? undefined : bookedRaw,
+    called: calledRaw === null || calledRaw === "" ? undefined : calledRaw,
+    siteVisit: siteVisitRaw === null || siteVisitRaw === "" ? undefined : siteVisitRaw,
     leadQuality: sp.get("leadQuality") ?? undefined,
     dateFrom: sp.get("dateFrom") ?? undefined,
     dateTo: sp.get("dateTo") ?? undefined,
+    updatedFrom: sp.get("updatedFrom") ?? undefined,
+    updatedTo: sp.get("updatedTo") ?? undefined,
   };
 
   try {
@@ -419,8 +427,8 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
     return NextResponse.json(
       {
         error:
-          "Cannot book this lead yet — CRM returned no staff lead id. Set GOYAL_CRM_API_TOKEN and open the lead from the list.",
-        hint: "List/get/book need a valid staff Bearer (GOYAL_CRM_API_TOKEN). Create still works with EOI_API_KEY via webhook.",
+          "Cannot book this lead yet — CRM returned no staff lead id. Open the lead from the list (UUID) and set GOYAL_CRM_API_TOKEN for booking.",
+        hint: "Book needs GOYAL_CRM_API_TOKEN (staff JWT). List/create work with EOI_API_KEY.",
       },
       { status: 400 }
     );
