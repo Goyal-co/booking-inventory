@@ -603,6 +603,9 @@ model LeadRegistry {
   cpId            String?
   titanCrmId      String?
   eoiCpLeadId     String?
+  /// Goyal Hariyana CRM lead UUID (EOI desk / Direct Booking)
+  goyalCrmId      String?
+  goyalLeadCode   String?
   siteVisitStatus SiteVisitStatus @default(NOT_SCHEDULED)
   registeredById  String?
   registeredBy    User?          @relation("LeadRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
@@ -617,6 +620,8 @@ model LeadRegistry {
   @@index([customerPhone])
   @@index([leadId])
   @@index([titanCrmId])
+  @@index([goyalCrmId])
+  @@index([assignedSalesId])
 }
 
 model SiteVisit {

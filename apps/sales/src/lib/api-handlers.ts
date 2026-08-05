@@ -38,6 +38,9 @@ import {
   sendBlockNotificationEmail,
   getCustomerBookingUrl,
   getCustomerDashboardUrl,
+  listAssignedDirectLeads,
+  markDirectLeadSiteVisitDone,
+  markDirectLeadBooked,
 } from "@booking/database";
 import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema, attachCustomerToBlockSchema } from "@booking/validators";
 import { emitRealtimeEvent } from "@booking/database";
@@ -923,5 +926,84 @@ export async function POST_block_resendBookingEmail(
       return NextResponse.json({ error: e.message }, { status: 400 });
     }
     throw e;
+  }
+}
+
+/** Leads assigned by reception from Goyal CRM EOI desk. */
+export async function GET_directLeads(_req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { getGoyalCrmCapabilities } = await import("@booking/integrations");
+  const leads = await listAssignedDirectLeads(user.id, user.organizationId);
+  return NextResponse.json({
+    leads,
+    capabilities: getGoyalCrmCapabilities(),
+  });
+}
+
+export async function POST_directLeadSiteVisit(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const notes = typeof body?.notes === "string" ? body.notes : undefined;
+
+  try {
+    const result = await markDirectLeadSiteVisitDone({
+      leadRegistryId: id,
+      salesUserId: user.id,
+      notes,
+    });
+    return NextResponse.json(result);
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Site visit update failed" },
+      { status: 400 }
+    );
+  }
+}
+
+export async function POST_directLeadBook(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+
+  try {
+    const result = await markDirectLeadBooked({
+      leadRegistryId: id,
+      salesUserId: user.id,
+      bookedDate: typeof body.bookedDate === "string" ? body.bookedDate : undefined,
+      dateOfBirth: typeof body.dateOfBirth === "string" ? body.dateOfBirth : undefined,
+      maritalStatus: typeof body.maritalStatus === "string" ? body.maritalStatus : undefined,
+      nationality: typeof body.nationality === "string" ? body.nationality : undefined,
+      communicationAddress:
+        typeof body.communicationAddress === "string" ? body.communicationAddress : undefined,
+      permanentAddress:
+        typeof body.permanentAddress === "string" ? body.permanentAddress : undefined,
+      occupation: typeof body.occupation === "string" ? body.occupation : undefined,
+      organizationName:
+        typeof body.organizationName === "string" ? body.organizationName : undefined,
+      designation: typeof body.designation === "string" ? body.designation : undefined,
+      sourceOfFund: typeof body.sourceOfFund === "string" ? body.sourceOfFund : undefined,
+      sourceOfEnquiry:
+        typeof body.sourceOfEnquiry === "string" ? body.sourceOfEnquiry : undefined,
+    });
+    if (!result.crmSynced) {
+      return NextResponse.json(result, { status: 502 });
+    }
+    return NextResponse.json(result);
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Book update failed" },
+      { status: 400 }
+    );
   }
 }

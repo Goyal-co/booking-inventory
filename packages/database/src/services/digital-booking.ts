@@ -250,6 +250,7 @@ export async function submitDigitalForm(token: string) {
     metadata: { link: "/app/bookings" },
   });
 
+  // Always sync booking payload; Partner Portal / Goyal CRM BOOKED is gated on CONFIRMED inside.
   await syncBookingToIntegrations(booking.id);
   return booking;
 }

@@ -57,7 +57,7 @@ function ReceptionSidebar({ className }: { className?: string }) {
   return (
     <aside className={cn("flex h-full w-64 flex-col border-r border-gray-200 bg-white", className)}>
       <div className="border-b border-gray-200 p-4">
-        <GhcLogo size={36} src="/images/auth/new_logo.jpeg" className="max-w-full" />
+        <GhcLogo size={48} src="/images/auth/new_logo.jpeg" className="max-w-full" />
         <p className="mt-2 text-xs font-medium text-brand-600">Reception Portal</p>
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">

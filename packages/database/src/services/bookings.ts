@@ -90,8 +90,10 @@ export async function submitBooking(
         data: {
           unitId: block.unitId,
           userId,
+          leadId: block.leadId,
           customerName,
           customerPhone,
+          customerEmail: block.customerEmail,
           costSheetSnapshot,
           totalPrice: costSheet?.totalPrice ?? 0,
           status: BookingStatus.PENDING,
@@ -146,8 +148,10 @@ export async function submitBooking(
       data: {
         unitId: block.unitId,
         userId,
+        leadId: block.leadId,
         customerName,
         customerPhone,
+        customerEmail: block.customerEmail,
         costSheetSnapshot,
         totalPrice: costSheet?.totalPrice ?? 0,
         status: BookingStatus.CONFIRMED,

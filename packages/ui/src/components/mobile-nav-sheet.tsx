@@ -44,7 +44,7 @@ export function MobileNavSheet({
         >
           <div className="flex items-start justify-between gap-2 border-b border-gray-200 p-4">
             <div className="min-w-0 flex-1">
-              <GhcLogo size={32} src={logoSrc} className="max-w-[200px]" />
+              <GhcLogo size={44} src={logoSrc} className="max-w-[230px]" />
               <Dialog.Title className="sr-only">{title}</Dialog.Title>
               {subtitle ? (
                 <Dialog.Description className="mt-2 text-xs font-medium text-brand-600">

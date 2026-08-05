@@ -10,6 +10,11 @@ export type GoyalCrmLead = {
   city?: string | null;
   booked?: boolean;
   bookedDate?: string | null;
+  siteVisit?: boolean;
+  siteVisitDate?: string | null;
+  siteVisitDone?: boolean;
+  siteVisitDoneDate?: string | null;
+  called?: boolean;
   assignedToId?: string | null;
   leadQuality?: string | null;
   dateOfBirth?: string | null;
@@ -89,4 +94,37 @@ export type BookEoiLeadInput = {
   designation?: string;
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
+};
+
+export type UpdateGoyalLeadInput = {
+  siteVisit?: boolean;
+  siteVisitDate?: string;
+  siteVisitDone?: boolean;
+  siteVisitDoneDate?: string;
+  called?: boolean;
+  booked?: boolean;
+  bookedDate?: string;
+  fullName?: string;
+  phone?: string;
+  email?: string;
+  city?: string;
+  projectName?: string;
+  dateOfBirth?: string;
+  maritalStatus?: string;
+  nationality?: string;
+  communicationAddress?: string;
+  permanentAddress?: string;
+  occupation?: string;
+  organizationName?: string;
+  designation?: string;
+  sourceOfFund?: string;
+  sourceOfEnquiry?: string;
+};
+
+export type MarkSiteVisitInput = {
+  siteVisit?: boolean;
+  siteVisitDate?: string;
+  siteVisitDone?: boolean;
+  siteVisitDoneDate?: string;
+  notes?: string;
 };

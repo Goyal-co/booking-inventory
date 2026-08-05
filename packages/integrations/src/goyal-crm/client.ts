@@ -4,6 +4,8 @@ import type {
   GoyalCrmLead,
   GoyalCrmLeadListParams,
   GoyalCrmLeadListResult,
+  UpdateGoyalLeadInput,
+  MarkSiteVisitInput,
 } from "./types";
 
 export class GoyalCrmError extends Error {
@@ -493,6 +495,54 @@ export async function bookGoyalLead(
       body: JSON.stringify(payload),
     })
   );
+}
+
+/** Staff PATCH /leads/:id — update siteVisit / called / KYC fields. */
+export async function updateGoyalLead(
+  leadId: string,
+  input: UpdateGoyalLeadInput
+): Promise<GoyalCrmLead> {
+  const payload = compactEoiPayload(input as unknown as Record<string, unknown>);
+  return normalizeStaffLead(
+    await crmFetch(`/leads/${encodeURIComponent(leadId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+/** Staff POST /leads/:id/site-visit — mark site visit (done). */
+export async function markGoyalSiteVisit(
+  leadId: string,
+  input: MarkSiteVisitInput = {}
+): Promise<GoyalCrmLead> {
+  const today = new Date().toISOString().slice(0, 10);
+  const payload = compactEoiPayload({
+    siteVisit: true,
+    siteVisitDate: input.siteVisitDate ?? today,
+    siteVisitDone: input.siteVisitDone ?? true,
+    siteVisitDoneDate: input.siteVisitDoneDate ?? today,
+    ...(input.notes ? { notes: input.notes } : {}),
+  } as Record<string, unknown>);
+
+  try {
+    return normalizeStaffLead(
+      await crmFetch(`/leads/${encodeURIComponent(leadId)}/site-visit`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    );
+  } catch (err) {
+    if (err instanceof GoyalCrmError && (err.status === 404 || err.status === 405)) {
+      return updateGoyalLead(leadId, {
+        siteVisit: true,
+        siteVisitDate: input.siteVisitDate ?? today,
+        siteVisitDone: input.siteVisitDone ?? true,
+        siteVisitDoneDate: input.siteVisitDoneDate ?? today,
+      });
+    }
+    throw err;
+  }
 }
 
 export async function listMyGoyalLeads(

@@ -188,17 +188,61 @@ export async function syncBookingToIntegrations(bookingId: string) {
     await logIntegrationSync(IntegrationSystem.POST_CRM, "booking", bookingId, {}, undefined, IntegrationSyncStatus.FAILED, e instanceof Error ? e.message : "Failed");
   }
 
-  // Notify EOI Partner Portal that the lead is booked
+  // Only mark Partner Portal / Goyal CRM as booked after confirmation.
+  // Pending digital submissions still sync Titan/Post above, but must not flip BOOKED early.
+  const isConfirmed = booking.status === "CONFIRMED";
   const isEoiCpLead =
     booking.lead?.source === "CHANNEL_PARTNER" || Boolean(booking.lead?.eoiCpLeadId);
-  if (isEoiCpLead) {
+  if (isConfirmed && isEoiCpLead) {
+    // Mark the original Goyal Hariyana CRM EOI lead as booked as well.
+    // This staff route requires GOYAL_CRM_API_TOKEN and complete booking KYC.
+    try {
+      const {
+        bookGoyalLead,
+        getGoyalCrmCapabilities,
+        getGoyalLead,
+      } = await import("@booking/integrations");
+      if (getGoyalCrmCapabilities().canBook) {
+        const lookupId =
+          booking.lead?.titanCrmId
+          || booking.lead?.leadId;
+        if (lookupId) {
+          const crmLead = await getGoyalLead(lookupId);
+          await bookGoyalLead(crmLead.id, {
+            booked: true,
+            bookedDate: new Date().toISOString().slice(0, 10),
+            dateOfBirth: mapped.dateOfBirth,
+            maritalStatus: mapped.maritalStatus,
+            nationality: mapped.nationality || "Indian",
+            communicationAddress: mapped.communicationAddress,
+            permanentAddress: mapped.permanentAddress,
+            occupation: mapped.occupation,
+            organizationName: mapped.organizationName,
+            designation: mapped.designation,
+            sourceOfFund: mapped.sourceOfFund,
+            sourceOfEnquiry: mapped.sourceOfEnquiry || "Partner Portal EOI",
+          });
+        }
+      } else {
+        console.warn(
+          "[syncBookingToIntegrations] CRM booking skipped — GOYAL_CRM_API_TOKEN not configured",
+        );
+      }
+    } catch (e) {
+      console.error("[syncBookingToIntegrations] Goyal CRM book failed", e);
+    }
+
     try {
       const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
       await notifyEoiPartnerPortal({
         event: "booking.confirmed",
         leadId: booking.lead?.leadId,
         eoiCpLeadId: booking.lead?.eoiCpLeadId,
+        crmLeadId: booking.lead?.goyalCrmId || booking.lead?.titanCrmId,
         phone: booking.lead?.customerPhone || booking.customerPhone,
+        projectId: booking.unit.floor.tower.project.id,
+        projectName: booking.unit.floor.tower.project.name,
+        completedAt: new Date(),
       });
     } catch (e) {
       console.error("[syncBookingToIntegrations] EOI_CP booking notify failed", e);
@@ -307,6 +351,7 @@ export async function assignLeadToSales(
       siteVisitStatus: "CHECKED_IN",
       ...(visiting?.visitingPartnerCpId ? { cpId: visiting.visitingPartnerCpId } : {}),
     },
+    include: { project: { select: { id: true, name: true } } },
   });
 
   await prisma.siteVisit.create({
@@ -332,7 +377,11 @@ export async function assignLeadToSales(
         event: "site_visit.completed",
         leadId: lead.leadId,
         eoiCpLeadId: lead.eoiCpLeadId,
+        crmLeadId: lead.goyalCrmId || lead.titanCrmId,
         phone: lead.customerPhone,
+        projectId: lead.project?.id,
+        projectName: lead.project?.name,
+        completedAt: new Date(),
       });
     } catch (e) {
       console.error("[assignLeadToSales] EOI_CP site visit notify failed", e);
@@ -536,4 +585,300 @@ export async function getLeadBookingStatus(leadId: string) {
       : null,
     timeline: timeline.sort((a, b) => a.at.localeCompare(b.at)),
   };
+}
+
+/** Materialize a Goyal Hariyana CRM EOI lead into LeadRegistry (no check-in yet). */
+export async function upsertLeadFromGoyalCrm(input: {
+  organizationId: string;
+  registeredById?: string;
+  goyalCrmId: string;
+  goyalLeadCode?: string | null;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string | null;
+  projectName?: string | null;
+}) {
+  const phone = input.customerPhone.replace(/\D/g, "").slice(-10) || input.customerPhone;
+  const publicLeadId =
+    input.goyalLeadCode?.trim() ||
+    `GOYAL-${input.goyalCrmId.slice(0, 8)}-${phone.slice(-4)}`;
+
+  const existing = await prisma.leadRegistry.findFirst({
+    where: {
+      organizationId: input.organizationId,
+      OR: [{ goyalCrmId: input.goyalCrmId }, { leadId: publicLeadId }],
+    },
+  });
+
+  const data = {
+    customerName: input.customerName,
+    customerPhone: phone,
+    customerEmail: input.customerEmail ?? undefined,
+    goyalCrmId: input.goyalCrmId,
+    goyalLeadCode: input.goyalLeadCode ?? undefined,
+    source: LeadSource.PRESALES,
+    intentType: input.projectName ? `eoi:${input.projectName}` : "eoi",
+    registeredById: input.registeredById,
+  };
+
+  if (existing) {
+    return prisma.leadRegistry.update({
+      where: { id: existing.id },
+      data,
+    });
+  }
+
+  try {
+    return await prisma.leadRegistry.create({
+      data: {
+        leadId: publicLeadId,
+        organizationId: input.organizationId,
+        ...data,
+      },
+    });
+  } catch {
+    const again = await prisma.leadRegistry.findFirst({
+      where: {
+        organizationId: input.organizationId,
+        OR: [{ goyalCrmId: input.goyalCrmId }, { leadId: publicLeadId }],
+      },
+    });
+    if (!again) throw new Error("Failed to upsert Goyal CRM lead");
+    return prisma.leadRegistry.update({ where: { id: again.id }, data });
+  }
+}
+
+/**
+ * Reception: assign a Goyal CRM lead to a sales user without marking site visit done.
+ * Sales later marks site visit / booked from Direct Booking.
+ */
+export async function assignGoyalLeadToSales(input: {
+  organizationId: string;
+  registeredById?: string;
+  salesUserId: string;
+  goyalCrmId: string;
+  goyalLeadCode?: string | null;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string | null;
+  projectName?: string | null;
+  notes?: string;
+}) {
+  const lead = await upsertLeadFromGoyalCrm(input);
+  return prisma.leadRegistry.update({
+    where: { id: lead.id },
+    data: {
+      assignedSalesId: input.salesUserId,
+      siteVisitStatus: "SCHEDULED",
+    },
+    include: {
+      assignedSales: { select: { id: true, name: true, email: true } },
+    },
+  });
+}
+
+export async function listAssignedDirectLeads(salesUserId: string, organizationId: string) {
+  return prisma.leadRegistry.findMany({
+    where: {
+      organizationId,
+      assignedSalesId: salesUserId,
+      goyalCrmId: { not: null },
+    },
+    include: {
+      assignedSales: { select: { id: true, name: true } },
+      siteVisits: { orderBy: { checkedInAt: "desc" }, take: 3 },
+      bookings: {
+        select: { id: true, status: true, bookedAt: true },
+        orderBy: { bookedAt: "desc" },
+        take: 1,
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 100,
+  });
+}
+
+/** Sales Direct Booking: mark site visit done locally + push Goyal CRM. */
+export async function markDirectLeadSiteVisitDone(input: {
+  leadRegistryId: string;
+  salesUserId: string;
+  notes?: string;
+}) {
+  const lead = await prisma.leadRegistry.findUnique({ where: { id: input.leadRegistryId } });
+  if (!lead) throw new Error("Lead not found");
+  if (lead.assignedSalesId !== input.salesUserId) throw new Error("Lead is not assigned to you");
+  if (!lead.goyalCrmId) throw new Error("Lead has no Goyal CRM id");
+
+  const updated = await prisma.leadRegistry.update({
+    where: { id: lead.id },
+    data: { siteVisitStatus: "COMPLETED" },
+  });
+
+  await prisma.siteVisit.create({
+    data: {
+      leadId: lead.id,
+      salesUserId: input.salesUserId,
+      status: "COMPLETED",
+      notes: input.notes,
+    },
+  });
+
+  let crmSynced = false;
+  let crmError: string | undefined;
+  let crmLead: unknown;
+  try {
+    const { markGoyalSiteVisit, getGoyalCrmCapabilities } = await import("@booking/integrations");
+    const caps = getGoyalCrmCapabilities();
+    if (!caps.staffApi) {
+      crmError = "GOYAL_CRM_API_TOKEN required to push site visit to CRM";
+    } else {
+      crmLead = await markGoyalSiteVisit(lead.goyalCrmId, {
+        siteVisit: true,
+        siteVisitDone: true,
+        notes: input.notes,
+      });
+      crmSynced = true;
+    }
+  } catch (e) {
+    crmError = e instanceof Error ? e.message : "CRM site visit sync failed";
+  }
+
+  // Always push portal status when local site visit is marked done.
+  // Prefer CRM sync success, but still notify with local identifiers.
+  try {
+    const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+    const projectHint =
+      typeof lead.intentType === "string" && lead.intentType.startsWith("eoi:")
+        ? lead.intentType.slice(4)
+        : undefined;
+    await notifyEoiPartnerPortal({
+      event: "site_visit.completed",
+      leadId: lead.leadId,
+      eoiCpLeadId: lead.eoiCpLeadId,
+      crmLeadId: lead.goyalCrmId || lead.titanCrmId,
+      phone: lead.customerPhone,
+      projectName: projectHint,
+      completedAt: new Date(),
+    });
+  } catch (e) {
+    console.error("[markDirectLeadSiteVisitDone] EOI_CP notify failed", e);
+  }
+
+  return { lead: updated, crmSynced, crmError, crmLead };
+}
+
+/** Sales Direct Booking: mark booked in Goyal CRM (no inventory booking form). */
+export async function markDirectLeadBooked(input: {
+  leadRegistryId: string;
+  salesUserId: string;
+  bookedDate?: string;
+  dateOfBirth?: string;
+  maritalStatus?: string;
+  nationality?: string;
+  communicationAddress?: string;
+  permanentAddress?: string;
+  occupation?: string;
+  organizationName?: string;
+  designation?: string;
+  sourceOfFund?: string;
+  sourceOfEnquiry?: string;
+}) {
+  const lead = await prisma.leadRegistry.findUnique({ where: { id: input.leadRegistryId } });
+  if (!lead) throw new Error("Lead not found");
+  if (lead.assignedSalesId !== input.salesUserId) throw new Error("Lead is not assigned to you");
+  if (!lead.goyalCrmId) throw new Error("Lead has no Goyal CRM id");
+
+  let crmSynced = false;
+  let crmError: string | undefined;
+  let crmLead: unknown;
+
+  try {
+    const { bookGoyalLead, getGoyalLead, getGoyalCrmCapabilities } = await import(
+      "@booking/integrations"
+    );
+    const caps = getGoyalCrmCapabilities();
+    if (!caps.staffApi) {
+      crmError = "GOYAL_CRM_API_TOKEN required to push booking to CRM";
+    } else {
+      let existing: Record<string, unknown> = {};
+      try {
+        existing = (await getGoyalLead(lead.goyalCrmId)) as unknown as Record<string, unknown>;
+      } catch {
+        /* use provided KYC only */
+      }
+
+      const pick = (key: string, fallback?: string) => {
+        const fromInput = (input as Record<string, unknown>)[key];
+        if (typeof fromInput === "string" && fromInput.trim()) return fromInput.trim();
+        const fromCrm = existing[key];
+        if (typeof fromCrm === "string" && fromCrm.trim()) return fromCrm.trim();
+        return fallback ?? "";
+      };
+
+      const payload = {
+        booked: true as const,
+        bookedDate: input.bookedDate ?? new Date().toISOString().slice(0, 10),
+        dateOfBirth: pick("dateOfBirth"),
+        maritalStatus: pick("maritalStatus"),
+        nationality: pick("nationality", "Indian"),
+        communicationAddress: pick("communicationAddress"),
+        permanentAddress: pick("permanentAddress"),
+        occupation: pick("occupation"),
+        organizationName: pick("organizationName"),
+        designation: pick("designation"),
+        sourceOfFund: pick("sourceOfFund"),
+        sourceOfEnquiry: pick("sourceOfEnquiry", "Direct Booking"),
+      };
+
+      const missing = Object.entries(payload)
+        .filter(([k, v]) => k !== "booked" && k !== "bookedDate" && !String(v).trim())
+        .map(([k]) => k);
+
+      if (missing.length) {
+        throw new Error(
+          `EOI book needs KYC fields: ${missing.join(", ")}. Fill them in Direct Booking and retry.`
+        );
+      }
+
+      crmLead = await bookGoyalLead(lead.goyalCrmId, payload);
+      crmSynced = true;
+    }
+  } catch (e) {
+    crmError = e instanceof Error ? e.message : "CRM book sync failed";
+  }
+
+  // Local note via siteVisitStatus — no inventory unit booking created
+  const updated = await prisma.leadRegistry.update({
+    where: { id: lead.id },
+    data: {
+      intentType: crmSynced
+        ? `${lead.intentType ?? "eoi"}|booked`
+        : lead.intentType,
+      siteVisitStatus:
+        lead.siteVisitStatus === "NOT_SCHEDULED" ? "COMPLETED" : lead.siteVisitStatus,
+    },
+  });
+
+  if (crmSynced) {
+    try {
+      const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+      const projectHint =
+        typeof lead.intentType === "string" && lead.intentType.startsWith("eoi:")
+          ? lead.intentType.slice(4).replace(/\|booked$/, "")
+          : undefined;
+      await notifyEoiPartnerPortal({
+        event: "booking.confirmed",
+        leadId: lead.leadId,
+        eoiCpLeadId: lead.eoiCpLeadId,
+        crmLeadId: lead.goyalCrmId || lead.titanCrmId,
+        phone: lead.customerPhone,
+        projectName: projectHint,
+        completedAt: new Date(),
+      });
+    } catch (e) {
+      console.error("[markDirectLeadBooked] EOI_CP notify failed", e);
+    }
+  }
+
+  return { lead: updated, crmSynced, crmError, crmLead };
 }

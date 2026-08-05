@@ -177,6 +177,10 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [bookOpen, setBookOpen] = useState(false);
   const [bookForm, setBookForm] = useState(emptyBook);
   const [bookBusy, setBookBusy] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignLead, setAssignLead] = useState<EoiLead | null>(null);
+  const [eoiAssignSalesId, setEoiAssignSalesId] = useState("");
+  const [assignBusy, setAssignBusy] = useState(false);
 
   const canUseStaffEoi = eoiCaps?.staffApi === true;
   const canListEoi =
@@ -518,6 +522,46 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     setBookOpen(true);
   };
 
+  const openAssignEoi = (lead: EoiLead) => {
+    setAssignLead(lead);
+    setEoiAssignSalesId("");
+    setAssignOpen(true);
+  };
+
+  const submitAssignEoi = async () => {
+    if (!assignLead || !eoiAssignSalesId) {
+      toast.error("Select a salesperson");
+      return;
+    }
+    setAssignBusy(true);
+    try {
+      const res = await fetch(`/api/eoi/leads/${assignLead.id}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          salesUserId: eoiAssignSalesId,
+          fullName: assignLead.fullName,
+          phone: assignLead.phone,
+          email: assignLead.email || undefined,
+          projectName: assignLead.projectName || undefined,
+          leadCode: assignLead.leadCode,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        toast.error(typeof d.error === "string" ? d.error : "Assign failed");
+        return;
+      }
+      toast.success(
+        `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — appears in their Direct Booking`
+      );
+      setAssignOpen(false);
+      setAssignLead(null);
+    } finally {
+      setAssignBusy(false);
+    }
+  };
+
   const submitBook = async () => {
     if (!selected) return;
     setBookBusy(true);
@@ -714,13 +758,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                           <Button variant="outline" size="sm" onClick={() => void openDetail(l)}>
                             View
                           </Button>
+                          <Button variant="outline" size="sm" onClick={() => openAssignEoi(l)}>
+                            Assign
+                          </Button>
                           {!l.booked && canBookLead(l) && (
                             <Button size="sm" onClick={() => openBook(l)}>
                               Book
                             </Button>
-                          )}
-                          {!l.booked && !canBookLead(l) && canBookWithStaff === false && (
-                            <span className="self-center text-xs text-gray-400">Book needs staff token</span>
                           )}
                         </div>
                       </td>
@@ -1214,9 +1258,19 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 Book with KYC
               </Button>
             )}
+            <Button
+              className="w-full"
+              variant="outline"
+              onClick={() => {
+                setDetailOpen(false);
+                openAssignEoi(selected);
+              }}
+            >
+              Assign to salesperson
+            </Button>
             {!selected.booked && !canBookLead(selected) && (
               <p className="text-xs text-amber-800">
-                Booking needs GOYAL_CRM_API_TOKEN (staff JWT). List/create already work with EOI_API_KEY.
+                CRM book needs GOYAL_CRM_API_TOKEN. You can still assign to sales for Direct Booking.
               </p>
             )}
           </div>
@@ -1275,6 +1329,44 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
           <Button disabled={bookBusy} onClick={() => void submitBook()}>
             {bookBusy ? "Booking…" : "Confirm book"}
           </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={assignOpen}
+        onOpenChange={setAssignOpen}
+        title="Assign to salesperson"
+        description="Lead appears in that salesperson's Direct Booking — they can mark site visit or booked in CRM."
+        className="sm:max-w-md"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            {assignLead?.fullName} · {assignLead?.phone}
+            {assignLead?.leadCode ? ` · ${assignLead.leadCode}` : ""}
+          </p>
+          <div>
+            <Label>Salesperson</Label>
+            <select
+              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              value={eoiAssignSalesId}
+              onChange={(e) => setEoiAssignSalesId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {sales.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setAssignOpen(false)}>
+              Cancel
+            </Button>
+            <Button disabled={assignBusy || !eoiAssignSalesId} onClick={() => void submitAssignEoi()}>
+              {assignBusy ? "Assigning…" : "Assign"}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

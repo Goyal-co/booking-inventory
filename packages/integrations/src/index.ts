@@ -4,7 +4,15 @@ import { httpTitanCRM } from "./titan/http";
 import { mockPostCRM } from "./post-crm/mock";
 
 export * from "./types";
-export * from "./goyal-crm/types";
+export type {
+  GoyalCrmLead,
+  GoyalCrmLeadListParams,
+  GoyalCrmLeadListResult,
+  CreateEoiLeadInput,
+  BookEoiLeadInput,
+  UpdateGoyalLeadInput,
+  MarkSiteVisitInput,
+} from "./goyal-crm/types";
 export {
   GoyalCrmError,
   getGoyalCrmCapabilities,
@@ -20,6 +28,8 @@ export {
   enrichLeadIdFromEoiList,
   enrichLeadIdFromStaffList,
   bookGoyalLead,
+  updateGoyalLead,
+  markGoyalSiteVisit,
   listMyGoyalLeads,
 } from "./goyal-crm/client";
 

@@ -35,9 +35,14 @@ export async function notifyEoiPartnerPortal(input: {
   event: EoiPortalEvent;
   /** Public EOI lead id (EOI-… / LEAD-…) — preferred */
   leadId?: string | null;
-  /** EOI Partner Portal Lead.id (uuid) */
+  /** EOI Partner Portal Lead.id (cuid) */
   eoiCpLeadId?: string | null;
+  /** Goyal / Titan CRM lead id */
+  crmLeadId?: string | null;
   phone?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
+  completedAt?: string | Date | null;
 }): Promise<{ ok: boolean; skipped?: boolean; status?: number; body?: unknown }> {
   const base = eoiBaseUrl();
   const secret = webhookSecret();
@@ -48,11 +53,17 @@ export async function notifyEoiPartnerPortal(input: {
 
   const leadId = input.leadId?.trim() || undefined;
   const eoiCpLeadId = input.eoiCpLeadId?.trim() || undefined;
+  const crmLeadId = input.crmLeadId?.trim() || undefined;
   const phone = normalizePhone(input.phone);
-  if (!leadId && !eoiCpLeadId && !phone) {
-    console.warn("[EOI_CP notify] skipped — need leadId, eoiCpLeadId, or phone");
+  if (!leadId && !eoiCpLeadId && !crmLeadId && !phone) {
+    console.warn("[EOI_CP notify] skipped — need leadId, eoiCpLeadId, crmLeadId, or phone");
     return { ok: false, skipped: true };
   }
+
+  const completedAt =
+    input.completedAt instanceof Date
+      ? input.completedAt.toISOString()
+      : input.completedAt?.trim() || new Date().toISOString();
 
   try {
     const res = await fetch(`${base}/api/webhooks/reception`, {
@@ -69,9 +80,14 @@ export async function notifyEoiPartnerPortal(input: {
         publicLeadId: leadId,
         eoiCpLeadId,
         internalLeadId: eoiCpLeadId,
+        crmLeadId,
+        titanCrmId: crmLeadId,
         phone,
         mobile: phone,
         customerMobile: phone,
+        projectId: input.projectId?.trim() || undefined,
+        projectName: input.projectName?.trim() || undefined,
+        completedAt,
       }),
     });
     const body = await res.json().catch(() => null);

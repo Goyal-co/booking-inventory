@@ -7,6 +7,8 @@ import {
   registerWalkInLead,
   assignLeadToSales,
   upsertLeadFromTitanSearch,
+  assignGoyalLeadToSales,
+  notifyEoiPartnerPortal,
 } from "@booking/database";
 import { walkInLeadSchema, leadAssignSchema } from "@booking/validators";
 import {
@@ -451,6 +453,36 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
 
   try {
     const lead = await bookGoyalLead(bookId, parsed.data);
+
+    // Keep Partner Portal / customer status in sync when booking is done in CRM.
+    try {
+      const registry = await prisma.leadRegistry.findFirst({
+        where: {
+          organizationId: user.organizationId,
+          OR: [
+            { goyalCrmId: lead.id || bookId },
+            ...(lead.leadCode ? [{ goyalLeadCode: lead.leadCode }] : []),
+            ...(lead.phone
+              ? [{ customerPhone: { contains: lead.phone.replace(/\D/g, "").slice(-10) } }]
+              : []),
+          ],
+        },
+        include: { project: { select: { id: true, name: true } } },
+      });
+      await notifyEoiPartnerPortal({
+        event: "booking.confirmed",
+        leadId: registry?.leadId || lead.leadCode,
+        eoiCpLeadId: registry?.eoiCpLeadId,
+        crmLeadId: lead.id || bookId,
+        phone: registry?.customerPhone || lead.phone,
+        projectId: registry?.project?.id,
+        projectName: registry?.project?.name || lead.projectName,
+        completedAt: new Date(),
+      });
+    } catch (notifyErr) {
+      console.error("[POST_eoiBook] EOI_CP notify failed", notifyErr);
+    }
+
     return NextResponse.json({ lead });
   } catch (err) {
     const hint = staffTokenHint(err);
@@ -461,5 +493,86 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
       );
     }
     return crmErrorResponse(err);
+  }
+}
+
+const assignEoiLeadSchema = z.object({
+  salesUserId: z.string().min(1),
+  fullName: z.string().min(1).optional(),
+  phone: z.string().min(5).optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  projectName: z.string().optional(),
+  leadCode: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+/** Reception EOI desk → materialize CRM lead + assign to local sales (Direct Booking). */
+export async function POST_eoiAssign(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json();
+  const parsed = assignEoiLeadSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  let crmLead: Awaited<ReturnType<typeof getGoyalLead>> | null = null;
+  try {
+    crmLead = await getGoyalLead(id);
+  } catch {
+    try {
+      const listed = await listGoyalLeads({ search: id, source: "eoi", limit: 10, page: 1 });
+      crmLead =
+        listed.leads.find((l) => l.id === id) ||
+        listed.leads.find((l) => l.leadCode === id) ||
+        null;
+    } catch {
+      crmLead = null;
+    }
+  }
+
+  const fullName =
+    parsed.data.fullName || crmLead?.fullName || "EOI Lead";
+  const phone = parsed.data.phone || crmLead?.phone;
+  if (!phone) {
+    return NextResponse.json({ error: "Phone is required to assign this lead" }, { status: 400 });
+  }
+
+  const sales = await prisma.user.findFirst({
+    where: {
+      id: parsed.data.salesUserId,
+      organizationId: user.organizationId,
+      role: { in: ["SALES_EXEC", "SALES_MANAGER"] },
+      isActive: true,
+    },
+  });
+  if (!sales) {
+    return NextResponse.json({ error: "Salesperson not found" }, { status: 404 });
+  }
+
+  try {
+    const lead = await assignGoyalLeadToSales({
+      organizationId: user.organizationId,
+      registeredById: user.id,
+      salesUserId: sales.id,
+      goyalCrmId: crmLead?.id || id,
+      goyalLeadCode: parsed.data.leadCode || crmLead?.leadCode,
+      customerName: fullName,
+      customerPhone: phone,
+      customerEmail: parsed.data.email || crmLead?.email || null,
+      projectName: parsed.data.projectName || crmLead?.projectName || null,
+      notes: parsed.data.notes,
+    });
+    return NextResponse.json({ lead });
+  } catch (e) {
+    console.error("[POST_eoiAssign]", e);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Assign failed" },
+      { status: 500 }
+    );
   }
 }

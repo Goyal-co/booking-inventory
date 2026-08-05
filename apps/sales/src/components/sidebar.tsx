@@ -10,6 +10,7 @@ import {
   Settings,
   LogOut,
   FolderKanban,
+  Handshake,
 } from "lucide-react";
 import { cn, MobileNavSheet, GhcLogo, type MobileNavItem } from "@booking/ui";
 import { signOut } from "next-auth/react";
@@ -17,6 +18,7 @@ import { signOut } from "next-auth/react";
 export const salesNavItems = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/live", label: "Live Booking", icon: Zap },
+  { href: "/app/direct-booking", label: "Direct Booking", icon: Handshake },
   { href: "/app/blocked", label: "My Blocked Units", icon: Lock },
   { href: "/app/bookings", label: "Bookings Done", icon: CheckCircle },
   { href: "/app/projects", label: "My Projects", icon: FolderKanban },
@@ -50,7 +52,7 @@ export function Sidebar({
   return (
     <aside className={cn("flex h-full w-64 flex-col border-r border-gray-200 bg-white", className)}>
       <div className="border-b border-gray-200 p-4">
-        <GhcLogo size={36} className="max-w-full" />
+        <GhcLogo size={48} className="max-w-full" />
         <p className="mt-2 text-xs font-medium text-brand-600">Sales Portal</p>
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
