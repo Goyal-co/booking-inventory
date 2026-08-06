@@ -9,6 +9,7 @@ import {
   upsertLeadFromTitanSearch,
   assignGoyalLeadToSales,
   notifyEoiPartnerPortal,
+  mapLeadForBookingSearch,
 } from "@booking/database";
 import { walkInLeadSchema, leadAssignSchema } from "@booking/validators";
 import {
@@ -93,22 +94,54 @@ export async function GET_leadsSearch(req: NextRequest) {
     }
   }
 
-  // Also search Goyal Hariyana CRM EOI leads (Lead ID / phone / name).
-  // Walk-in desk previously only hit local DB + Titan, so CRM EOI leads never appeared.
+  // Also search Goyal Hariyana CRM EOI leads (Lead ID / phone / email / name).
   let goyalEoiLeads: Array<Record<string, unknown>> = [];
   let goyalEoiError: string | undefined;
   if (q.trim() && getGoyalCrmCapabilities().webhookList) {
     try {
-      const digits = q.replace(/\D/g, "");
+      const trimmed = q.trim();
+      const digits = trimmed.replace(/\D/g, "");
       const phone = digits.length >= 10 ? digits.slice(-10) : undefined;
-      const isPhoneOnly = Boolean(phone && !/[A-Za-z]/.test(q.trim()));
-      const listed = await listGoyalLeads({
-        source: "eoi",
-        page: 1,
-        limit: 20,
-        ...(isPhoneOnly ? { phone } : { search: q.trim(), ...(phone ? { phone } : {}) }),
-      });
-      goyalEoiLeads = listed.leads as unknown as Array<Record<string, unknown>>;
+      const isEmail = trimmed.includes("@");
+      const isPhoneOnly = Boolean(phone && !/[A-Za-z@]/.test(trimmed));
+
+      const attempts: Array<Parameters<typeof listGoyalLeads>[0]> = [];
+      if (isEmail) {
+        attempts.push({ source: "eoi", page: 1, limit: 20, email: trimmed });
+        attempts.push({ source: "eoi", page: 1, limit: 20, search: trimmed });
+      } else if (isPhoneOnly && phone) {
+        attempts.push({ source: "eoi", page: 1, limit: 20, phone });
+        attempts.push({ source: "eoi", page: 1, limit: 20, search: phone });
+      } else {
+        attempts.push({
+          source: "eoi",
+          page: 1,
+          limit: 20,
+          search: trimmed,
+          ...(phone ? { phone } : {}),
+        });
+      }
+
+      const seen = new Set<string>();
+      for (const params of attempts) {
+        try {
+          const listed = await listGoyalLeads(params);
+          for (const lead of listed.leads) {
+            const key = String(lead.id || lead.leadCode || "");
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            goyalEoiLeads.push(lead as unknown as Record<string, unknown>);
+          }
+          if (goyalEoiLeads.length > 0) break;
+        } catch (err) {
+          goyalEoiError =
+            err instanceof GoyalCrmError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : "Goyal CRM search failed";
+        }
+      }
     } catch (err) {
       goyalEoiError =
         err instanceof GoyalCrmError
@@ -135,8 +168,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     | "empty_query" = "empty_query";
 
   if (!q.trim()) scenario = "empty_query";
-  // Prefer live Goyal CRM EOI hits over Titan mock / empty local — this is what reception
-  // searches for when visitors quote an EOI lead code or website phone.
+  // Prefer live Goyal CRM EOI hits when local registry has nothing yet.
   else if (leads.length === 0 && goyalEoiLeads.length > 0) scenario = "found_goyal_eoi";
   else if (leads.length === 0 && titanNeedsPartner) scenario = "titan_needs_partner";
   else if (leads.length === 0 && titanPartners.length > 1) scenario = "found_multi_partner";
@@ -147,6 +179,14 @@ export async function GET_leadsSearch(req: NextRequest) {
   } else if (leads.length === 0) scenario = "not_found";
   else if (partnerIds.size > 1 || channelPartnerLeads.length > 1) scenario = "found_multi_partner";
   else scenario = "found_single";
+
+  // If local found nothing useful but CRM returned rows, force CRM scenario so UI always renders.
+  if (
+    (scenario === "not_found" || scenario === "titan_needs_partner") &&
+    goyalEoiLeads.length > 0
+  ) {
+    scenario = "found_goyal_eoi";
+  }
 
   type PartnerOpt = {
     leadId: string | null;
@@ -192,7 +232,7 @@ export async function GET_leadsSearch(req: NextRequest) {
   }
 
   return NextResponse.json({
-    leads,
+    leads: leads.map(mapLeadForBookingSearch),
     titanResult,
     scenario,
     partnerOptions: Array.from(partnerByCp.values()).sort((a, b) =>

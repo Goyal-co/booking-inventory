@@ -17,12 +17,25 @@ interface LocalLead {
   leadId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string | null;
   source: string;
   cpId?: string | null;
   titanCrmId?: string | null;
   createdAt?: string;
   project?: { name: string } | null;
   assignedSales?: { id: string; name: string } | null;
+  visitingCp?: {
+    partnerName: string;
+    cpId?: string;
+    fromToday?: boolean;
+    checkedInAt?: string | null;
+    salesUserName?: string | null;
+  } | null;
+  todaySiteVisit?: {
+    checkedInAt: string;
+    salesUser?: { name: string } | null;
+  } | null;
+  siteVisitStatus?: string;
 }
 
 interface PartnerOption {
@@ -117,7 +130,7 @@ function formatTime(iso: string) {
 const TAB_META: Record<ReceptionDeskTab, { title: string; description: string }> = {
   walkin: {
     title: "Walk-in Desk",
-    description: "Search by Lead ID or phone, confirm partner, and assign a salesperson.",
+    description: "Search by Lead ID, phone, or email — confirm CP, then assign a salesperson.",
   },
   eoi: {
     title: "EOI Leads",
@@ -244,13 +257,17 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     const phoneTrim = eoiPhone.trim();
     const searchDigits = searchTrim.replace(/\D/g, "");
     const searchIsPhoneOnly =
-      searchDigits.length >= 10 && !/[A-Za-z]/.test(searchTrim);
-    // Phone-only queries: send phone= (CRM filter). Lead code / name: send search=.
+      searchDigits.length >= 10 && !/[A-Za-z@]/.test(searchTrim);
+    const searchIsEmail = searchTrim.includes("@");
     if (phoneTrim) {
       params.set("phone", phoneTrim);
-      if (searchTrim && !searchIsPhoneOnly) params.set("search", searchTrim);
+      if (searchTrim && !searchIsPhoneOnly && !searchIsEmail) params.set("search", searchTrim);
+      if (searchIsEmail) params.set("email", searchTrim);
     } else if (searchIsPhoneOnly) {
       params.set("phone", searchDigits.slice(-10));
+    } else if (searchIsEmail) {
+      params.set("email", searchTrim);
+      params.set("search", searchTrim);
     } else if (searchTrim) {
       params.set("search", searchTrim);
     }
@@ -628,7 +645,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               <div className="min-w-[180px] flex-1">
                 <Label>Search</Label>
                 <Input
-                  placeholder="Name, lead code…"
+                  placeholder="Name, lead code, email…"
                   value={eoiSearch}
                   onChange={(e) => setEoiSearch(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void loadEoi(1)}
@@ -824,14 +841,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         {tab === "walkin" && (
           <div className="space-y-6">
             <div className="rounded-xl border bg-white p-5">
-              <h2 className="mb-1 font-semibold">Ask for Lead ID or phone</h2>
+              <h2 className="mb-1 font-semibold">Ask for Lead ID, phone, or email</h2>
               <p className="mb-3 text-sm text-gray-500">
-                Confirms partner portal / Titan leads, or registers a direct walk-in.
+                Confirms partner portal / Titan / Goyal CRM leads, or registers a direct walk-in.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Input
                   className="min-w-[220px] flex-1"
-                  placeholder="Lead ID or phone number"
+                  placeholder="Lead ID, mobile, or email"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void searchLocal()}
@@ -926,14 +943,34 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                         {l.customerName} — {l.leadId}
                       </p>
                       <p className="text-gray-500">
-                        {l.customerPhone} · {l.source}
-                        {l.cpId ? ` · Partner ${l.cpId}` : " · No partner on file"}
+                        {l.customerPhone}
+                        {l.customerEmail ? ` · ${l.customerEmail}` : ""}
+                        {" · "}
+                        {l.source}
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-gray-800">
+                        CP:{" "}
+                        {l.visitingCp
+                          ? `${l.visitingCp.partnerName}${
+                              l.visitingCp.cpId ? ` (${l.visitingCp.cpId})` : ""
+                            }${l.visitingCp.fromToday ? " · today" : ""}`
+                          : l.cpId
+                            ? l.cpId
+                            : "No partner on file"}
                       </p>
                       {l.project?.name ? (
                         <p className="text-xs text-gray-500">Project: {l.project.name}</p>
                       ) : null}
                       {l.assignedSales?.name ? (
                         <p className="text-xs text-gray-500">Last assigned: {l.assignedSales.name}</p>
+                      ) : null}
+                      {l.todaySiteVisit ? (
+                        <p className="text-xs text-gray-500">
+                          Checked in {new Date(l.todaySiteVisit.checkedInAt).toLocaleString()}
+                          {l.todaySiteVisit.salesUser?.name
+                            ? ` · ${l.todaySiteVisit.salesUser.name}`
+                            : ""}
+                        </p>
                       ) : null}
                       <label className="mt-2 flex items-center gap-2 text-xs text-gray-600">
                         <input
@@ -987,39 +1024,60 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
             {searched && scenario === "found_goyal_eoi" && (
               <div className="rounded-xl border bg-white p-5">
-                <h3 className="font-semibold">Goyal CRM EOI lead(s) found</h3>
+                <h3 className="font-semibold">CRM lead(s) found</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  These came from CRM via EOI_API_KEY. Assign to a salesperson for Direct Booking.
+                  Customer details from Goyal CRM. Assign a salesperson — they will see it under
+                  Direct Booking.
                 </p>
                 {goyalEoiSearchError ? (
                   <p className="mt-2 text-sm text-amber-800">{goyalEoiSearchError}</p>
                 ) : null}
                 <ul className="mt-4 divide-y">
-                  {goyalEoiHits.map((l) => (
-                    <li
-                      key={String(l.id || l.leadCode)}
-                      className="flex flex-wrap items-center justify-between gap-3 py-3"
-                    >
-                      <div>
-                        <p className="font-medium">{l.fullName || "—"}</p>
-                        <p className="text-sm text-gray-500">
-                          {l.phone || "—"}
-                          {l.leadCode ? ` · ${l.leadCode}` : ""}
-                          {l.projectName ? ` · ${l.projectName}` : ""}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setAssignLead(l);
-                          setEoiAssignSalesId("");
-                          setAssignOpen(true);
-                        }}
+                  {goyalEoiHits.map((l) => {
+                    const cpHint =
+                      (typeof l.sourceOfEnquiry === "string" && l.sourceOfEnquiry) ||
+                      (typeof (l as EoiLead & { channelPartner?: string }).channelPartner ===
+                        "string" &&
+                        (l as EoiLead & { channelPartner?: string }).channelPartner) ||
+                      null;
+                    return (
+                      <li
+                        key={String(l.id || l.leadCode)}
+                        className="flex flex-wrap items-start justify-between gap-3 py-3"
                       >
-                        Assign to sales
-                      </Button>
-                    </li>
-                  ))}
+                        <div className="min-w-0 flex-1 space-y-1 text-sm">
+                          <p className="font-medium text-gray-900">{l.fullName || "—"}</p>
+                          <p className="text-gray-600">
+                            {l.phone || "—"}
+                            {l.email ? ` · ${l.email}` : ""}
+                          </p>
+                          <p className="text-gray-600">
+                            Lead: {l.leadCode || l.id}
+                            {l.projectName ? ` · ${l.projectName}` : ""}
+                            {l.city ? ` · ${l.city}` : ""}
+                          </p>
+                          <p className="font-medium text-gray-800">
+                            CP / source: {cpHint || "Not specified on CRM lead"}
+                          </p>
+                          {l.booked ? (
+                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">
+                              Already booked in CRM
+                            </span>
+                          ) : null}
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setAssignLead(l);
+                            setEoiAssignSalesId("");
+                            setAssignOpen(true);
+                          }}
+                        >
+                          Assign to sales
+                        </Button>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}

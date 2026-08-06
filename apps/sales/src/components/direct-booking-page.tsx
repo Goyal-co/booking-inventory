@@ -10,11 +10,23 @@ type DirectLead = {
   customerName: string;
   customerPhone: string;
   customerEmail?: string | null;
+  source?: string;
   goyalCrmId?: string | null;
   goyalLeadCode?: string | null;
   intentType?: string | null;
   siteVisitStatus: string;
-  updatedAt: string;
+  siteVisitDone?: boolean;
+  isBooked?: boolean;
+  updatedAt?: string;
+  project?: { id: string; name: string } | null;
+  visitingCp?: {
+    partnerName: string;
+    cpId?: string;
+    fromToday?: boolean;
+    checkedInAt?: string | null;
+    salesUserName?: string | null;
+  } | null;
+  cpId?: string | null;
 };
 
 const emptyKyc = {
@@ -59,6 +71,11 @@ export function DirectBookingPage() {
     void load();
   }, [load]);
 
+  const isBooked = (l: DirectLead) =>
+    Boolean(l.isBooked) || (l.intentType ?? "").includes("|booked");
+  const isVisitDone = (l: DirectLead) =>
+    Boolean(l.siteVisitDone) || l.siteVisitStatus === "COMPLETED" || isBooked(l);
+
   const markSiteVisit = async (lead: DirectLead) => {
     setBusyId(lead.id);
     try {
@@ -72,8 +89,8 @@ export function DirectBookingPage() {
         toast.error(typeof d.error === "string" ? d.error : "Update failed");
         return;
       }
-      if (d.crmSynced) toast.success("Site visit marked — CRM updated");
-      else toast.message("Saved locally", { description: d.crmError || "CRM not synced" });
+      if (d.crmSynced) toast.success("Site visit marked done");
+      else toast.success("Site visit marked done", { description: d.crmError || "Saved locally" });
       void load();
     } finally {
       setBusyId(null);
@@ -94,8 +111,11 @@ export function DirectBookingPage() {
         toast.error(typeof d.error === "string" ? d.error : d.crmError || "Book failed");
         return;
       }
-      if (d.crmSynced) toast.success("Lead marked booked in CRM");
-      else toast.success("Lead marked booked", { description: d.crmError || "Saved locally" });
+      toast.success("Marked booked (site visit + booking)", {
+        description: d.crmSynced
+          ? "CRM updated"
+          : d.crmError || "Saved locally — CRM optional",
+      });
       setBookLead(null);
       setKyc(emptyKyc);
       void load();
@@ -104,14 +124,12 @@ export function DirectBookingPage() {
     }
   };
 
-  const isBooked = (l: DirectLead) => (l.intentType ?? "").includes("|booked");
-
   return (
     <div className="p-4 md:p-6">
       <Toaster richColors />
       <PageHeader
         title="Direct Booking"
-        description="Leads assigned to you from reception (Goyal CRM). Mark site visit or booked without the inventory booking form."
+        description="Leads assigned to you from reception. Mark site visit done, or mark booked (counts as both site visit + booking)."
       />
 
       {!canPushCrm && (
@@ -131,42 +149,57 @@ export function DirectBookingPage() {
         <table className="w-full text-left text-sm">
           <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
             <tr>
-              <th className="px-4 py-3">Lead</th>
-              <th className="px-4 py-3">Phone</th>
-              <th className="px-4 py-3">CRM</th>
-              <th className="px-4 py-3">Visit</th>
+              <th className="px-4 py-3">Customer</th>
+              <th className="px-4 py-3">CP</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {leads.length === 0 && !loading && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-gray-500">
-                  No CRM leads assigned to you yet. Reception assigns them from EOI Leads.
+                <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
+                  No leads assigned to you yet. Reception assigns them from Walk-in / EOI desk.
                 </td>
               </tr>
             )}
             {leads.map((l) => (
-              <tr key={l.id} className="border-b last:border-0">
+              <tr key={l.id} className="border-b last:border-0 align-top">
                 <td className="px-4 py-3">
                   <p className="font-medium text-gray-900">{l.customerName}</p>
                   <p className="text-xs text-gray-500">{l.leadId}</p>
-                </td>
-                <td className="px-4 py-3">{l.customerPhone}</td>
-                <td className="px-4 py-3 text-xs text-gray-600">
-                  {l.goyalLeadCode || l.goyalCrmId?.slice(0, 8) || "—"}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs text-gray-600">{l.siteVisitStatus}</span>
-                  {isBooked(l) ? (
-                    <span className="ml-2 inline-flex rounded-full bg-success-50 px-2 py-0.5 text-xs text-success-600">
-                      Booked
-                    </span>
+                  <p className="text-xs text-gray-600">{l.customerPhone}</p>
+                  {l.customerEmail ? (
+                    <p className="text-xs text-gray-500">{l.customerEmail}</p>
+                  ) : null}
+                  {l.project?.name ? (
+                    <p className="text-xs text-gray-500">{l.project.name}</p>
                   ) : null}
                 </td>
+                <td className="px-4 py-3 text-sm text-gray-700">
+                  {l.visitingCp
+                    ? `${l.visitingCp.partnerName}${
+                        l.visitingCp.cpId ? ` (${l.visitingCp.cpId})` : ""
+                      }`
+                    : l.cpId || "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-600">
+                      Visit: {isVisitDone(l) ? "Done" : l.siteVisitStatus}
+                    </span>
+                    {isBooked(l) ? (
+                      <span className="inline-flex w-fit rounded-full bg-success-50 px-2 py-0.5 text-xs text-success-600">
+                        Booked
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500">Not booked</span>
+                    )}
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-right">
-                  <div className="flex justify-end gap-2">
-                    {l.siteVisitStatus !== "COMPLETED" && (
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {!isVisitDone(l) && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -198,56 +231,51 @@ export function DirectBookingPage() {
 
       <Modal
         open={Boolean(bookLead)}
-        onOpenChange={(open) => !open && setBookLead(null)}
-        title="Mark booked in CRM"
-        description="Pushes to Goyal CRM without the inventory booking form. KYC is required for EOI leads."
-        className="sm:max-w-xl"
+        onOpenChange={(open) => {
+          if (!open) {
+            setBookLead(null);
+            setKyc(emptyKyc);
+          }
+        }}
+        title="Mark as booked"
+        description="This marks both site visit done and booking done. KYC fields help push to CRM when available."
       >
-        <div className="grid max-h-[60vh] gap-3 overflow-y-auto sm:grid-cols-2">
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            {bookLead?.customerName} · {bookLead?.customerPhone}
+            {bookLead?.visitingCp ? ` · CP ${bookLead.visitingCp.partnerName}` : ""}
+          </p>
           {(
             [
-              ["bookedDate", "Booked date", "date"],
-              ["dateOfBirth", "Date of birth *", "date"],
-              ["maritalStatus", "Marital status *", "text"],
-              ["nationality", "Nationality *", "text"],
-              ["occupation", "Occupation *", "text"],
-              ["organizationName", "Organization *", "text"],
-              ["designation", "Designation *", "text"],
-              ["sourceOfFund", "Source of fund *", "text"],
-              ["sourceOfEnquiry", "Source of enquiry *", "text"],
+              ["bookedDate", "Booked date"],
+              ["dateOfBirth", "Date of birth"],
+              ["maritalStatus", "Marital status"],
+              ["nationality", "Nationality"],
+              ["communicationAddress", "Communication address"],
+              ["permanentAddress", "Permanent address"],
+              ["occupation", "Occupation"],
+              ["organizationName", "Organization"],
+              ["designation", "Designation"],
+              ["sourceOfFund", "Source of fund"],
+              ["sourceOfEnquiry", "Source of enquiry"],
             ] as const
-          ).map(([key, label, type]) => (
+          ).map(([key, label]) => (
             <div key={key}>
               <Label>{label}</Label>
               <Input
-                type={type}
                 value={kyc[key]}
-                onChange={(e) => setKyc({ ...kyc, [key]: e.target.value })}
+                onChange={(e) => setKyc((prev) => ({ ...prev, [key]: e.target.value }))}
               />
             </div>
           ))}
-          <div className="sm:col-span-2">
-            <Label>Communication address *</Label>
-            <Input
-              value={kyc.communicationAddress}
-              onChange={(e) => setKyc({ ...kyc, communicationAddress: e.target.value })}
-            />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setBookLead(null)}>
+              Cancel
+            </Button>
+            <Button disabled={busyId === bookLead?.id} onClick={() => void submitBook()}>
+              Confirm booked
+            </Button>
           </div>
-          <div className="sm:col-span-2">
-            <Label>Permanent address *</Label>
-            <Input
-              value={kyc.permanentAddress}
-              onChange={(e) => setKyc({ ...kyc, permanentAddress: e.target.value })}
-            />
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" onClick={() => setBookLead(null)}>
-            Cancel
-          </Button>
-          <Button disabled={busyId === bookLead?.id} onClick={() => void submitBook()}>
-            {busyId === bookLead?.id ? "Saving…" : "Push booked to CRM"}
-          </Button>
         </div>
       </Modal>
     </div>
