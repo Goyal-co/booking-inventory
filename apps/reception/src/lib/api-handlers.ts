@@ -101,12 +101,12 @@ export async function GET_leadsSearch(req: NextRequest) {
     try {
       const digits = q.replace(/\D/g, "");
       const phone = digits.length >= 10 ? digits.slice(-10) : undefined;
+      const isPhoneOnly = Boolean(phone && !/[A-Za-z]/.test(q.trim()));
       const listed = await listGoyalLeads({
         source: "eoi",
         page: 1,
         limit: 20,
-        search: q.trim(),
-        ...(phone ? { phone } : {}),
+        ...(isPhoneOnly ? { phone } : { search: q.trim(), ...(phone ? { phone } : {}) }),
       });
       goyalEoiLeads = listed.leads as unknown as Array<Record<string, unknown>>;
     } catch (err) {
@@ -135,14 +135,16 @@ export async function GET_leadsSearch(req: NextRequest) {
     | "empty_query" = "empty_query";
 
   if (!q.trim()) scenario = "empty_query";
+  // Prefer live Goyal CRM EOI hits over Titan mock / empty local — this is what reception
+  // searches for when visitors quote an EOI lead code or website phone.
+  else if (leads.length === 0 && goyalEoiLeads.length > 0) scenario = "found_goyal_eoi";
   else if (leads.length === 0 && titanNeedsPartner) scenario = "titan_needs_partner";
   else if (leads.length === 0 && titanPartners.length > 1) scenario = "found_multi_partner";
   else if (leads.length === 0 && titanResult?.found && titanPartners.length === 1) {
     scenario = "found_single";
   } else if (leads.length === 0 && titanResult?.found && titanPartners.length === 0) {
     scenario = "titan_needs_partner";
-  } else if (leads.length === 0 && goyalEoiLeads.length > 0) scenario = "found_goyal_eoi";
-  else if (leads.length === 0) scenario = "not_found";
+  } else if (leads.length === 0) scenario = "not_found";
   else if (partnerIds.size > 1 || channelPartnerLeads.length > 1) scenario = "found_multi_partner";
   else scenario = "found_single";
 

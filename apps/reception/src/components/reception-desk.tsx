@@ -243,12 +243,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     const searchTrim = eoiSearch.trim();
     const phoneTrim = eoiPhone.trim();
     const searchDigits = searchTrim.replace(/\D/g, "");
-    // If user types a phone into Search, also send phone= so CRM filter matches.
-    if (searchTrim) params.set("search", searchTrim);
+    const searchIsPhoneOnly =
+      searchDigits.length >= 10 && !/[A-Za-z]/.test(searchTrim);
+    // Phone-only queries: send phone= (CRM filter). Lead code / name: send search=.
     if (phoneTrim) {
       params.set("phone", phoneTrim);
-    } else if (searchDigits.length >= 10 && !/[A-Za-z]/.test(searchTrim)) {
+      if (searchTrim && !searchIsPhoneOnly) params.set("search", searchTrim);
+    } else if (searchIsPhoneOnly) {
       params.set("phone", searchDigits.slice(-10));
+    } else if (searchTrim) {
+      params.set("search", searchTrim);
     }
     if (eoiBookedFilter !== "all") params.set("booked", eoiBookedFilter);
 
