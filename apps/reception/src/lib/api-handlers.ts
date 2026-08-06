@@ -93,6 +93,32 @@ export async function GET_leadsSearch(req: NextRequest) {
     }
   }
 
+  // Also search Goyal Hariyana CRM EOI leads (Lead ID / phone / name).
+  // Walk-in desk previously only hit local DB + Titan, so CRM EOI leads never appeared.
+  let goyalEoiLeads: Array<Record<string, unknown>> = [];
+  let goyalEoiError: string | undefined;
+  if (q.trim() && getGoyalCrmCapabilities().webhookList) {
+    try {
+      const digits = q.replace(/\D/g, "");
+      const phone = digits.length >= 10 ? digits.slice(-10) : undefined;
+      const listed = await listGoyalLeads({
+        source: "eoi",
+        page: 1,
+        limit: 20,
+        search: q.trim(),
+        ...(phone ? { phone } : {}),
+      });
+      goyalEoiLeads = listed.leads as unknown as Array<Record<string, unknown>>;
+    } catch (err) {
+      goyalEoiError =
+        err instanceof GoyalCrmError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Goyal CRM search failed";
+    }
+  }
+
   const partnerIds = new Set(
     leads.map((l) => l.cpId).filter((id): id is string => Boolean(id && String(id).trim()))
   );
@@ -104,6 +130,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     | "found_single"
     | "found_multi_partner"
     | "titan_needs_partner"
+    | "found_goyal_eoi"
     | "not_found"
     | "empty_query" = "empty_query";
 
@@ -114,7 +141,8 @@ export async function GET_leadsSearch(req: NextRequest) {
     scenario = "found_single";
   } else if (leads.length === 0 && titanResult?.found && titanPartners.length === 0) {
     scenario = "titan_needs_partner";
-  } else if (leads.length === 0) scenario = "not_found";
+  } else if (leads.length === 0 && goyalEoiLeads.length > 0) scenario = "found_goyal_eoi";
+  else if (leads.length === 0) scenario = "not_found";
   else if (partnerIds.size > 1 || channelPartnerLeads.length > 1) scenario = "found_multi_partner";
   else scenario = "found_single";
 
@@ -168,6 +196,9 @@ export async function GET_leadsSearch(req: NextRequest) {
     partnerOptions: Array.from(partnerByCp.values()).sort((a, b) =>
       String(a.submittedAt).localeCompare(String(b.submittedAt))
     ),
+    goyalEoiLeads,
+    goyalEoiError,
+    capabilities: getGoyalCrmCapabilities(),
   });
 }
 
@@ -259,12 +290,21 @@ export async function GET_visitsToday() {
   return NextResponse.json({ visits });
 }
 
-function staffTokenHint(err: unknown) {
+function crmAuthHint(err: unknown, context: "list" | "staff" = "staff") {
   if (!(err instanceof GoyalCrmError)) return undefined;
-  if (err.status === 401 || err.status === 403 || err.message.includes("not configured")) {
-    return "Book / My leads need GOYAL_CRM_API_TOKEN (staff JWT). List and create work with EOI_API_KEY via GET /eoi/leads and webhook.";
+  const msg = err.message.toLowerCase();
+  const authFail =
+    err.status === 401 ||
+    err.status === 403 ||
+    msg.includes("not configured") ||
+    msg.includes("invalid or revoked");
+
+  if (!authFail) return undefined;
+
+  if (context === "list") {
+    return "EOI list/create auth failed. Set a valid EOI_API_KEY on the Reception service (do not put the webhook key in GOYAL_CRM_API_TOKEN). Book / My leads still need a separate staff JWT.";
   }
-  return undefined;
+  return "Book / My leads need GOYAL_CRM_API_TOKEN (staff JWT). List and create work with EOI_API_KEY via GET /eoi/leads and webhook.";
 }
 
 export async function GET_eoiCapabilities() {
@@ -312,7 +352,7 @@ export async function GET_eoiLeads(req: NextRequest) {
       : await listGoyalLeads(listParams);
     return NextResponse.json({ ...result, capabilities: getGoyalCrmCapabilities() });
   } catch (err) {
-    const hint = staffTokenHint(err);
+    const hint = crmAuthHint(err, "list");
     if (err instanceof GoyalCrmError) {
       return NextResponse.json(
         {
@@ -362,7 +402,7 @@ export async function GET_eoiLead(_req: NextRequest, { params }: { params: Promi
     const lead = await getGoyalLead(id);
     return NextResponse.json({ lead });
   } catch (err) {
-    const hint = staffTokenHint(err);
+    const hint = crmAuthHint(err, "staff");
     if (err instanceof GoyalCrmError) {
       return NextResponse.json(
         { error: err.message, details: err.body, hint },
@@ -398,7 +438,7 @@ export async function GET_eoiMyLeads(req: NextRequest) {
     });
     return NextResponse.json({ ...result, capabilities: getGoyalCrmCapabilities() });
   } catch (err) {
-    const hint = staffTokenHint(err);
+    const hint = crmAuthHint(err, "staff");
     if (err instanceof GoyalCrmError) {
       return NextResponse.json(
         {
@@ -485,7 +525,7 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
 
     return NextResponse.json({ lead });
   } catch (err) {
-    const hint = staffTokenHint(err);
+    const hint = crmAuthHint(err, "staff");
     if (err instanceof GoyalCrmError) {
       return NextResponse.json(
         { error: err.message, details: err.body, hint },

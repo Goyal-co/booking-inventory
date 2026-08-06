@@ -39,6 +39,7 @@ type SearchScenario =
   | "found_single"
   | "found_multi_partner"
   | "titan_needs_partner"
+  | "found_goyal_eoi"
   | "not_found"
   | "empty_query";
 
@@ -145,6 +146,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     phone?: string;
     [key: string]: unknown;
   } | null>(null);
+  const [goyalEoiHits, setGoyalEoiHits] = useState<EoiLead[]>([]);
+  const [goyalEoiSearchError, setGoyalEoiSearchError] = useState("");
   const [sales, setSales] = useState<Array<{ id: string; name: string }>>([]);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [walkIn, setWalkIn] = useState({ customerName: "", customerPhone: "", customerEmail: "" });
@@ -207,10 +210,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     const nextLeads: LocalLead[] = d.leads ?? [];
     const nextPartners: PartnerOption[] = d.partnerOptions ?? [];
     const nextScenario = (d.scenario ?? "not_found") as SearchScenario;
+    const nextGoyal: EoiLead[] = Array.isArray(d.goyalEoiLeads) ? d.goyalEoiLeads : [];
     setLeads(nextLeads);
     setPartnerOptions(nextPartners);
     setScenario(nextScenario);
     setTitanResult((d.titanResult as typeof titanResult) ?? null);
+    setGoyalEoiHits(nextGoyal);
+    setGoyalEoiSearchError(typeof d.goyalEoiError === "string" ? d.goyalEoiError : "");
     setSearched(true);
     setSelectedPartnerCpId(nextPartners[0]?.cpId ?? nextLeads[0]?.cpId ?? "");
     setSelectedLeadId(nextLeads[0]?.id ?? "");
@@ -234,8 +240,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       limit: "20",
       source: "eoi",
     });
-    if (eoiSearch.trim()) params.set("search", eoiSearch.trim());
-    if (eoiPhone.trim()) params.set("phone", eoiPhone.trim());
+    const searchTrim = eoiSearch.trim();
+    const phoneTrim = eoiPhone.trim();
+    const searchDigits = searchTrim.replace(/\D/g, "");
+    // If user types a phone into Search, also send phone= so CRM filter matches.
+    if (searchTrim) params.set("search", searchTrim);
+    if (phoneTrim) {
+      params.set("phone", phoneTrim);
+    } else if (searchDigits.length >= 10 && !/[A-Za-z]/.test(searchTrim)) {
+      params.set("phone", searchDigits.slice(-10));
+    }
     if (eoiBookedFilter !== "all") params.set("booked", eoiBookedFilter);
 
     const url = eoiMine ? `/api/eoi/my-leads?${params}` : `/api/eoi/leads?${params}`;
@@ -964,6 +978,52 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   </div>
                   <Button onClick={() => void confirmAndAssign()}>Confirm &amp; assign</Button>
                 </div>
+              </div>
+            )}
+
+            {searched && scenario === "found_goyal_eoi" && (
+              <div className="rounded-xl border bg-white p-5">
+                <h3 className="font-semibold">Goyal CRM EOI lead(s) found</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  These came from CRM via EOI_API_KEY. Assign to a salesperson for Direct Booking.
+                </p>
+                {goyalEoiSearchError ? (
+                  <p className="mt-2 text-sm text-amber-800">{goyalEoiSearchError}</p>
+                ) : null}
+                <ul className="mt-4 divide-y">
+                  {goyalEoiHits.map((l) => (
+                    <li
+                      key={String(l.id || l.leadCode)}
+                      className="flex flex-wrap items-center justify-between gap-3 py-3"
+                    >
+                      <div>
+                        <p className="font-medium">{l.fullName || "—"}</p>
+                        <p className="text-sm text-gray-500">
+                          {l.phone || "—"}
+                          {l.leadCode ? ` · ${l.leadCode}` : ""}
+                          {l.projectName ? ` · ${l.projectName}` : ""}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setAssignLead(l);
+                          setEoiAssignSalesId("");
+                          setAssignOpen(true);
+                        }}
+                      >
+                        Assign to sales
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {searched && scenario === "not_found" && goyalEoiSearchError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                CRM EOI search failed: {goyalEoiSearchError}. Check Reception{" "}
+                <code className="rounded bg-amber-100 px-1">EOI_API_KEY</code>.
               </div>
             )}
 

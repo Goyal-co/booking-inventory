@@ -309,14 +309,20 @@ export async function registerWalkInLead(input: {
 
 export async function searchLeads(organizationId: string, query: string) {
   const q = query.trim();
+  const digits = q.replace(/\D/g, "");
+  const phoneTail = digits.length >= 7 ? digits.slice(-10) : "";
+
   return prisma.leadRegistry.findMany({
     where: {
       organizationId,
       OR: [
         { leadId: { contains: q, mode: "insensitive" } },
         { customerPhone: { contains: q } },
+        ...(phoneTail ? [{ customerPhone: { contains: phoneTail } }] : []),
         { customerName: { contains: q, mode: "insensitive" } },
         { titanCrmId: { contains: q, mode: "insensitive" } },
+        { goyalCrmId: { contains: q, mode: "insensitive" } },
+        { goyalLeadCode: { contains: q, mode: "insensitive" } },
         { cpId: { contains: q, mode: "insensitive" } },
       ],
     },
