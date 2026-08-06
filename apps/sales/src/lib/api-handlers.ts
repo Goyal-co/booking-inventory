@@ -34,6 +34,7 @@ import {
   updateUserProfile,
   changeUserPassword,
   searchLeads,
+  mapLeadForBookingSearch,
   getDigitalFormByToken,
   sendBlockNotificationEmail,
   getCustomerBookingUrl,
@@ -738,8 +739,8 @@ export async function GET_leads_search(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const q = req.nextUrl.searchParams.get("q") ?? "";
   if (!q.trim()) return NextResponse.json({ leads: [] });
-  const leads = await searchLeads(user.organizationId, q);
-  return NextResponse.json({ leads });
+  const rows = await searchLeads(user.organizationId, q);
+  return NextResponse.json({ leads: rows.map(mapLeadForBookingSearch) });
 }
 
 export async function GET_booking_digitalForm(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -994,11 +995,9 @@ export async function POST_directLeadBook(
       designation: typeof body.designation === "string" ? body.designation : undefined,
       sourceOfFund: typeof body.sourceOfFund === "string" ? body.sourceOfFund : undefined,
       sourceOfEnquiry:
-        typeof body.sourceOfEnquiry === "string" ? body.sourceOfEnquiry : undefined,
+        typeof body.sourceOfEnquiry === "string" ? body.sourceOfEnquiry : "Live Booking",
     });
-    if (!result.crmSynced) {
-      return NextResponse.json(result, { status: 502 });
-    }
+    // Local booked always succeeds; CRM sync is best-effort.
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json(

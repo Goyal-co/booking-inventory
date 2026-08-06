@@ -35,6 +35,37 @@ import { useRealtime } from "@booking/realtime";
 import { REALTIME_EVENTS } from "@booking/realtime";
 import { useSelectedProject } from "@/hooks/use-selected-project";
 
+type BookingLeadResult = {
+  id: string;
+  leadId: string;
+  customerName: string;
+  customerEmail?: string | null;
+  customerPhone: string;
+  source?: string;
+  intentType?: string | null;
+  cpId?: string | null;
+  goyalCrmId?: string | null;
+  goyalLeadCode?: string | null;
+  eoiCpLeadId?: string | null;
+  siteVisitStatus?: string;
+  project?: { id: string; name: string } | null;
+  assignedSales?: { id: string; name: string } | null;
+  visitingCp?: {
+    partnerName: string;
+    cpId?: string;
+    fromToday?: boolean;
+    checkedInAt?: string | null;
+    salesUserName?: string | null;
+  } | null;
+  todaySiteVisit?: {
+    id: string;
+    status: string;
+    checkedInAt: string;
+    notes?: string | null;
+    salesUser?: { id: string; name: string } | null;
+  } | null;
+};
+
 function LiveBookingContent() {
   const { data: session } = useSession();
   const { projects, selectedProject, setSelectedProject, refetchProjects, loading: projectLoading } =
@@ -82,10 +113,9 @@ function LiveBookingContent() {
   const [unitEstimating, setUnitEstimating] = useState(false);
   const [unitLoadingDefault, setUnitLoadingDefault] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
-  const [leadResults, setLeadResults] = useState<
-    Array<{ leadId: string; customerName: string; customerPhone: string }>
-  >([]);
-  const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
+  const [leadResults, setLeadResults] = useState<BookingLeadResult[]>([]);
+  const [selectedLead, setSelectedLead] = useState<BookingLeadResult | null>(null);
+  const [leadBookBusy, setLeadBookBusy] = useState(false);
   const [customerUrl, setCustomerUrl] = useState<string | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapData, setHeatmapData] = useState<Record<string, number>>({});
@@ -244,7 +274,7 @@ function LiveBookingContent() {
         customerEmail,
         customerPhone,
         ...(discounted ? { saleablePricePerSqft: Number(discounted) } : {}),
-        ...(selectedLeadId ? { leadId: selectedLeadId } : {}),
+        ...(selectedLead?.leadId ? { leadId: selectedLead.leadId } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -283,7 +313,59 @@ function LiveBookingContent() {
     }
     const res = await fetch(`/api/leads/search?q=${encodeURIComponent(q)}`);
     const data = await res.json().catch(() => ({}));
-    setLeadResults(data.leads ?? []);
+    setLeadResults((data.leads as BookingLeadResult[]) ?? []);
+  };
+
+  const selectLead = (lead: BookingLeadResult) => {
+    setSelectedLead(lead);
+    setCustomerName(lead.customerName || "");
+    setCustomerPhone(lead.customerPhone || "");
+    setCustomerEmail(lead.customerEmail || "");
+    setLeadSearch(lead.leadId);
+    setLeadResults([]);
+  };
+
+  const markLeadBooked = async () => {
+    if (!selectedLead?.id) {
+      toast.error("Select a lead first");
+      return;
+    }
+    if ((selectedLead.intentType ?? "").includes("|booked")) {
+      toast.message("Lead is already marked booked");
+      return;
+    }
+    setLeadBookBusy(true);
+    try {
+      const res = await fetch(`/api/direct-leads/${selectedLead.id}/book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookedDate: new Date().toISOString().slice(0, 10),
+          sourceOfEnquiry: "Live Booking",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Could not mark booked");
+        return;
+      }
+      setSelectedLead((prev) =>
+        prev
+          ? {
+              ...prev,
+              intentType: `${(prev.intentType ?? "booking").replace(/\|booked$/i, "")}|booked`,
+              siteVisitStatus: "COMPLETED",
+            }
+          : prev
+      );
+      if (data.crmSynced) toast.success("Lead marked booked — CRM updated");
+      else
+        toast.success("Lead marked booked", {
+          description: data.crmError || "Saved locally (CRM optional)",
+        });
+    } finally {
+      setLeadBookBusy(false);
+    }
   };
 
   const loadUnitDefaultCostSheet = useCallback(async (unitId: string) => {
@@ -778,7 +860,8 @@ function LiveBookingContent() {
             setEstimatePreviewSheet(null);
             setLeadSearch("");
             setLeadResults([]);
-            setSelectedLeadId(undefined);
+            setSelectedLead(null);
+            setLeadBookBusy(false);
             setCustomerUrl(null);
             setBookingBlockId(null);
           }
@@ -789,31 +872,131 @@ function LiveBookingContent() {
       >
         <div className="space-y-4">
           <div>
-            <Label htmlFor="lead-search">Search Lead (optional)</Label>
+            <Label htmlFor="lead-search">Lead ID</Label>
             <Input
               id="lead-search"
               value={leadSearch}
               onChange={(e) => searchLeads(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && leadResults[0]) {
+                  e.preventDefault();
+                  selectLead(leadResults[0]);
+                }
+              }}
               placeholder="Lead ID, phone, or name"
             />
             {leadResults.length > 0 && (
-              <div className="mt-1 max-h-32 overflow-y-auto rounded border text-sm">
+              <div className="mt-1 max-h-40 overflow-y-auto rounded border text-sm">
                 {leadResults.map((lead) => (
                   <button
-                    key={lead.leadId}
+                    key={lead.id}
                     type="button"
                     className={`block w-full px-3 py-2 text-left hover:bg-gray-50 ${
-                      selectedLeadId === lead.leadId ? "bg-brand-50" : ""
+                      selectedLead?.id === lead.id ? "bg-brand-50" : ""
                     }`}
-                    onClick={() => {
-                      setSelectedLeadId(lead.leadId);
-                      setCustomerName(lead.customerName);
-                      setCustomerPhone(lead.customerPhone);
-                    }}
+                    onClick={() => selectLead(lead)}
                   >
-                    {lead.leadId} — {lead.customerName}
+                    <span className="font-medium">{lead.leadId}</span>
+                    <span className="text-gray-600"> — {lead.customerName}</span>
+                    <span className="block text-xs text-gray-500">
+                      {lead.customerPhone}
+                      {lead.visitingCp
+                        ? ` · CP: ${lead.visitingCp.partnerName}${
+                            lead.visitingCp.cpId ? ` (${lead.visitingCp.cpId})` : ""
+                          }`
+                        : lead.cpId
+                          ? ` · CP: ${lead.cpId}`
+                          : ""}
+                    </span>
                   </button>
                 ))}
+              </div>
+            )}
+
+            {selectedLead && (
+              <div className="mt-3 space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-gray-900">{selectedLead.customerName}</p>
+                    <p className="text-xs text-gray-600">{selectedLead.leadId}</p>
+                  </div>
+                  {(selectedLead.intentType ?? "").includes("|booked") ? (
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                      Booked
+                    </span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={leadBookBusy}
+                      onClick={() => void markLeadBooked()}
+                    >
+                      {leadBookBusy ? "Marking…" : "Mark as Booked"}
+                    </Button>
+                  )}
+                </div>
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs text-gray-500">Phone</dt>
+                    <dd>{selectedLead.customerPhone || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500">Email</dt>
+                    <dd>{selectedLead.customerEmail || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500">Source</dt>
+                    <dd>{selectedLead.source || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500">Site visit</dt>
+                    <dd>{selectedLead.siteVisitStatus || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500">Project</dt>
+                    <dd>{selectedLead.project?.name || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500">Assigned sales</dt>
+                    <dd>{selectedLead.assignedSales?.name || "—"}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs text-gray-500">
+                      Channel partner (site visit
+                      {selectedLead.visitingCp?.fromToday ? " — today" : ""})
+                    </dt>
+                    <dd className="font-medium text-gray-900">
+                      {selectedLead.visitingCp
+                        ? `${selectedLead.visitingCp.partnerName}${
+                            selectedLead.visitingCp.cpId
+                              ? ` (${selectedLead.visitingCp.cpId})`
+                              : ""
+                          }`
+                        : selectedLead.cpId || "No CP on record"}
+                    </dd>
+                    {selectedLead.todaySiteVisit && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Checked in{" "}
+                        {new Date(selectedLead.todaySiteVisit.checkedInAt).toLocaleString()}
+                        {selectedLead.todaySiteVisit.salesUser?.name
+                          ? ` · with ${selectedLead.todaySiteVisit.salesUser.name}`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+                  {(selectedLead.goyalLeadCode || selectedLead.goyalCrmId) && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-xs text-gray-500">Goyal CRM</dt>
+                      <dd className="text-xs">
+                        {selectedLead.goyalLeadCode || selectedLead.goyalCrmId}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+                <p className="text-xs text-gray-500">
+                  Use <strong>Mark as Booked</strong> for a direct booked flag (no digital form). Or
+                  continue below to send the inventory booking form link.
+                </p>
               </div>
             )}
           </div>

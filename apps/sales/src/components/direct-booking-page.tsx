@@ -94,7 +94,8 @@ export function DirectBookingPage() {
         toast.error(typeof d.error === "string" ? d.error : d.crmError || "Book failed");
         return;
       }
-      toast.success("Lead marked booked in CRM");
+      if (d.crmSynced) toast.success("Lead marked booked in CRM");
+      else toast.success("Lead marked booked", { description: d.crmError || "Saved locally" });
       setBookLead(null);
       setKyc(emptyKyc);
       void load();
