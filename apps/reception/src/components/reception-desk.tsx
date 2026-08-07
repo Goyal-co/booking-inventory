@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Button,
   Input,
@@ -161,18 +161,116 @@ function formatTime(iso: string) {
   }
 }
 
+function FieldRow({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | null;
+}) {
+  if (!value) return null;
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-medium text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+function StatusChip({
+  children,
+  tone = "neutral",
+}: {
+  children: ReactNode;
+  tone?: "neutral" | "ok" | "warn" | "info";
+}) {
+  const tones = {
+    neutral: "bg-gray-100 text-gray-700",
+    ok: "bg-emerald-50 text-emerald-800",
+    warn: "bg-amber-50 text-amber-900",
+    info: "bg-sky-50 text-sky-800",
+  } as const;
+  return (
+    <span
+      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${tones[tone]}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function StepLabel({ step, title }: { step: number; title: string }) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+        {step}
+      </span>
+      <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+    </div>
+  );
+}
+
+function SalesAssignRow({
+  value,
+  onChange,
+  sales,
+  onConfirm,
+  confirmLabel,
+  disabled,
+  requireSales = true,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  sales: Array<{ id: string; name: string }>;
+  onConfirm: () => void;
+  confirmLabel: string;
+  disabled?: boolean;
+  requireSales?: boolean;
+}) {
+  return (
+    <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50/80 p-4">
+      <StepLabel step={2} title="Assign salesperson" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="min-w-0 flex-1">
+          <Label>{requireSales ? "Who will handle this visitor?" : "Salesperson (optional)"}</Label>
+          <select
+            className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            <option value="">{requireSales ? "Select salesperson…" : "Assign later…"}</option>
+            {sales.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <Button
+          className="shrink-0"
+          disabled={disabled || (requireSales && !value)}
+          onClick={onConfirm}
+        >
+          {confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const TAB_META: Record<ReceptionDeskTab, { title: string; description: string }> = {
   walkin: {
-    title: "Walk-in Desk",
-    description: "Search by Lead ID, phone, or email — confirm CP, then assign a salesperson.",
+    title: "Check-in desk",
+    description:
+      "Look up the visitor, confirm which project they came for, then assign a salesperson.",
   },
   eoi: {
-    title: "EOI Leads",
-    description: "List, create, and book EOI leads in Goyal Hariyana CRM.",
+    title: "CRM EOI leads",
+    description: "Search, create, assign, or book EOI leads from Goyal CRM.",
   },
   visits: {
-    title: "Today's Visits",
-    description: "Site visits checked in at reception today.",
+    title: "Today’s check-ins",
+    description: "Everyone checked in at reception today.",
   },
 };
 
@@ -861,21 +959,15 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
             {eoiCaps && eoiCaps.webhookList && !eoiCaps.staffApi && (
               <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-                List and create use <code className="rounded bg-sky-100 px-1">EOI_API_KEY</code>{" "}
-                (<code className="rounded bg-sky-100 px-1">GET /eoi/leads</code> + webhook). Booking and
-                My leads need a staff JWT (
-                <code className="rounded bg-sky-100 px-1">GOYAL_CRM_API_TOKEN</code>) — do not reuse the
-                webhook key as staff Bearer.
+                Listing works. Booking and “My leads” need a staff CRM login token configured on
+                Reception.
               </div>
             )}
 
             {eoiError && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {eoiError}
-                <p className="mt-1 text-amber-800/80">
-                  {eoiHint ||
-                    "Check EOI_API_KEY for list/create. Book/My leads need GOYAL_CRM_API_TOKEN."}
-                </p>
+                {eoiHint ? <p className="mt-1 text-amber-800/80">{eoiHint}</p> : null}
               </div>
             )}
 
@@ -1009,107 +1101,151 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         )}
 
         {tab === "walkin" && (
-          <div className="space-y-6">
-            <div className="rounded-xl border bg-white p-5">
-              <h2 className="mb-1 font-semibold">Ask for Lead ID, phone, or email</h2>
-              <p className="mb-3 text-sm text-gray-500">
-                Confirms partner portal / Titan / Goyal CRM leads, or registers a direct walk-in.
+          <div className="mx-auto max-w-3xl space-y-5">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                Step 1 of 2
               </p>
-              <div className="flex flex-wrap gap-2">
+              <h2 className="mt-1 text-lg font-semibold text-gray-900">Find the visitor</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Ask for Lead ID, mobile number, or email.
+              </p>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                 <Input
-                  className="min-w-[220px] flex-1"
-                  placeholder="Lead ID, mobile, or email"
+                  className="flex-1"
+                  placeholder="e.g. EOI-000123, 98XXXXXXXX, name@email.com"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void searchLocal()}
                 />
-                <Button onClick={() => void searchLocal()} disabled={!query.trim()}>
+                <Button
+                  className="sm:min-w-[120px]"
+                  onClick={() => void searchLocal()}
+                  disabled={!query.trim()}
+                >
                   Search
                 </Button>
               </div>
             </div>
 
+            {searched &&
+              (() => {
+                const visitorName =
+                  eoiIdentityHint?.customerName ||
+                  leads[0]?.customerName ||
+                  (titanResult?.customerName ? String(titanResult.customerName) : null) ||
+                  goyalEoiHits[0]?.fullName ||
+                  null;
+                const visitorPhone =
+                  eoiIdentityHint?.primaryPhone ||
+                  leads[0]?.customerPhone ||
+                  (titanResult?.phone ? String(titanResult.phone) : null) ||
+                  goyalEoiHits[0]?.phone ||
+                  null;
+                const visitorEmail =
+                  eoiIdentityHint?.primaryEmail ||
+                  leads[0]?.customerEmail ||
+                  goyalEoiHits[0]?.email ||
+                  null;
+                const visitorLeadId =
+                  eoiIdentityHint?.leadId ||
+                  leads[0]?.leadId ||
+                  (titanResult?.leadId ? String(titanResult.leadId) : null) ||
+                  goyalEoiHits[0]?.leadCode ||
+                  null;
+
+                return visitorName || visitorPhone || visitorLeadId ? (
+                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                      Visitor
+                    </p>
+                    <p className="mt-1 text-xl font-semibold tracking-tight text-gray-900">
+                      {visitorName || "Visitor found"}
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <FieldRow label="Lead ID" value={visitorLeadId} />
+                      <FieldRow label="Mobile" value={visitorPhone} />
+                      <FieldRow label="Email" value={visitorEmail} />
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
             {searched && scenario === "titan_needs_partner" && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
-                <p className="font-semibold">Partner registration required</p>
-                <p className="mt-1">
-                  Lead exists in Titan CRM
-                  {titanResult?.leadId ? ` (${String(titanResult.leadId)})` : ""}, but no channel
-                  partner is linked. Ask the partner to register in the partner portal first, then
-                  check the visitor in.
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+                <p className="font-semibold text-amber-950">Partner not linked yet</p>
+                <p className="mt-1 text-sm text-amber-900/90">
+                  This lead is in Titan, but no channel partner is attached. Ask the partner to
+                  register in the Partner Portal, then search again.
                 </p>
               </div>
             )}
 
             {searched && scenario === "found_multi_partner" && (
-              <div className="rounded-xl border bg-white p-5">
-                <h3 className="font-semibold">Confirm partner &amp; project</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  This visitor has more than one partner/project registration. Select which
-                  partner and project today&apos;s site visit (or booking) is for, then assign a
-                  salesperson.
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <StepLabel step={1} title="Which project are they here for?" />
+                <p className="mb-4 text-sm text-gray-500">
+                  This visitor has more than one registration. Pick the partner and project for
+                  today&apos;s visit.
                 </p>
-                <div className="mt-4 space-y-2">
+                <div className="space-y-2">
                   {partnerOptions.map((p) => {
                     const key = partnerOptionKey(p);
                     const selected = selectedPartnerKey === key;
                     return (
-                    <label
-                      key={key}
-                      className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${
-                        selected ? "border-brand-500 bg-brand-50/40" : ""
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        className="mt-1"
-                        name="visiting-partner-project"
-                        checked={selected}
-                        onChange={() => {
-                          setSelectedPartnerKey(key);
-                          if (p.leadId) setSelectedLeadId(p.leadId);
-                        }}
-                      />
-                      <span>
-                        <span className="font-medium">{p.partnerName}</span>
-                        {p.projectName ? (
-                          <span className="ml-2 rounded bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-800">
-                            {p.projectName}
-                          </span>
-                        ) : p.tag ? (
-                          <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs">{p.tag}</span>
-                        ) : null}
-                        <span className="mt-0.5 block text-xs text-gray-500">
-                          Submitted {formatStamp(p.submittedAt)}
-                          {p.publicLeadId ? ` · ${p.publicLeadId}` : ""}
-                          {p.siteVisitStatus === "COMPLETED" ? " · Site visit done" : ""}
-                          {p.journeyStatus === "BOOKED" ? " · Booked" : ""}
-                        </span>
-                      </span>
-                    </label>
+                      <label
+                        key={key}
+                        className={`block cursor-pointer rounded-xl border p-4 transition ${
+                          selected
+                            ? "border-gray-900 bg-gray-50 ring-1 ring-gray-900"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="radio"
+                            className="mt-1"
+                            name="visiting-partner-project"
+                            checked={selected}
+                            onChange={() => {
+                              setSelectedPartnerKey(key);
+                              if (p.leadId) setSelectedLeadId(p.leadId);
+                            }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold text-gray-900">
+                                {p.projectName || p.tag || "Project not specified"}
+                              </p>
+                              {p.journeyStatus === "BOOKED" ? (
+                                <StatusChip tone="ok">Booked</StatusChip>
+                              ) : p.siteVisitStatus === "COMPLETED" ? (
+                                <StatusChip tone="info">Site visit done</StatusChip>
+                              ) : (
+                                <StatusChip>Open</StatusChip>
+                              )}
+                            </div>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              <FieldRow label="Channel partner" value={p.partnerName} />
+                              <FieldRow
+                                label="Punched on"
+                                value={formatStamp(p.submittedAt)}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </label>
                     );
                   })}
                 </div>
-                <div className="mt-4 flex flex-wrap items-end gap-2">
-                  <div className="min-w-[200px] flex-1">
-                    <Label>Assign salesperson</Label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                      value={assignSalesId}
-                      onChange={(e) => setAssignSalesId(e.target.value)}
-                    >
-                      <option value="">Select…</option>
-                      {sales.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <Button onClick={() => void confirmAndAssign()}>
-                    Confirm project &amp; assign
-                  </Button>
-                </div>
+                <SalesAssignRow
+                  value={assignSalesId}
+                  onChange={setAssignSalesId}
+                  sales={sales}
+                  onConfirm={() => void confirmAndAssign()}
+                  confirmLabel="Check in visitor"
+                  disabled={!selectedPartnerKey}
+                />
               </div>
             )}
 
@@ -1119,154 +1255,121 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 titanResult?.found === true ||
                 Boolean(eoiIdentityHint) ||
                 partnerOptions.length > 0) && (
-              <div className="rounded-xl border bg-white p-5">
-                <h3 className="font-semibold">Lead found — confirm partner &amp; project</h3>
-                <div className="mt-3 space-y-3">
-                  {eoiIdentityHint && leads.length === 0 ? (
-                    <div className="rounded-lg border border-dashed p-3 text-sm">
-                      <p className="font-medium">
-                        {eoiIdentityHint.customerName || "Partner Portal guest"} —{" "}
-                        {eoiIdentityHint.leadId}
-                      </p>
-                      <p className="text-gray-500">
-                        {eoiIdentityHint.primaryPhone || ""}
-                        {eoiIdentityHint.primaryEmail
-                          ? ` · ${eoiIdentityHint.primaryEmail}`
-                          : ""}{" "}
-                        · Partner Portal
-                        {partnerOptions[0]
-                          ? ` · Partner ${partnerOptions[0].partnerName}`
-                          : ""}
-                        {partnerOptions[0]?.projectName
-                          ? ` · Project ${partnerOptions[0].projectName}`
-                          : ""}
-                      </p>
-                      <p className="mt-1 text-xs text-gray-500">
-                        Will be saved to local registry on assign.
-                      </p>
-                    </div>
-                  ) : null}
-                  {leads.map((l) => (
-                    <div key={l.id} className="rounded-lg border p-3 text-sm">
-                      <p className="font-medium">
-                        {l.customerName} — {l.leadId}
-                        {l.isPresales || l.source === "PRESALES" ? (
-                          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800">
-                            Presales
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="text-gray-500">
-                        {l.customerPhone}
-                        {l.customerEmail ? ` · ${l.customerEmail}` : ""}
-                        {" · "}
-                        {l.source}
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-gray-800">
-                        CP:{" "}
-                        {l.visitingCp
-                          ? `${l.visitingCp.partnerName}${
-                              l.visitingCp.cpId ? ` (${l.visitingCp.cpId})` : ""
-                            }${l.visitingCp.fromToday ? " · today" : ""}`
-                          : l.cpId
-                            ? l.cpId
-                            : "No partner on file"}
-                      </p>
-                      {l.project?.name ? (
-                        <p className="text-xs text-gray-500">Project: {l.project.name}</p>
-                      ) : null}
-                      {l.assignedSales?.name ? (
-                        <p className="text-xs text-gray-500">Last assigned: {l.assignedSales.name}</p>
-                      ) : null}
-                      {l.todaySiteVisit ? (
-                        <p className="text-xs text-gray-500">
-                          Checked in {new Date(l.todaySiteVisit.checkedInAt).toLocaleString()}
-                          {l.todaySiteVisit.salesUser?.name
-                            ? ` · ${l.todaySiteVisit.salesUser.name}`
-                            : ""}
-                        </p>
-                      ) : null}
-                      {l.visitHistory && l.visitHistory.length > 0 ? (
-                        <div className="mt-2 rounded border border-gray-100 bg-gray-50/80 p-2">
-                          <p className="text-xs font-medium text-gray-700">Site visit history</p>
-                          <ul className="mt-1 space-y-1">
-                            {l.visitHistory.slice(0, 5).map((v) => (
-                              <li key={v.id} className="text-xs text-gray-600">
-                                {new Date(v.checkedInAt).toLocaleString()}
-                                {v.visitingCpName || v.visitingCpId
-                                  ? ` · CP ${v.visitingCpName || v.visitingCpId}`
-                                  : ""}
-                                {v.projectName ? ` · ${v.projectName}` : ""}
-                                {v.salesUserName ? ` · ${v.salesUserName}` : ""}
-                              </li>
-                            ))}
-                          </ul>
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <StepLabel step={1} title="Confirm today’s visit details" />
+                <div className="mt-1 space-y-3">
+                  {(partnerOptions.length > 0
+                    ? partnerOptions
+                    : [
+                        {
+                          key: "fallback",
+                          leadId: leads[0]?.id ?? null,
+                          publicLeadId: leads[0]?.leadId ?? "",
+                          cpId: leads[0]?.cpId ?? "",
+                          partnerName:
+                            leads[0]?.visitingCp?.partnerName ||
+                            "No partner on file",
+                          submittedAt: "",
+                          source: leads[0]?.source ?? "",
+                          projectName: leads[0]?.project?.name,
+                          projectId: undefined,
+                          eoiCpLeadId: leads[0]?.eoiCpLeadId ?? undefined,
+                        } satisfies PartnerOption,
+                      ]
+                  ).map((p) => {
+                    const key = partnerOptionKey(p);
+                    const selected =
+                      partnerOptions.length <= 1 || selectedPartnerKey === key;
+                    return (
+                      <div
+                        key={key}
+                        className={`rounded-xl border p-4 ${
+                          selected
+                            ? "border-gray-900 bg-gray-50"
+                            : "border-gray-200"
+                        }`}
+                      >
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <FieldRow
+                            label="Project"
+                            value={p.projectName || p.tag || leads[0]?.project?.name || "—"}
+                          />
+                          <FieldRow label="Channel partner" value={p.partnerName} />
+                          <FieldRow label="Lead ID" value={p.publicLeadId || leads[0]?.leadId} />
+                          <FieldRow
+                            label="Source"
+                            value={
+                              p.source === "CHANNEL_PARTNER"
+                                ? "Partner Portal"
+                                : p.source || leads[0]?.source || undefined
+                            }
+                          />
                         </div>
-                      ) : null}
-                      <label className="mt-2 flex items-center gap-2 text-xs text-gray-600">
-                        <input
-                          type="radio"
-                          name="single-lead"
-                          checked={selectedLeadId === l.id}
-                          onChange={() => setSelectedLeadId(l.id)}
-                        />
-                        Use this lead
-                      </label>
-                    </div>
-                  ))}
-                  {leads.length === 0 && titanResult?.found === true ? (
-                    <div className="rounded-lg border border-dashed p-3 text-sm">
-                      <p className="font-medium">
-                        {String(titanResult.customerName ?? "Titan guest")} —{" "}
-                        {String(titanResult.leadId ?? "")}
-                      </p>
-                      <p className="text-gray-500">
-                        {String(titanResult.phone ?? "")} · Titan
-                        {partnerOptions[0]
-                          ? ` · Partner ${partnerOptions[0].partnerName}`
-                          : ""}
-                        {partnerOptions[0]?.projectName
-                          ? ` · Project ${partnerOptions[0].projectName}`
-                          : ""}
-                      </p>
-                      <p className="mt-1 text-xs text-gray-500">
-                        Will be saved to local registry on assign.
-                      </p>
-                    </div>
+                        {leads[0]?.todaySiteVisit ? (
+                          <p className="mt-3 text-xs text-gray-500">
+                            Already checked in today
+                            {leads[0].todaySiteVisit.salesUser?.name
+                              ? ` · ${leads[0].todaySiteVisit.salesUser.name}`
+                              : ""}{" "}
+                            · {formatStamp(leads[0].todaySiteVisit.checkedInAt)}
+                          </p>
+                        ) : null}
+                        {leads.length > 1 ? (
+                          <label className="mt-3 flex items-center gap-2 text-xs text-gray-600">
+                            <input
+                              type="radio"
+                              name="single-lead"
+                              checked={selectedLeadId === (p.leadId || "")}
+                              onChange={() => {
+                                if (p.leadId) setSelectedLeadId(p.leadId);
+                                setSelectedPartnerKey(key);
+                              }}
+                            />
+                            Use this record
+                          </label>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+
+                  {leads.length > 0 && leads[0]?.visitHistory && leads[0].visitHistory.length > 0 ? (
+                    <details className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                      <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                        Previous site visits ({leads[0].visitHistory.length})
+                      </summary>
+                      <ul className="mt-2 space-y-1.5">
+                        {leads[0].visitHistory.slice(0, 5).map((v) => (
+                          <li key={v.id} className="text-xs text-gray-600">
+                            {formatStamp(v.checkedInAt)}
+                            {v.projectName ? ` · ${v.projectName}` : ""}
+                            {v.visitingCpName ? ` · ${v.visitingCpName}` : ""}
+                            {v.salesUserName ? ` · ${v.salesUserName}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   ) : null}
                 </div>
-                <div className="mt-4 flex flex-wrap items-end gap-2">
-                  <div className="min-w-[200px] flex-1">
-                    <Label>Assign salesperson</Label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                      value={assignSalesId}
-                      onChange={(e) => setAssignSalesId(e.target.value)}
-                    >
-                      <option value="">Select…</option>
-                      {sales.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <Button onClick={() => void confirmAndAssign()}>Confirm &amp; assign</Button>
-                </div>
+                <SalesAssignRow
+                  value={assignSalesId}
+                  onChange={setAssignSalesId}
+                  sales={sales}
+                  onConfirm={() => void confirmAndAssign()}
+                  confirmLabel="Check in visitor"
+                />
               </div>
             )}
 
             {searched && scenario === "found_goyal_eoi" && (
-              <div className="rounded-xl border bg-white p-5">
-                <h3 className="font-semibold">CRM lead(s) found</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  Customer details from Goyal CRM. Assign a salesperson — they will see it under
-                  Direct Booking.
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <StepLabel step={1} title="CRM match — assign to sales" />
+                <p className="mb-4 text-sm text-gray-500">
+                  Found in Goyal CRM. Assign a salesperson so they can continue in Direct Booking.
                 </p>
                 {goyalEoiSearchError ? (
-                  <p className="mt-2 text-sm text-amber-800">{goyalEoiSearchError}</p>
+                  <p className="mb-3 text-sm text-amber-800">{goyalEoiSearchError}</p>
                 ) : null}
-                <ul className="mt-4 divide-y">
+                <ul className="space-y-3">
                   {goyalEoiHits.map((l) => {
                     const cpHint =
                       (typeof l.sourceOfEnquiry === "string" && l.sourceOfEnquiry) ||
@@ -1277,38 +1380,28 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                     return (
                       <li
                         key={String(l.id || l.leadCode)}
-                        className="flex flex-wrap items-start justify-between gap-3 py-3"
+                        className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-200 p-4"
                       >
-                        <div className="min-w-0 flex-1 space-y-1 text-sm">
-                          <p className="font-medium text-gray-900">{l.fullName || "—"}</p>
-                          <p className="text-gray-600">
-                            {l.phone || "—"}
-                            {l.email ? ` · ${l.email}` : ""}
-                          </p>
-                          <p className="text-gray-600">
-                            Lead: {l.leadCode || l.id}
-                            {l.projectName ? ` · ${l.projectName}` : ""}
-                            {l.city ? ` · ${l.city}` : ""}
-                          </p>
-                          <p className="font-medium text-gray-800">
-                            CP / source: {cpHint || "Not specified on CRM lead"}
-                          </p>
-                          {l.booked ? (
-                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">
-                              Already booked in CRM
-                            </span>
-                          ) : null}
+                        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
+                          <FieldRow label="Name" value={l.fullName || "—"} />
+                          <FieldRow label="Mobile" value={l.phone || "—"} />
+                          <FieldRow label="Lead" value={l.leadCode || l.id} />
+                          <FieldRow label="Project" value={l.projectName || "—"} />
+                          <FieldRow label="Partner / source" value={cpHint || "Not on CRM lead"} />
                         </div>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setAssignLead(l);
-                            setEoiAssignSalesId("");
-                            setAssignOpen(true);
-                          }}
-                        >
-                          Assign to sales
-                        </Button>
+                        <div className="flex flex-col items-end gap-2">
+                          {l.booked ? <StatusChip tone="ok">Already booked</StatusChip> : null}
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setAssignLead(l);
+                              setEoiAssignSalesId("");
+                              setAssignOpen(true);
+                            }}
+                          >
+                            Assign to sales
+                          </Button>
+                        </div>
                       </li>
                     );
                   })}
@@ -1318,28 +1411,26 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
             {searched && scenario === "not_found" && goyalEoiSearchError && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                CRM EOI search failed: {goyalEoiSearchError}. Check Reception{" "}
-                <code className="rounded bg-amber-100 px-1">EOI_API_KEY</code>.
+                CRM search failed: {goyalEoiSearchError}
               </div>
             )}
 
             {searched && scenario === "not_found" && (
-              <div className="rounded-xl border border-dashed border-gray-300 bg-white p-5">
-                <h3 className="font-semibold">No lead found — direct walk-in</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  Visitor came without a partner. Register as Direct Walk-in and assign a
-                  salesperson. Booking attribution can be decided later by sales / customer.
+              <div className="rounded-xl border border-dashed border-gray-300 bg-white p-5 shadow-sm">
+                <StepLabel step={1} title="No match — register as walk-in" />
+                <p className="mb-4 text-sm text-gray-500">
+                  No partner or CRM lead found. Register the visitor and assign a salesperson.
                 </p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <Label>Name *</Label>
+                    <Label>Full name *</Label>
                     <Input
                       value={walkIn.customerName}
                       onChange={(e) => setWalkIn({ ...walkIn, customerName: e.target.value })}
                     />
                   </div>
                   <div>
-                    <Label>Phone *</Label>
+                    <Label>Mobile *</Label>
                     <Input
                       value={walkIn.customerPhone}
                       onChange={(e) => setWalkIn({ ...walkIn, customerPhone: e.target.value })}
@@ -1352,99 +1443,117 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       onChange={(e) => setWalkIn({ ...walkIn, customerEmail: e.target.value })}
                     />
                   </div>
-                  <div className="sm:col-span-2">
-                    <Label>Assign salesperson</Label>
-                    <select
-                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                      value={walkInSalesId}
-                      onChange={(e) => setWalkInSalesId(e.target.value)}
-                    >
-                      <option value="">Select…</option>
-                      {sales.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button
-                    disabled={!walkIn.customerName || !walkIn.customerPhone}
-                    onClick={() => void registerWalkIn(Boolean(walkInSalesId))}
-                  >
-                    Register{walkInSalesId ? " & assign" : " walk-in"}
-                  </Button>
-                </div>
+                <SalesAssignRow
+                  value={walkInSalesId}
+                  onChange={setWalkInSalesId}
+                  sales={sales}
+                  onConfirm={() => void registerWalkIn(Boolean(walkInSalesId))}
+                  confirmLabel={walkInSalesId ? "Register & check in" : "Register walk-in"}
+                  disabled={!walkIn.customerName || !walkIn.customerPhone}
+                  requireSales={false}
+                />
               </div>
             )}
 
             {!searched && (
-              <div className="rounded-xl border bg-white p-5">
-                <h3 className="mb-3 font-semibold">Or register a known direct walk-in</h3>
-                <Input
-                  className="mb-2"
-                  placeholder="Name"
-                  value={walkIn.customerName}
-                  onChange={(e) => setWalkIn({ ...walkIn, customerName: e.target.value })}
-                />
-                <Input
-                  className="mb-2"
-                  placeholder="Phone"
-                  value={walkIn.customerPhone}
-                  onChange={(e) => setWalkIn({ ...walkIn, customerPhone: e.target.value })}
-                />
-                <Input
-                  className="mb-3"
-                  placeholder="Email (optional)"
-                  value={walkIn.customerEmail}
-                  onChange={(e) => setWalkIn({ ...walkIn, customerEmail: e.target.value })}
-                />
-                <Button
-                  disabled={!walkIn.customerName || !walkIn.customerPhone}
-                  onClick={() => void registerWalkIn(false)}
-                >
-                  Register walk-in
-                </Button>
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-semibold text-gray-900">Quick walk-in (no search)</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  Use only when the visitor has no Lead ID / phone on file.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label>Full name *</Label>
+                    <Input
+                      value={walkIn.customerName}
+                      onChange={(e) => setWalkIn({ ...walkIn, customerName: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Mobile *</Label>
+                    <Input
+                      value={walkIn.customerPhone}
+                      onChange={(e) => setWalkIn({ ...walkIn, customerPhone: e.target.value })}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label>Email (optional)</Label>
+                    <Input
+                      value={walkIn.customerEmail}
+                      onChange={(e) => setWalkIn({ ...walkIn, customerEmail: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Button
+                    disabled={!walkIn.customerName || !walkIn.customerPhone}
+                    onClick={() => void registerWalkIn(false)}
+                  >
+                    Register walk-in
+                  </Button>
+                </div>
               </div>
             )}
           </div>
         )}
 
         {tab === "visits" && (
-          <div className="rounded-xl border bg-white p-5">
-            <h2 className="mb-3 font-semibold">Today&apos;s site visits</h2>
+          <div className="mx-auto max-w-4xl rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="border-b border-gray-100 px-5 py-4">
+              <h2 className="text-base font-semibold text-gray-900">Today&apos;s check-ins</h2>
+              <p className="mt-0.5 text-sm text-gray-500">
+                {visits.length === 0
+                  ? "No visitors checked in yet."
+                  : `${visits.length} visitor${visits.length === 1 ? "" : "s"} today`}
+              </p>
+            </div>
             {visits.length === 0 ? (
-              <p className="text-sm text-gray-500">No check-ins yet today</p>
+              <p className="px-5 py-10 text-center text-sm text-gray-500">
+                Check-ins from the desk will appear here.
+              </p>
             ) : (
-              <ul className="divide-y">
-                {visits.map((v) => (
-                  <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
-                    <div>
-                      <p className="font-medium">
-                        {v.lead?.customerName ?? "Unknown"}
-                        {v.lead?.isPresales ? (
-                          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800">
-                            Presales
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="text-gray-500">
-                        {v.lead?.leadId} · {v.lead?.customerPhone}
-                        {v.lead?.customerEmail ? ` · ${v.lead.customerEmail}` : ""}
-                      </p>
-                      <p className="text-xs text-gray-600">
-                        CP: {v.visitingCpName || v.visitingCpId || "—"}
-                        {v.projectName ? ` · ${v.projectName}` : ""}
-                      </p>
-                    </div>
-                    <div className="text-right text-gray-600">
-                      <p>{v.salesUser?.name ?? "Unassigned"}</p>
-                      <p className="text-xs">{formatTime(v.checkedInAt)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead className="border-b bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                    <tr>
+                      <th className="px-5 py-3 font-semibold">Visitor</th>
+                      <th className="px-5 py-3 font-semibold">Project</th>
+                      <th className="px-5 py-3 font-semibold">Partner</th>
+                      <th className="px-5 py-3 font-semibold">Salesperson</th>
+                      <th className="px-5 py-3 font-semibold">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visits.map((v) => (
+                      <tr key={v.id} className="border-b border-gray-100 last:border-0">
+                        <td className="px-5 py-3">
+                          <p className="font-medium text-gray-900">
+                            {v.lead?.customerName ?? "Unknown"}
+                            {v.lead?.isPresales ? (
+                              <span className="ml-2">
+                                <StatusChip tone="info">Presales</StatusChip>
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {v.lead?.leadId || "—"}
+                            {v.lead?.customerPhone ? ` · ${v.lead.customerPhone}` : ""}
+                          </p>
+                        </td>
+                        <td className="px-5 py-3 text-gray-800">{v.projectName || "—"}</td>
+                        <td className="px-5 py-3 text-gray-800">
+                          {v.visitingCpName || "—"}
+                        </td>
+                        <td className="px-5 py-3 text-gray-800">
+                          {v.salesUser?.name ?? "Unassigned"}
+                        </td>
+                        <td className="px-5 py-3 text-gray-600">{formatTime(v.checkedInAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}
