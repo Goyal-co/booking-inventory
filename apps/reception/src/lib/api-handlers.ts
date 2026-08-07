@@ -11,6 +11,7 @@ import {
   assignGoyalLeadToSales,
   notifyEoiPartnerPortal,
   mapLeadForBookingSearch,
+  parseVisitingPartnerFromNotes,
 } from "@booking/database";
 import { walkInLeadSchema, leadAssignSchema } from "@booking/validators";
 import {
@@ -204,15 +205,28 @@ export async function GET_leadsSearch(req: NextRequest) {
 
   const localPartnerOpts: PartnerOpt[] = leads
     .filter((l) => l.cpId)
-    .map((l) => ({
-      leadId: l.id,
-      publicLeadId: l.leadId,
-      cpId: l.cpId as string,
-      partnerName: String(l.cpId),
-      submittedAt: l.createdAt.toISOString(),
-      source: String(l.source),
-      tag: l.intentType ?? undefined,
-    }));
+    .map((l) => {
+      const latestVisit = l.siteVisits?.[0];
+      const fromNotes = latestVisit
+        ? parseVisitingPartnerFromNotes(latestVisit.notes)
+        : null;
+      const name =
+        (latestVisit?.visitingCpName && latestVisit.visitingCpName !== l.cpId
+          ? latestVisit.visitingCpName
+          : null) ||
+        fromNotes?.partnerName ||
+        null;
+      return {
+        leadId: l.id,
+        publicLeadId: l.leadId,
+        cpId: l.cpId as string,
+        partnerName: name || "Channel Partner",
+        submittedAt: l.createdAt.toISOString(),
+        source: String(l.source),
+        tag: l.intentType ?? undefined,
+        eoiCpLeadId: l.eoiCpLeadId ?? undefined,
+      };
+    });
 
   const titanPartnerOpts: PartnerOpt[] = (titanPartners as Array<Record<string, unknown>>).map((p) => ({
     leadId: null,
@@ -248,9 +262,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     });
     if (eoiIdentity?.partners?.length) {
       for (const partner of eoiIdentity.partners) {
-        const assoc =
-          eoiIdentity.associations.find((a) => a.cpId === partner.cpId) ||
-          eoiIdentity.associations[0];
+        const assoc = eoiIdentity.associations.find((a) => a.cpId === partner.cpId);
         const localMatch =
           leads.find((l) => l.cpId === partner.cpId) ||
           leads.find((l) => l.eoiCpLeadId && partner.eoiCpLeadIds.includes(l.eoiCpLeadId));
@@ -278,14 +290,19 @@ export async function GET_leadsSearch(req: NextRequest) {
   }
 
   // EOI-only identity (no local/Titan/Goyal row yet) → still show CP card(s)
-  if (
-    eoiIdentity &&
-    partnerByCp.size > 0 &&
-    (scenario === "not_found" ||
+  // Prefer Partner Portal partners over Goyal CRM-only scenario when present.
+  if (eoiIdentity && partnerByCp.size > 0) {
+    if (
+      scenario === "not_found" ||
       scenario === "empty_query" ||
-      (scenario === "titan_needs_partner" && leads.length === 0))
-  ) {
-    scenario = partnerByCp.size > 1 ? "found_multi_partner" : "found_single";
+      scenario === "titan_needs_partner" ||
+      scenario === "found_goyal_eoi" ||
+      (scenario === "found_single" && partnerByCp.size > 1)
+    ) {
+      scenario = partnerByCp.size > 1 ? "found_multi_partner" : "found_single";
+    } else if (partnerByCp.size > 1 && scenario === "found_single") {
+      scenario = "found_multi_partner";
+    }
   } else if (partnerByCp.size > 1 && (scenario === "found_single" || scenario === "found_goyal_eoi")) {
     scenario = "found_multi_partner";
   }
@@ -395,11 +412,18 @@ export async function POST_materializeEoiLead(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
   const d = parsed.data;
+  const phoneDigits = d.customerPhone.replace(/\D/g, "");
+  if (phoneDigits.length < 10) {
+    return NextResponse.json(
+      { error: "A valid customer phone is required (not derived from Lead ID)" },
+      { status: 400 }
+    );
+  }
   const lead = await upsertLeadFromEoiCp({
     leadId: d.publicLeadId,
     eoiCpLeadId: d.eoiCpLeadId,
     customerName: d.customerName,
-    customerPhone: d.customerPhone.replace(/\D/g, "").slice(-10) || d.customerPhone,
+    customerPhone: phoneDigits.slice(-10),
     customerEmail: d.customerEmail || undefined,
     organizationId: user.organizationId,
     cpId: d.cpId,
@@ -428,7 +452,10 @@ export async function GET_visitsToday() {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   const visits = await prisma.siteVisit.findMany({
-    where: { checkedInAt: { gte: start } },
+    where: {
+      checkedInAt: { gte: start },
+      lead: { organizationId: user.organizationId },
+    },
     include: {
       lead: {
         select: {
@@ -455,7 +482,7 @@ export async function GET_visitsToday() {
       lead: v.lead
         ? {
             ...v.lead,
-            isPresales: v.lead.source === "PRESALES" || Boolean(v.lead.goyalLeadCode),
+            isPresales: v.lead.source === "PRESALES",
           }
         : null,
       salesUser: v.salesUser,
@@ -682,11 +709,27 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
         },
         include: { project: { select: { id: true, name: true } } },
       });
+      const visitCp = registry
+        ? await prisma.siteVisit.findFirst({
+            where: {
+              leadId: registry.id,
+              ...(registry.cpId ? { visitingCpId: registry.cpId } : {}),
+            },
+            orderBy: { checkedInAt: "desc" },
+            select: { visitingCpName: true, visitingCpId: true },
+          })
+        : null;
+      const cpName =
+        visitCp?.visitingCpName &&
+        visitCp.visitingCpName !== visitCp.visitingCpId
+          ? visitCp.visitingCpName
+          : undefined;
       await notifyEoiPartnerPortal({
         event: "booking.confirmed",
         leadId: registry?.leadId || lead.leadCode,
         eoiCpLeadId: registry?.eoiCpLeadId,
         cpId: registry?.cpId,
+        cpName,
         crmLeadId: lead.id || bookId,
         phone: registry?.customerPhone || lead.phone,
         projectId: registry?.project?.id,

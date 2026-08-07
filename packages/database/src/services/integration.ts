@@ -208,8 +208,9 @@ export async function syncBookingToIntegrations(bookingId: string) {
       } = await import("@booking/integrations");
       if (getGoyalCrmCapabilities().canBook) {
         const lookupId =
-          booking.lead?.titanCrmId
-          || booking.lead?.leadId;
+          booking.lead?.goyalCrmId ||
+          booking.lead?.titanCrmId ||
+          booking.lead?.leadId;
         if (lookupId) {
           const crmLead = await getGoyalLead(lookupId);
           await bookGoyalLead(crmLead.id, {
@@ -238,16 +239,29 @@ export async function syncBookingToIntegrations(bookingId: string) {
 
     try {
       const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+      const salesUser = booking.lead?.assignedSalesId
+        ? await prisma.user.findUnique({
+            where: { id: booking.lead.assignedSalesId },
+            select: { name: true },
+          })
+        : null;
+      const cpName =
+        booking.bookedWithCpName &&
+        booking.bookedWithCpName !== booking.bookedWithCpId
+          ? booking.bookedWithCpName
+          : undefined;
       await notifyEoiPartnerPortal({
         event: "booking.confirmed",
         leadId: booking.lead?.leadId,
         eoiCpLeadId: booking.lead?.eoiCpLeadId,
         cpId: booking.bookedWithCpId || booking.lead?.cpId,
-        cpName: booking.bookedWithCpName,
+        cpName,
         crmLeadId: booking.lead?.goyalCrmId || booking.lead?.titanCrmId,
         phone: booking.lead?.customerPhone || booking.customerPhone,
         projectId: booking.unit.floor.tower.project.id,
         projectName: booking.unit.floor.tower.project.name,
+        salespersonId: booking.lead?.assignedSalesId ?? undefined,
+        salespersonName: salesUser?.name ?? undefined,
         completedAt: new Date(),
       });
     } catch (e) {
@@ -365,6 +379,32 @@ export function parseVisitingPartnerFromNotes(notes?: string | null): {
   };
 }
 
+/** Prefer a real CP display name over storing/sending the raw cpId. */
+async function resolveKnownCpName(
+  leadRegistryId: string,
+  cpId: string
+): Promise<string | null> {
+  const prior = await prisma.siteVisit.findFirst({
+    where: {
+      leadId: leadRegistryId,
+      visitingCpId: cpId,
+      visitingCpName: { not: null },
+    },
+    orderBy: { checkedInAt: "desc" },
+    select: { visitingCpName: true },
+  });
+  const name = prior?.visitingCpName?.trim();
+  if (name && name !== cpId) return name;
+  const fromNotes = await prisma.siteVisit.findFirst({
+    where: { leadId: leadRegistryId, notes: { contains: "Visiting with partner" } },
+    orderBy: { checkedInAt: "desc" },
+    select: { notes: true },
+  });
+  const parsed = parseVisitingPartnerFromNotes(fromNotes?.notes);
+  if (parsed?.partnerName && parsed.partnerName !== cpId) return parsed.partnerName;
+  return null;
+}
+
 export function startOfLocalDay(d = new Date()) {
   const start = new Date(d);
   start.setHours(0, 0, 0, 0);
@@ -388,7 +428,12 @@ export function mapLeadForBookingSearch(
   const visitingCp =
     structuredCpId || structuredCpName
       ? {
-          partnerName: structuredCpName || structuredCpId || "Partner",
+          partnerName:
+            (structuredCpName && structuredCpName !== structuredCpId
+              ? structuredCpName
+              : null) ||
+            fromNotes?.partnerName ||
+            "Channel Partner",
           cpId: structuredCpId ?? lead.cpId ?? undefined,
           fromToday: Boolean(todayVisit),
           checkedInAt: visitForCp?.checkedInAt?.toISOString() ?? null,
@@ -404,7 +449,7 @@ export function mapLeadForBookingSearch(
           }
         : lead.cpId
           ? {
-              partnerName: lead.cpId,
+              partnerName: "Channel Partner",
               cpId: lead.cpId,
               fromToday: Boolean(todayVisit),
               checkedInAt: todayVisit?.checkedInAt?.toISOString() ?? null,
@@ -426,10 +471,7 @@ export function mapLeadForBookingSearch(
     };
   });
 
-  const isPresales =
-    lead.source === "PRESALES" ||
-    Boolean(lead.goyalCrmId) ||
-    Boolean(lead.goyalLeadCode);
+  const isPresales = lead.source === "PRESALES";
 
   return {
     id: lead.id,
@@ -925,7 +967,9 @@ export async function markDirectLeadSiteVisitDone(input: {
       status: "COMPLETED",
       notes: input.notes ?? "Site visit done",
       visitingCpId: lead.cpId,
-      visitingCpName: lead.cpId,
+      visitingCpName: lead.cpId
+        ? await resolveKnownCpName(lead.id, lead.cpId)
+        : null,
       publicLeadId: lead.leadId,
       eoiCpLeadId: lead.eoiCpLeadId,
     },
@@ -953,7 +997,8 @@ export async function markDirectLeadSiteVisitDone(input: {
           siteVisitDone: true,
           notes: input.notes,
           visitingCpId: lead.cpId ?? undefined,
-          visitingCpName: lead.cpId ?? undefined,
+          visitingCpName:
+            (lead.cpId ? await resolveKnownCpName(lead.id, lead.cpId) : null) ?? undefined,
           salespersonName: salesUser?.name ?? undefined,
         });
         crmSynced = true;
@@ -974,6 +1019,7 @@ export async function markDirectLeadSiteVisitDone(input: {
       leadId: lead.leadId,
       eoiCpLeadId: lead.eoiCpLeadId,
       cpId: lead.cpId,
+      cpName: lead.cpId ? await resolveKnownCpName(lead.id, lead.cpId) : undefined,
       crmLeadId: lead.goyalCrmId || lead.titanCrmId,
       phone: lead.customerPhone,
       projectName: projectHint,
@@ -1054,7 +1100,13 @@ export async function markDirectLeadBooked(input: {
           orderBy: { checkedInAt: "desc" },
         });
         const bookedWithCpId = todayVisit?.visitingCpId || lead.cpId || undefined;
-        const bookedWithCpName = todayVisit?.visitingCpName || bookedWithCpId;
+        const bookedWithCpName =
+          (todayVisit?.visitingCpName &&
+          todayVisit.visitingCpName !== bookedWithCpId
+            ? todayVisit.visitingCpName
+            : null) ||
+          (bookedWithCpId ? await resolveKnownCpName(lead.id, bookedWithCpId) : null) ||
+          undefined;
 
         const payload = {
           booked: true as const,
@@ -1110,6 +1162,9 @@ export async function markDirectLeadBooked(input: {
   });
 
   if (needsSiteVisitRecord) {
+    const resolvedCpName = lead.cpId
+      ? await resolveKnownCpName(lead.id, lead.cpId)
+      : null;
     await prisma.siteVisit.create({
       data: {
         leadId: lead.id,
@@ -1117,7 +1172,7 @@ export async function markDirectLeadBooked(input: {
         status: "COMPLETED",
         notes: "Site visit completed with direct booking",
         visitingCpId: lead.cpId,
-        visitingCpName: lead.cpId,
+        visitingCpName: resolvedCpName,
         publicLeadId: lead.leadId,
         eoiCpLeadId: lead.eoiCpLeadId,
       },
@@ -1131,6 +1186,8 @@ export async function markDirectLeadBooked(input: {
             siteVisit: true,
             siteVisitDone: true,
             notes: "Site visit completed with direct booking",
+            visitingCpId: lead.cpId ?? undefined,
+            visitingCpName: resolvedCpName ?? undefined,
           });
         }
       } catch {
@@ -1144,15 +1201,21 @@ export async function markDirectLeadBooked(input: {
         typeof baseIntent === "string" && baseIntent.startsWith("eoi:")
           ? baseIntent.slice(4)
           : undefined;
+      const salesUser = await prisma.user.findUnique({
+        where: { id: input.salesUserId },
+        select: { name: true },
+      });
       await notifyEoiPartnerPortal({
         event: "site_visit.completed",
         leadId: lead.leadId,
         eoiCpLeadId: lead.eoiCpLeadId,
         cpId: lead.cpId,
+        cpName: resolvedCpName ?? undefined,
         crmLeadId: lead.goyalCrmId || lead.titanCrmId,
         phone: lead.customerPhone,
         projectName: projectHint,
         salespersonId: input.salesUserId,
+        salespersonName: salesUser?.name,
         completedAt: new Date(),
       });
     } catch (e) {
@@ -1169,7 +1232,12 @@ export async function markDirectLeadBooked(input: {
   const bookedWithCpId =
     todayVisit?.visitingCpId || lead.cpId || undefined;
   const bookedWithCpName =
-    todayVisit?.visitingCpName || bookedWithCpId || undefined;
+    (todayVisit?.visitingCpName &&
+    todayVisit.visitingCpName !== bookedWithCpId
+      ? todayVisit.visitingCpName
+      : null) ||
+    (bookedWithCpId ? await resolveKnownCpName(lead.id, bookedWithCpId) : null) ||
+    undefined;
 
   try {
     const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
@@ -1177,6 +1245,10 @@ export async function markDirectLeadBooked(input: {
       typeof baseIntent === "string" && baseIntent.startsWith("eoi:")
         ? baseIntent.slice(4)
         : undefined;
+    const salesUser = await prisma.user.findUnique({
+      where: { id: input.salesUserId },
+      select: { name: true },
+    });
     await notifyEoiPartnerPortal({
       event: "booking.confirmed",
       leadId: lead.leadId,
@@ -1187,6 +1259,7 @@ export async function markDirectLeadBooked(input: {
       phone: lead.customerPhone,
       projectName: projectHint,
       salespersonId: input.salesUserId,
+      salespersonName: salesUser?.name,
       completedAt: new Date(),
     });
   } catch (e) {

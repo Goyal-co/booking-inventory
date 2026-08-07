@@ -462,10 +462,17 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       eoiIdentityHint?.customerName ||
       leads[0]?.customerName ||
       String(titanResult?.customerName ?? "Partner guest");
+    const phoneFromQuery = (() => {
+      // Never treat Lead ID digits (e.g. EOI-xxx123) as a phone number
+      if (/^(EOI-|LEAD-)/i.test(query.trim())) return "";
+      const digits = query.replace(/\D/g, "");
+      return digits.length >= 10 ? digits.slice(-10) : "";
+    })();
     const phone =
       eoiIdentityHint?.primaryPhone ||
       leads[0]?.customerPhone ||
-      String(titanResult?.phone ?? query.replace(/\D/g, "").slice(-10) ?? "");
+      String(titanResult?.phone ?? "") ||
+      phoneFromQuery;
     const email =
       eoiIdentityHint?.primaryEmail || leads[0]?.customerEmail || undefined;
     const res = await fetch("/api/leads/from-eoi", {

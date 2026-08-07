@@ -99,7 +99,11 @@ export async function submitBooking(
         select: { cpId: true },
       });
       bookedWithCpId = todayVisit?.visitingCpId || leadRow?.cpId || null;
-      bookedWithCpName = todayVisit?.visitingCpName || bookedWithCpId;
+      bookedWithCpName =
+        todayVisit?.visitingCpName &&
+        todayVisit.visitingCpName !== bookedWithCpId
+          ? todayVisit.visitingCpName
+          : null;
     }
 
     if (requiresApproval) {
