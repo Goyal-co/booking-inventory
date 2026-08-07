@@ -20,6 +20,7 @@ interface LocalLead {
   customerEmail?: string | null;
   source: string;
   cpId?: string | null;
+  eoiCpLeadId?: string | null;
   titanCrmId?: string | null;
   createdAt?: string;
   project?: { name: string } | null;
@@ -48,6 +49,8 @@ interface LocalLead {
 }
 
 interface PartnerOption {
+  /** Unique CP × project association key from search API */
+  key?: string;
   leadId: string | null;
   publicLeadId: string;
   cpId: string;
@@ -58,6 +61,16 @@ interface PartnerOption {
   eoiCpLeadId?: string;
   projectId?: string;
   projectName?: string;
+  journeyStatus?: string;
+  siteVisitStatus?: string;
+}
+
+function partnerOptionKey(p: PartnerOption) {
+  return (
+    p.key ||
+    p.eoiCpLeadId ||
+    `${p.cpId}::${p.projectId || "none"}`
+  );
 }
 
 type SearchScenario =
@@ -169,7 +182,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [leads, setLeads] = useState<LocalLead[]>([]);
   const [scenario, setScenario] = useState<SearchScenario>("empty_query");
   const [partnerOptions, setPartnerOptions] = useState<PartnerOption[]>([]);
-  const [selectedPartnerCpId, setSelectedPartnerCpId] = useState("");
+  const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
   const [assignSalesId, setAssignSalesId] = useState("");
   const [searched, setSearched] = useState(false);
@@ -268,7 +281,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     setGoyalEoiHits(nextGoyal);
     setGoyalEoiSearchError(typeof d.goyalEoiError === "string" ? d.goyalEoiError : "");
     setSearched(true);
-    setSelectedPartnerCpId(nextPartners[0]?.cpId ?? nextLeads[0]?.cpId ?? "");
+    setSelectedPartnerKey(
+      nextPartners[0] ? partnerOptionKey(nextPartners[0]) : nextLeads[0]?.cpId ?? ""
+    );
     setSelectedLeadId(nextLeads[0]?.id ?? "");
     setAssignSalesId("");
 
@@ -507,12 +522,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     let leadId = selectedLeadId;
 
     if (scenario === "found_multi_partner") {
-      const opt = partnerOptions.find((p) => p.cpId === selectedPartnerCpId);
+      const opt = partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey);
       if (!opt) {
-        toast.error("Select which channel partner they are visiting with today");
+        toast.error("Select which partner and project they are visiting for today");
         return;
       }
-      leadId = opt.leadId || leads.find((l) => l.cpId === opt.cpId)?.id || leadId;
+      leadId =
+        opt.leadId ||
+        leads.find((l) => l.eoiCpLeadId && l.eoiCpLeadId === opt.eoiCpLeadId)?.id ||
+        leads.find((l) => l.cpId === opt.cpId)?.id ||
+        leadId;
       if (!leadId) {
         if (opt.eoiCpLeadId && opt.publicLeadId) {
           const created = await materializeFromEoi({
@@ -552,7 +571,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     // EOI identity only (no local row yet)
     if (!leadId && partnerOptions[0]?.eoiCpLeadId && partnerOptions[0]?.publicLeadId) {
       const opt =
-        partnerOptions.find((p) => p.cpId === selectedPartnerCpId) || partnerOptions[0];
+        partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey) ||
+        partnerOptions[0];
       const created = await materializeFromEoi({
         cpId: opt.cpId,
         partnerName: opt.partnerName,
@@ -577,7 +597,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     // Titan-only single partner / single hit — materialize then assign
     if (!leadId && titanResult?.found) {
       const opt =
-        partnerOptions.find((p) => p.cpId === selectedPartnerCpId) || partnerOptions[0];
+        partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey) ||
+        partnerOptions[0];
       const created = await materializeFromTitan({
         cpId: opt?.cpId,
         partnerName: opt?.partnerName,
@@ -602,12 +623,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     }
     const lead = leads.find((l) => l.id === leadId) ?? leads[0];
     const opt =
-      partnerOptions.find((p) => p.cpId === selectedPartnerCpId) ||
+      partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey) ||
       partnerOptions.find((p) => p.cpId === lead?.cpId) ||
       partnerOptions[0];
     await assign(leadId, assignSalesId, {
       visitingPartnerCpId: opt?.cpId ?? lead?.cpId ?? undefined,
-      visitingPartnerName: opt?.partnerName ?? lead?.visitingCp?.partnerName ?? lead?.cpId ?? undefined,
+      visitingPartnerName:
+        opt?.partnerName ?? lead?.visitingCp?.partnerName ?? undefined,
       eoiCpLeadId: opt?.eoiCpLeadId,
       projectId: opt?.projectId,
       projectName: opt?.projectName ?? lead?.project?.name,
@@ -1021,42 +1043,52 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
             {searched && scenario === "found_multi_partner" && (
               <div className="rounded-xl border bg-white p-5">
-                <h3 className="font-semibold">Multiple channel partners</h3>
+                <h3 className="font-semibold">Confirm partner &amp; project</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  This visitor is registered with more than one partner. Select who they are with
-                  today, then assign a salesperson.
+                  This visitor has more than one partner/project registration. Select which
+                  partner and project today&apos;s site visit (or booking) is for, then assign a
+                  salesperson.
                 </p>
                 <div className="mt-4 space-y-2">
-                  {partnerOptions.map((p) => (
+                  {partnerOptions.map((p) => {
+                    const key = partnerOptionKey(p);
+                    const selected = selectedPartnerKey === key;
+                    return (
                     <label
-                      key={`${p.cpId}-${p.submittedAt}-${p.leadId ?? "t"}`}
+                      key={key}
                       className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${
-                        selectedPartnerCpId === p.cpId ? "border-brand-500 bg-brand-50/40" : ""
+                        selected ? "border-brand-500 bg-brand-50/40" : ""
                       }`}
                     >
                       <input
                         type="radio"
                         className="mt-1"
-                        name="visiting-partner"
-                        checked={selectedPartnerCpId === p.cpId}
+                        name="visiting-partner-project"
+                        checked={selected}
                         onChange={() => {
-                          setSelectedPartnerCpId(p.cpId);
+                          setSelectedPartnerKey(key);
                           if (p.leadId) setSelectedLeadId(p.leadId);
                         }}
                       />
                       <span>
                         <span className="font-medium">{p.partnerName}</span>
-                        <span className="text-gray-500"> · {p.cpId}</span>
-                        {p.tag ? (
+                        {p.projectName ? (
+                          <span className="ml-2 rounded bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-800">
+                            {p.projectName}
+                          </span>
+                        ) : p.tag ? (
                           <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs">{p.tag}</span>
                         ) : null}
                         <span className="mt-0.5 block text-xs text-gray-500">
                           Submitted {formatStamp(p.submittedAt)}
                           {p.publicLeadId ? ` · ${p.publicLeadId}` : ""}
+                          {p.siteVisitStatus === "COMPLETED" ? " · Site visit done" : ""}
+                          {p.journeyStatus === "BOOKED" ? " · Booked" : ""}
                         </span>
                       </span>
                     </label>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="mt-4 flex flex-wrap items-end gap-2">
                   <div className="min-w-[200px] flex-1">
@@ -1074,7 +1106,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       ))}
                     </select>
                   </div>
-                  <Button onClick={() => void confirmAndAssign()}>Confirm partner &amp; assign</Button>
+                  <Button onClick={() => void confirmAndAssign()}>
+                    Confirm project &amp; assign
+                  </Button>
                 </div>
               </div>
             )}
@@ -1086,7 +1120,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 Boolean(eoiIdentityHint) ||
                 partnerOptions.length > 0) && (
               <div className="rounded-xl border bg-white p-5">
-                <h3 className="font-semibold">Lead found — confirm partner</h3>
+                <h3 className="font-semibold">Lead found — confirm partner &amp; project</h3>
                 <div className="mt-3 space-y-3">
                   {eoiIdentityHint && leads.length === 0 ? (
                     <div className="rounded-lg border border-dashed p-3 text-sm">
@@ -1102,6 +1136,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                         · Partner Portal
                         {partnerOptions[0]
                           ? ` · Partner ${partnerOptions[0].partnerName}`
+                          : ""}
+                        {partnerOptions[0]?.projectName
+                          ? ` · Project ${partnerOptions[0].projectName}`
                           : ""}
                       </p>
                       <p className="mt-1 text-xs text-gray-500">
@@ -1187,6 +1224,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                         {String(titanResult.phone ?? "")} · Titan
                         {partnerOptions[0]
                           ? ` · Partner ${partnerOptions[0].partnerName}`
+                          : ""}
+                        {partnerOptions[0]?.projectName
+                          ? ` · Project ${partnerOptions[0].projectName}`
                           : ""}
                       </p>
                       <p className="mt-1 text-xs text-gray-500">

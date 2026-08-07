@@ -191,6 +191,8 @@ export async function GET_leadsSearch(req: NextRequest) {
   }
 
   type PartnerOpt = {
+    /** Stable UI/select key — one row per CP × project association */
+    key: string;
     leadId: string | null;
     publicLeadId: string;
     cpId: string;
@@ -201,55 +203,91 @@ export async function GET_leadsSearch(req: NextRequest) {
     eoiCpLeadId?: string;
     projectId?: string;
     projectName?: string;
+    journeyStatus?: string;
+    siteVisitStatus?: string;
   };
 
-  const localPartnerOpts: PartnerOpt[] = leads
-    .filter((l) => l.cpId)
-    .map((l) => {
-      const latestVisit = l.siteVisits?.[0];
-      const fromNotes = latestVisit
-        ? parseVisitingPartnerFromNotes(latestVisit.notes)
-        : null;
-      const name =
-        (latestVisit?.visitingCpName && latestVisit.visitingCpName !== l.cpId
-          ? latestVisit.visitingCpName
-          : null) ||
-        fromNotes?.partnerName ||
-        null;
-      return {
-        leadId: l.id,
-        publicLeadId: l.leadId,
-        cpId: l.cpId as string,
-        partnerName: name || "Channel Partner",
-        submittedAt: l.createdAt.toISOString(),
-        source: String(l.source),
-        tag: l.intentType ?? undefined,
-        eoiCpLeadId: l.eoiCpLeadId ?? undefined,
-      };
-    });
+  const associationKey = (p: {
+    eoiCpLeadId?: string | null;
+    cpId: string;
+    projectId?: string | null;
+  }) =>
+    p.eoiCpLeadId?.trim() ||
+    `${p.cpId}::${p.projectId || "none"}`;
 
-  const titanPartnerOpts: PartnerOpt[] = (titanPartners as Array<Record<string, unknown>>).map((p) => ({
-    leadId: null,
-    publicLeadId: String(titanResult?.leadId ?? ""),
-    cpId: String(p.cpId ?? ""),
-    partnerName: String(p.partnerName ?? p.cpId ?? "Partner"),
-    submittedAt: String(p.submittedAt ?? ""),
-    source: "TITAN",
-    tag: p.tag ? String(p.tag) : undefined,
-  }));
-
-  const partnerByCp = new Map<string, PartnerOpt>();
-  for (const p of [...titanPartnerOpts, ...localPartnerOpts]) {
-    if (!p.cpId) continue;
-    const existing = partnerByCp.get(p.cpId);
-    // Prefer local lead id when available
-    if (!existing || (!existing.leadId && p.leadId)) partnerByCp.set(p.cpId, p);
-    else if (existing && p.partnerName && existing.partnerName === existing.cpId && p.partnerName !== p.cpId) {
-      partnerByCp.set(p.cpId, { ...existing, partnerName: p.partnerName, tag: p.tag ?? existing.tag });
+  const optionsByKey = new Map<string, PartnerOpt>();
+  const upsertOption = (opt: PartnerOpt) => {
+    if (!opt.cpId) return;
+    const existing = optionsByKey.get(opt.key);
+    if (!existing) {
+      optionsByKey.set(opt.key, opt);
+      return;
     }
+    optionsByKey.set(opt.key, {
+      ...existing,
+      ...opt,
+      leadId: opt.leadId || existing.leadId,
+      partnerName:
+        opt.partnerName && opt.partnerName !== opt.cpId
+          ? opt.partnerName
+          : existing.partnerName,
+      projectName: opt.projectName || existing.projectName,
+      projectId: opt.projectId || existing.projectId,
+      eoiCpLeadId: opt.eoiCpLeadId || existing.eoiCpLeadId,
+      tag: opt.tag || existing.tag,
+    });
+  };
+
+  for (const l of leads.filter((row) => row.cpId)) {
+    const latestVisit = l.siteVisits?.[0];
+    const fromNotes = latestVisit
+      ? parseVisitingPartnerFromNotes(latestVisit.notes)
+      : null;
+    const name =
+      (latestVisit?.visitingCpName && latestVisit.visitingCpName !== l.cpId
+        ? latestVisit.visitingCpName
+        : null) ||
+      fromNotes?.partnerName ||
+      null;
+    const projectId = l.project?.id;
+    const projectName = l.project?.name;
+    upsertOption({
+      key: associationKey({
+        eoiCpLeadId: l.eoiCpLeadId,
+        cpId: l.cpId as string,
+        projectId,
+      }),
+      leadId: l.id,
+      publicLeadId: l.leadId,
+      cpId: l.cpId as string,
+      partnerName: name || "Channel Partner",
+      submittedAt: l.createdAt.toISOString(),
+      source: String(l.source),
+      tag: projectName || l.intentType || undefined,
+      eoiCpLeadId: l.eoiCpLeadId ?? undefined,
+      projectId,
+      projectName,
+    });
   }
 
-  // Enrich with EOI canonical identity partners (same public Lead ID / phone / email)
+  for (const p of titanPartners as Array<Record<string, unknown>>) {
+    const cpId = String(p.cpId ?? "");
+    if (!cpId) continue;
+    upsertOption({
+      key: associationKey({ cpId, projectId: p.projectId ? String(p.projectId) : null }),
+      leadId: null,
+      publicLeadId: String(titanResult?.leadId ?? ""),
+      cpId,
+      partnerName: String(p.partnerName ?? p.cpId ?? "Partner"),
+      submittedAt: String(p.submittedAt ?? ""),
+      source: "TITAN",
+      tag: p.tag ? String(p.tag) : undefined,
+      projectId: p.projectId ? String(p.projectId) : undefined,
+      projectName: p.projectName ? String(p.projectName) : undefined,
+    });
+  }
+
+  // Enrich with EOI canonical identity — one selectable row per CP×project punch
   let eoiIdentity: Awaited<ReturnType<typeof import("@booking/database").fetchEoiLeadIdentity>> = null;
   try {
     const { fetchEoiLeadIdentity } = await import("@booking/database");
@@ -260,50 +298,92 @@ export async function GET_leadsSearch(req: NextRequest) {
       phone: sample?.customerPhone || (digits.length >= 10 ? digits.slice(-10) : undefined),
       email: sample?.customerEmail || (q.includes("@") ? q.trim() : undefined),
     });
-    if (eoiIdentity?.partners?.length) {
-      for (const partner of eoiIdentity.partners) {
-        const assoc = eoiIdentity.associations.find((a) => a.cpId === partner.cpId);
+    if (eoiIdentity?.associations?.length) {
+      for (const assoc of eoiIdentity.associations) {
+        const partner = eoiIdentity.partners.find((p) => p.cpId === assoc.cpId);
         const localMatch =
-          leads.find((l) => l.cpId === partner.cpId) ||
-          leads.find((l) => l.eoiCpLeadId && partner.eoiCpLeadIds.includes(l.eoiCpLeadId));
-        const existing = partnerByCp.get(partner.cpId);
-        const merged: PartnerOpt = {
-          leadId: localMatch?.id ?? existing?.leadId ?? null,
-          publicLeadId: eoiIdentity.leadId || existing?.publicLeadId || "",
-          cpId: partner.cpId,
-          partnerName: partner.name || partner.companyName || partner.cpId,
-          submittedAt: assoc?.createdAt || existing?.submittedAt || new Date().toISOString(),
-          source: existing?.source || "CHANNEL_PARTNER",
-          tag: assoc?.projectName || existing?.tag,
-          eoiCpLeadId: assoc?.eoiCpLeadId || partner.eoiCpLeadIds[0],
-          projectId: assoc?.projectId,
-          projectName: assoc?.projectName,
-        };
-        partnerByCp.set(
-          partner.cpId,
-          existing ? { ...existing, ...merged, leadId: merged.leadId || existing.leadId } : merged
-        );
+          leads.find((l) => l.eoiCpLeadId === assoc.eoiCpLeadId) ||
+          leads.find(
+            (l) =>
+              l.cpId === assoc.cpId &&
+              (l.project?.id === assoc.projectId || !l.project?.id)
+          );
+        upsertOption({
+          key: associationKey({
+            eoiCpLeadId: assoc.eoiCpLeadId,
+            cpId: assoc.cpId,
+            projectId: assoc.projectId,
+          }),
+          leadId: localMatch?.id ?? null,
+          publicLeadId: eoiIdentity.leadId || assoc.publicLeadId || "",
+          cpId: assoc.cpId,
+          partnerName:
+            partner?.name || partner?.companyName || assoc.cpName || "Channel Partner",
+          submittedAt: assoc.createdAt || new Date().toISOString(),
+          source: "CHANNEL_PARTNER",
+          tag: assoc.projectName,
+          eoiCpLeadId: assoc.eoiCpLeadId,
+          projectId: assoc.projectId,
+          projectName: assoc.projectName,
+          journeyStatus: assoc.journeyStatus,
+          siteVisitStatus: assoc.siteVisitStatus ?? undefined,
+        });
+      }
+    } else if (eoiIdentity?.partners?.length) {
+      for (const partner of eoiIdentity.partners) {
+        for (const project of partner.projects?.length
+          ? partner.projects
+          : [{ id: "", name: "", eoiStatus: "" }]) {
+          const assoc = eoiIdentity.associations.find(
+            (a) => a.cpId === partner.cpId && (!project.id || a.projectId === project.id)
+          );
+          const localMatch =
+            leads.find(
+              (l) => l.eoiCpLeadId && partner.eoiCpLeadIds.includes(l.eoiCpLeadId)
+            ) || leads.find((l) => l.cpId === partner.cpId);
+          upsertOption({
+            key: associationKey({
+              eoiCpLeadId: assoc?.eoiCpLeadId || partner.eoiCpLeadIds[0],
+              cpId: partner.cpId,
+              projectId: project.id || assoc?.projectId,
+            }),
+            leadId: localMatch?.id ?? null,
+            publicLeadId: eoiIdentity.leadId || "",
+            cpId: partner.cpId,
+            partnerName: partner.name || partner.companyName || partner.cpId,
+            submittedAt: assoc?.createdAt || new Date().toISOString(),
+            source: "CHANNEL_PARTNER",
+            tag: project.name || assoc?.projectName,
+            eoiCpLeadId: assoc?.eoiCpLeadId || partner.eoiCpLeadIds[0],
+            projectId: project.id || assoc?.projectId,
+            projectName: project.name || assoc?.projectName,
+          });
+        }
       }
     }
   } catch {
     /* optional enrichment */
   }
 
-  // EOI-only identity (no local/Titan/Goyal row yet) → still show CP card(s)
-  // Prefer Partner Portal partners over Goyal CRM-only scenario when present.
-  if (eoiIdentity && partnerByCp.size > 0) {
+  const partnerOptions = Array.from(optionsByKey.values()).sort((a, b) =>
+    String(b.submittedAt).localeCompare(String(a.submittedAt))
+  );
+
+  // Multiple CP×project associations → reception must confirm which project today
+  if (eoiIdentity && partnerOptions.length > 0) {
     if (
       scenario === "not_found" ||
       scenario === "empty_query" ||
       scenario === "titan_needs_partner" ||
       scenario === "found_goyal_eoi" ||
-      (scenario === "found_single" && partnerByCp.size > 1)
+      scenario === "found_single"
     ) {
-      scenario = partnerByCp.size > 1 ? "found_multi_partner" : "found_single";
-    } else if (partnerByCp.size > 1 && scenario === "found_single") {
-      scenario = "found_multi_partner";
+      scenario = partnerOptions.length > 1 ? "found_multi_partner" : "found_single";
     }
-  } else if (partnerByCp.size > 1 && (scenario === "found_single" || scenario === "found_goyal_eoi")) {
+  } else if (
+    partnerOptions.length > 1 &&
+    (scenario === "found_single" || scenario === "found_goyal_eoi")
+  ) {
     scenario = "found_multi_partner";
   }
 
@@ -311,9 +391,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     leads: leads.map(mapLeadForBookingSearch),
     titanResult,
     scenario,
-    partnerOptions: Array.from(partnerByCp.values()).sort((a, b) =>
-      String(a.submittedAt).localeCompare(String(b.submittedAt))
-    ),
+    partnerOptions,
     eoiIdentity: eoiIdentity
       ? {
           leadId: eoiIdentity.leadId,
