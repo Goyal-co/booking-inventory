@@ -2,8 +2,8 @@
  * Notify EOI Partner Portal when Reception / Booking Inventory completes
  * a site visit or confirms a booking.
  *
- * Env:
- *   EOI_CP_URL — e.g. https://eoi-web-phi.vercel.app
+ * Env (required on Reception + Sales deploy):
+ *   EOI_CP_URL — live Partner Portal origin (e.g. https://eoi-web-phi.vercel.app)
  *   INTEGRATION_WEBHOOK_SECRET — must match EOI_CP
  */
 
@@ -35,13 +35,18 @@ export async function notifyEoiPartnerPortal(input: {
   event: EoiPortalEvent;
   /** Public EOI lead id (EOI-… / LEAD-…) — preferred */
   leadId?: string | null;
-  /** EOI Partner Portal Lead.id (cuid) */
+  /** EOI Partner Portal Lead.id (cuid) — association for this CP */
   eoiCpLeadId?: string | null;
+  /** Channel partner id — scopes update/notify to that CP only */
+  cpId?: string | null;
+  cpName?: string | null;
   /** Goyal / Titan CRM lead id */
   crmLeadId?: string | null;
   phone?: string | null;
   projectId?: string | null;
   projectName?: string | null;
+  salespersonId?: string | null;
+  salespersonName?: string | null;
   completedAt?: string | Date | null;
 }): Promise<{ ok: boolean; skipped?: boolean; status?: number; body?: unknown }> {
   const base = eoiBaseUrl();
@@ -80,6 +85,8 @@ export async function notifyEoiPartnerPortal(input: {
         publicLeadId: leadId,
         eoiCpLeadId,
         internalLeadId: eoiCpLeadId,
+        cpId: input.cpId?.trim() || undefined,
+        cpName: input.cpName?.trim() || undefined,
         crmLeadId,
         titanCrmId: crmLeadId,
         phone,
@@ -87,7 +94,11 @@ export async function notifyEoiPartnerPortal(input: {
         customerMobile: phone,
         projectId: input.projectId?.trim() || undefined,
         projectName: input.projectName?.trim() || undefined,
+        salespersonId: input.salespersonId?.trim() || undefined,
+        salespersonName: input.salespersonName?.trim() || undefined,
+        salesperson: input.salespersonName?.trim() || input.salespersonId?.trim() || undefined,
         completedAt,
+        occurredAt: completedAt,
       }),
     });
     const body = await res.json().catch(() => null);

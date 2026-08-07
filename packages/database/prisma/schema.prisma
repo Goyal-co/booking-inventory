@@ -431,6 +431,9 @@ model Booking {
   lead              LeadRegistry? @relation(fields: [leadId], references: [id], onDelete: SetNull)
   titanCrmId        String?
   postCrmId         String?
+  /// CP with whom the customer booked / came for booking
+  bookedWithCpId    String?
+  bookedWithCpName  String?
   /// Snapshot of filled digital form + template branding for print/sign (survives block delete)
   formSnapshot      Json?
   digitalForm       DigitalBookingForm?
@@ -440,6 +443,7 @@ model Booking {
   @@index([userId, status])
   @@index([status])
   @@index([leadId])
+  @@index([bookedWithCpId])
 }
 
 model OrgBookingFormTemplate {
@@ -625,18 +629,27 @@ model LeadRegistry {
 }
 
 model SiteVisit {
-  id           String          @id @default(cuid())
-  leadId       String
-  lead         LeadRegistry    @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  salesUserId  String?
-  salesUser    User?           @relation("SalesVisitAssignee", fields: [salesUserId], references: [id], onDelete: SetNull)
-  status       SiteVisitStatus @default(CHECKED_IN)
-  checkedInAt  DateTime        @default(now())
-  notes        String?
-  createdAt    DateTime        @default(now())
+  id              String          @id @default(cuid())
+  leadId          String
+  lead            LeadRegistry    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  salesUserId     String?
+  salesUser       User?           @relation("SalesVisitAssignee", fields: [salesUserId], references: [id], onDelete: SetNull)
+  status          SiteVisitStatus @default(CHECKED_IN)
+  checkedInAt     DateTime        @default(now())
+  notes           String?
+  /// Structured visiting CP (who brought the customer to site today)
+  visitingCpId    String?
+  visitingCpName  String?
+  projectId       String?
+  projectName     String?
+  eoiCpLeadId     String?
+  publicLeadId    String?
+  createdAt       DateTime        @default(now())
 
   @@index([leadId])
   @@index([checkedInAt])
+  @@index([visitingCpId])
+  @@index([publicLeadId])
 }
 
 model PaymentRecord {

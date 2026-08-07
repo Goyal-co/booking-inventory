@@ -22,12 +22,22 @@ export interface TitanBookingPayload {
   designation?: string;
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
+  bookedWithCpId?: string;
+  bookedWithCpName?: string;
+  visitingCpId?: string;
+  visitingCpName?: string;
 }
 
 export interface TitanCRMProvider {
   syncLead(data: TitanLeadPayload): Promise<{ crmId: string }>;
   syncEOI(data: Record<string, unknown>): Promise<{ crmId: string }>;
-  syncSiteVisit(data: { leadId: string; salesUserId: string; notes?: string }): Promise<void>;
+  syncSiteVisit(data: {
+    leadId: string;
+    salesUserId: string;
+    notes?: string;
+    cpId?: string;
+    cpName?: string;
+  }): Promise<void>;
   syncBlock(data: { blockId: string; leadId?: string; projectName: string; unitNumber: string }): Promise<{ crmId: string }>;
   syncBooking(data: TitanBookingPayload): Promise<{ crmId: string }>;
   searchLead(query: { leadId?: string; phone?: string }): Promise<Record<string, unknown> | null>;

@@ -48,6 +48,7 @@ type BookingLeadResult = {
   goyalLeadCode?: string | null;
   eoiCpLeadId?: string | null;
   siteVisitStatus?: string;
+  isPresales?: boolean;
   project?: { id: string; name: string } | null;
   assignedSales?: { id: string; name: string } | null;
   visitingCp?: {
@@ -57,6 +58,14 @@ type BookingLeadResult = {
     checkedInAt?: string | null;
     salesUserName?: string | null;
   } | null;
+  visitHistory?: Array<{
+    id: string;
+    checkedInAt: string;
+    projectName?: string | null;
+    visitingCpId?: string | null;
+    visitingCpName?: string | null;
+    salesUserName?: string | null;
+  }>;
   todaySiteVisit?: {
     id: string;
     status: string;
@@ -917,7 +926,14 @@ function LiveBookingContent() {
               <div className="mt-3 space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <p className="font-semibold text-gray-900">{selectedLead.customerName}</p>
+                    <p className="font-semibold text-gray-900">
+                      {selectedLead.customerName}
+                      {selectedLead.isPresales || selectedLead.source === "PRESALES" ? (
+                        <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800">
+                          Presales
+                        </span>
+                      ) : null}
+                    </p>
                     <p className="text-xs text-gray-600">{selectedLead.leadId}</p>
                   </div>
                   {(selectedLead.intentType ?? "").includes("|booked") ? (
@@ -984,6 +1000,23 @@ function LiveBookingContent() {
                       </p>
                     )}
                   </div>
+                  {selectedLead.visitHistory && selectedLead.visitHistory.length > 0 ? (
+                    <div className="sm:col-span-2 rounded border border-emerald-100 bg-white/70 p-2">
+                      <p className="text-xs font-medium text-gray-700">Prior site visits</p>
+                      <ul className="mt-1 space-y-1">
+                        {selectedLead.visitHistory.slice(0, 5).map((v) => (
+                          <li key={v.id} className="text-xs text-gray-600">
+                            {new Date(v.checkedInAt).toLocaleString()}
+                            {v.visitingCpName || v.visitingCpId
+                              ? ` · CP ${v.visitingCpName || v.visitingCpId}`
+                              : ""}
+                            {v.projectName ? ` · ${v.projectName}` : ""}
+                            {v.salesUserName ? ` · ${v.salesUserName}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   {(selectedLead.goyalLeadCode || selectedLead.goyalCrmId) && (
                     <div className="sm:col-span-2">
                       <dt className="text-xs text-gray-500">Goyal CRM</dt>

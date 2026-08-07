@@ -517,12 +517,26 @@ export async function markGoyalSiteVisit(
   input: MarkSiteVisitInput = {}
 ): Promise<GoyalCrmLead> {
   const today = new Date().toISOString().slice(0, 10);
+  const visitNoteParts = [
+    input.notes,
+    input.visitingCpName || input.visitingCpId
+      ? `Visiting CP: ${input.visitingCpName || input.visitingCpId}${
+          input.visitingCpId && input.visitingCpName ? ` (${input.visitingCpId})` : ""
+        }`
+      : null,
+    input.salespersonName ? `Sales: ${input.salespersonName}` : null,
+    `Site visit at ${new Date().toISOString()}`,
+  ].filter(Boolean);
+  const notes = visitNoteParts.join(" — ") || undefined;
+
   const payload = compactEoiPayload({
     siteVisit: true,
     siteVisitDate: input.siteVisitDate ?? today,
     siteVisitDone: input.siteVisitDone ?? true,
     siteVisitDoneDate: input.siteVisitDoneDate ?? today,
-    ...(input.notes ? { notes: input.notes } : {}),
+    ...(notes ? { notes } : {}),
+    ...(input.visitingCpId ? { channelPartnerId: input.visitingCpId } : {}),
+    ...(input.visitingCpName ? { channelPartnerName: input.visitingCpName } : {}),
   } as Record<string, unknown>);
 
   try {
@@ -539,7 +553,8 @@ export async function markGoyalSiteVisit(
         siteVisitDate: input.siteVisitDate ?? today,
         siteVisitDone: input.siteVisitDone ?? true,
         siteVisitDoneDate: input.siteVisitDoneDate ?? today,
-      });
+        ...(notes ? { notes } : {}),
+      } as UpdateGoyalLeadInput);
     }
     throw err;
   }

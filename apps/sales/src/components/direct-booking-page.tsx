@@ -17,6 +17,7 @@ type DirectLead = {
   siteVisitStatus: string;
   siteVisitDone?: boolean;
   isBooked?: boolean;
+  isPresales?: boolean;
   updatedAt?: string;
   project?: { id: string; name: string } | null;
   visitingCp?: {
@@ -166,7 +167,14 @@ export function DirectBookingPage() {
             {leads.map((l) => (
               <tr key={l.id} className="border-b last:border-0 align-top">
                 <td className="px-4 py-3">
-                  <p className="font-medium text-gray-900">{l.customerName}</p>
+                  <p className="font-medium text-gray-900">
+                    {l.customerName}
+                    {l.isPresales || l.source === "PRESALES" ? (
+                      <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800">
+                        Presales
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="text-xs text-gray-500">{l.leadId}</p>
                   <p className="text-xs text-gray-600">{l.customerPhone}</p>
                   {l.customerEmail ? (

@@ -17,4 +17,5 @@ export * from "./cost-sheet-engine";
 export * from "./block-customer";
 export * from "./integration";
 export * from "./eoi-cp-notify";
+export * from "./eoi-identity";
 export * from "./digital-booking";

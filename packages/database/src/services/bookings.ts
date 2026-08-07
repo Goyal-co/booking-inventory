@@ -85,6 +85,23 @@ export async function submitBooking(
     const costSheetSnapshot = buildCostSheetSnapshot(costSheet);
     const requiresApproval = projectSettings.requiresBookingApproval === true;
 
+    let bookedWithCpId: string | null = null;
+    let bookedWithCpName: string | null = null;
+    if (block.leadId) {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const todayVisit = await tx.siteVisit.findFirst({
+        where: { leadId: block.leadId, checkedInAt: { gte: dayStart } },
+        orderBy: { checkedInAt: "desc" },
+      });
+      const leadRow = await tx.leadRegistry.findUnique({
+        where: { id: block.leadId },
+        select: { cpId: true },
+      });
+      bookedWithCpId = todayVisit?.visitingCpId || leadRow?.cpId || null;
+      bookedWithCpName = todayVisit?.visitingCpName || bookedWithCpId;
+    }
+
     if (requiresApproval) {
       const booking = await tx.booking.create({
         data: {
@@ -98,6 +115,8 @@ export async function submitBooking(
           totalPrice: costSheet?.totalPrice ?? 0,
           status: BookingStatus.PENDING,
           submittedAt: new Date(),
+          bookedWithCpId,
+          bookedWithCpName,
         },
       });
 
@@ -155,6 +174,8 @@ export async function submitBooking(
         costSheetSnapshot,
         totalPrice: costSheet?.totalPrice ?? 0,
         status: BookingStatus.CONFIRMED,
+        bookedWithCpId,
+        bookedWithCpName,
       },
     });
 

@@ -94,6 +94,10 @@ export type BookEoiLeadInput = {
   designation?: string;
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
+  /** CP with whom customer booked / came today */
+  channelPartnerId?: string;
+  channelPartnerName?: string;
+  notes?: string;
 };
 
 export type UpdateGoyalLeadInput = {
@@ -119,6 +123,7 @@ export type UpdateGoyalLeadInput = {
   designation?: string;
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
+  notes?: string;
 };
 
 export type MarkSiteVisitInput = {
@@ -127,4 +132,8 @@ export type MarkSiteVisitInput = {
   siteVisitDone?: boolean;
   siteVisitDoneDate?: string;
   notes?: string;
+  /** Channel partner who brought the customer (sent in notes / optional CRM fields). */
+  visitingCpId?: string;
+  visitingCpName?: string;
+  salespersonName?: string;
 };

@@ -31,6 +31,15 @@ interface LocalLead {
     checkedInAt?: string | null;
     salesUserName?: string | null;
   } | null;
+  visitHistory?: Array<{
+    id: string;
+    checkedInAt: string;
+    projectName?: string | null;
+    visitingCpId?: string | null;
+    visitingCpName?: string | null;
+    salesUserName?: string | null;
+  }>;
+  isPresales?: boolean;
   todaySiteVisit?: {
     checkedInAt: string;
     salesUser?: { name: string } | null;
@@ -46,6 +55,9 @@ interface PartnerOption {
   submittedAt: string;
   source: string;
   tag?: string;
+  eoiCpLeadId?: string;
+  projectId?: string;
+  projectName?: string;
 }
 
 type SearchScenario =
@@ -60,7 +72,16 @@ type SearchScenario =
 interface Visit {
   id: string;
   checkedInAt: string;
-  lead?: { leadId: string; customerName: string; customerPhone: string } | null;
+  visitingCpId?: string | null;
+  visitingCpName?: string | null;
+  projectName?: string | null;
+  lead?: {
+    leadId: string;
+    customerName: string;
+    customerPhone: string;
+    customerEmail?: string | null;
+    isPresales?: boolean;
+  } | null;
   salesUser?: { name: string } | null;
 }
 
@@ -159,6 +180,12 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     phone?: string;
     [key: string]: unknown;
   } | null>(null);
+  const [eoiIdentityHint, setEoiIdentityHint] = useState<{
+    leadId: string;
+    customerName?: string | null;
+    primaryPhone?: string | null;
+    primaryEmail?: string | null;
+  } | null>(null);
   const [goyalEoiHits, setGoyalEoiHits] = useState<EoiLead[]>([]);
   const [goyalEoiSearchError, setGoyalEoiSearchError] = useState("");
   const [sales, setSales] = useState<Array<{ id: string; name: string }>>([]);
@@ -228,6 +255,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     setPartnerOptions(nextPartners);
     setScenario(nextScenario);
     setTitanResult((d.titanResult as typeof titanResult) ?? null);
+    setEoiIdentityHint(
+      d.eoiIdentity && typeof d.eoiIdentity === "object"
+        ? (d.eoiIdentity as {
+            leadId: string;
+            customerName?: string | null;
+            primaryPhone?: string | null;
+            primaryEmail?: string | null;
+          })
+        : null
+    );
     setGoyalEoiHits(nextGoyal);
     setGoyalEoiSearchError(typeof d.goyalEoiError === "string" ? d.goyalEoiError : "");
     setSearched(true);
@@ -349,7 +386,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const assign = async (
     leadId: string,
     salesUserId: string,
-    partner?: { visitingPartnerCpId?: string; visitingPartnerName?: string }
+    partner?: {
+      visitingPartnerCpId?: string;
+      visitingPartnerName?: string;
+      eoiCpLeadId?: string;
+      projectId?: string;
+      projectName?: string;
+    }
   ) => {
     const res = await fetch(`/api/leads/${leadId}/assign`, {
       method: "POST",
@@ -358,6 +401,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         salesUserId,
         visitingPartnerCpId: partner?.visitingPartnerCpId,
         visitingPartnerName: partner?.visitingPartnerName,
+        eoiCpLeadId: partner?.eoiCpLeadId,
+        projectId: partner?.projectId,
+        projectName: partner?.projectName,
       }),
     });
     if (res.ok) {
@@ -403,6 +449,49 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     return d.lead as { id: string; leadId: string };
   };
 
+  const materializeFromEoi = async (opts: {
+    cpId: string;
+    partnerName?: string;
+    publicLeadId: string;
+    eoiCpLeadId: string;
+    projectId?: string;
+    projectName?: string;
+    tag?: string;
+  }) => {
+    const name =
+      eoiIdentityHint?.customerName ||
+      leads[0]?.customerName ||
+      String(titanResult?.customerName ?? "Partner guest");
+    const phone =
+      eoiIdentityHint?.primaryPhone ||
+      leads[0]?.customerPhone ||
+      String(titanResult?.phone ?? query.replace(/\D/g, "").slice(-10) ?? "");
+    const email =
+      eoiIdentityHint?.primaryEmail || leads[0]?.customerEmail || undefined;
+    const res = await fetch("/api/leads/from-eoi", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        publicLeadId: opts.publicLeadId,
+        eoiCpLeadId: opts.eoiCpLeadId,
+        customerName: name,
+        customerPhone: phone,
+        customerEmail: email || "",
+        cpId: opts.cpId,
+        partnerName: opts.partnerName,
+        projectId: opts.projectId,
+        projectName: opts.projectName,
+        intentType: opts.tag,
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) {
+      toast.error(typeof d.error === "string" ? d.error : "Could not save EOI lead locally");
+      return null;
+    }
+    return d.lead as { id: string; leadId: string };
+  };
+
   const confirmAndAssign = async () => {
     if (!assignSalesId) {
       toast.error("Select a salesperson");
@@ -418,23 +507,65 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       }
       leadId = opt.leadId || leads.find((l) => l.cpId === opt.cpId)?.id || leadId;
       if (!leadId) {
-        const created = await materializeFromTitan({
-          cpId: opt.cpId,
-          partnerName: opt.partnerName,
-          publicLeadId: opt.publicLeadId,
-          tag: opt.tag,
-        });
-        if (!created) return;
-        leadId = created.id;
+        if (opt.eoiCpLeadId && opt.publicLeadId) {
+          const created = await materializeFromEoi({
+            cpId: opt.cpId,
+            partnerName: opt.partnerName,
+            publicLeadId: opt.publicLeadId,
+            eoiCpLeadId: opt.eoiCpLeadId,
+            projectId: opt.projectId,
+            projectName: opt.projectName,
+            tag: opt.tag,
+          });
+          if (!created) return;
+          leadId = created.id;
+        } else {
+          const created = await materializeFromTitan({
+            cpId: opt.cpId,
+            partnerName: opt.partnerName,
+            publicLeadId: opt.publicLeadId,
+            tag: opt.tag,
+          });
+          if (!created) return;
+          leadId = created.id;
+        }
       }
       await assign(leadId, assignSalesId, {
         visitingPartnerCpId: opt.cpId,
         visitingPartnerName: opt.partnerName,
+        eoiCpLeadId: opt.eoiCpLeadId,
+        projectId: opt.projectId,
+        projectName: opt.projectName,
       });
       return;
     }
 
     if (!leadId && leads[0]) leadId = leads[0].id;
+
+    // EOI identity only (no local row yet)
+    if (!leadId && partnerOptions[0]?.eoiCpLeadId && partnerOptions[0]?.publicLeadId) {
+      const opt =
+        partnerOptions.find((p) => p.cpId === selectedPartnerCpId) || partnerOptions[0];
+      const created = await materializeFromEoi({
+        cpId: opt.cpId,
+        partnerName: opt.partnerName,
+        publicLeadId: opt.publicLeadId,
+        eoiCpLeadId: opt.eoiCpLeadId!,
+        projectId: opt.projectId,
+        projectName: opt.projectName,
+        tag: opt.tag,
+      });
+      if (!created) return;
+      leadId = created.id;
+      await assign(leadId, assignSalesId, {
+        visitingPartnerCpId: opt.cpId,
+        visitingPartnerName: opt.partnerName,
+        eoiCpLeadId: opt.eoiCpLeadId,
+        projectId: opt.projectId,
+        projectName: opt.projectName,
+      });
+      return;
+    }
 
     // Titan-only single partner / single hit — materialize then assign
     if (!leadId && titanResult?.found) {
@@ -451,6 +582,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       await assign(leadId, assignSalesId, {
         visitingPartnerCpId: opt?.cpId,
         visitingPartnerName: opt?.partnerName,
+        eoiCpLeadId: opt?.eoiCpLeadId,
+        projectId: opt?.projectId,
+        projectName: opt?.projectName,
       });
       return;
     }
@@ -460,9 +594,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       return;
     }
     const lead = leads.find((l) => l.id === leadId) ?? leads[0];
+    const opt =
+      partnerOptions.find((p) => p.cpId === selectedPartnerCpId) ||
+      partnerOptions.find((p) => p.cpId === lead?.cpId) ||
+      partnerOptions[0];
     await assign(leadId, assignSalesId, {
-      visitingPartnerCpId: lead?.cpId ?? undefined,
-      visitingPartnerName: lead?.cpId ?? undefined,
+      visitingPartnerCpId: opt?.cpId ?? lead?.cpId ?? undefined,
+      visitingPartnerName: opt?.partnerName ?? lead?.visitingCp?.partnerName ?? lead?.cpId ?? undefined,
+      eoiCpLeadId: opt?.eoiCpLeadId,
+      projectId: opt?.projectId,
+      projectName: opt?.projectName ?? lead?.project?.name,
     });
   };
 
@@ -933,14 +1074,43 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
             {searched &&
               scenario === "found_single" &&
-              (leads.length > 0 || titanResult?.found === true) && (
+              (leads.length > 0 ||
+                titanResult?.found === true ||
+                Boolean(eoiIdentityHint) ||
+                partnerOptions.length > 0) && (
               <div className="rounded-xl border bg-white p-5">
                 <h3 className="font-semibold">Lead found — confirm partner</h3>
                 <div className="mt-3 space-y-3">
+                  {eoiIdentityHint && leads.length === 0 ? (
+                    <div className="rounded-lg border border-dashed p-3 text-sm">
+                      <p className="font-medium">
+                        {eoiIdentityHint.customerName || "Partner Portal guest"} —{" "}
+                        {eoiIdentityHint.leadId}
+                      </p>
+                      <p className="text-gray-500">
+                        {eoiIdentityHint.primaryPhone || ""}
+                        {eoiIdentityHint.primaryEmail
+                          ? ` · ${eoiIdentityHint.primaryEmail}`
+                          : ""}{" "}
+                        · Partner Portal
+                        {partnerOptions[0]
+                          ? ` · Partner ${partnerOptions[0].partnerName}`
+                          : ""}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Will be saved to local registry on assign.
+                      </p>
+                    </div>
+                  ) : null}
                   {leads.map((l) => (
                     <div key={l.id} className="rounded-lg border p-3 text-sm">
                       <p className="font-medium">
                         {l.customerName} — {l.leadId}
+                        {l.isPresales || l.source === "PRESALES" ? (
+                          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800">
+                            Presales
+                          </span>
+                        ) : null}
                       </p>
                       <p className="text-gray-500">
                         {l.customerPhone}
@@ -971,6 +1141,23 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                             ? ` · ${l.todaySiteVisit.salesUser.name}`
                             : ""}
                         </p>
+                      ) : null}
+                      {l.visitHistory && l.visitHistory.length > 0 ? (
+                        <div className="mt-2 rounded border border-gray-100 bg-gray-50/80 p-2">
+                          <p className="text-xs font-medium text-gray-700">Site visit history</p>
+                          <ul className="mt-1 space-y-1">
+                            {l.visitHistory.slice(0, 5).map((v) => (
+                              <li key={v.id} className="text-xs text-gray-600">
+                                {new Date(v.checkedInAt).toLocaleString()}
+                                {v.visitingCpName || v.visitingCpId
+                                  ? ` · CP ${v.visitingCpName || v.visitingCpId}`
+                                  : ""}
+                                {v.projectName ? ` · ${v.projectName}` : ""}
+                                {v.salesUserName ? ` · ${v.salesUserName}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       ) : null}
                       <label className="mt-2 flex items-center gap-2 text-xs text-gray-600">
                         <input
@@ -1187,9 +1374,21 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 {visits.map((v) => (
                   <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
                     <div>
-                      <p className="font-medium">{v.lead?.customerName ?? "Unknown"}</p>
+                      <p className="font-medium">
+                        {v.lead?.customerName ?? "Unknown"}
+                        {v.lead?.isPresales ? (
+                          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-800">
+                            Presales
+                          </span>
+                        ) : null}
+                      </p>
                       <p className="text-gray-500">
                         {v.lead?.leadId} · {v.lead?.customerPhone}
+                        {v.lead?.customerEmail ? ` · ${v.lead.customerEmail}` : ""}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        CP: {v.visitingCpName || v.visitingCpId || "—"}
+                        {v.projectName ? ` · ${v.projectName}` : ""}
                       </p>
                     </div>
                     <div className="text-right text-gray-600">
