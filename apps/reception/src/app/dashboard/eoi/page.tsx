@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { ReceptionDesk } from "@/components/reception-desk";
-
-export default function EoiLeadsPage() {
-  return <ReceptionDesk tab="eoi" />;
+/** EOI CRM list removed — Partner Portal + CRM hits show in Check-in search. */
+export default function EoiLeadsRedirectPage() {
+  redirect("/dashboard");
 }

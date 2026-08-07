@@ -1185,8 +1185,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <StepLabel step={1} title="Which project are they here for?" />
                 <p className="mb-4 text-sm text-gray-500">
-                  This visitor has more than one registration. Pick the partner and project for
-                  today&apos;s visit.
+                  {partnerOptions.length} project
+                  {partnerOptions.length === 1 ? "" : "s"} found for this visitor. Select the one
+                  for today&apos;s visit.
                 </p>
                 <div className="space-y-2">
                   {partnerOptions.map((p) => {
@@ -1246,6 +1247,43 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   confirmLabel="Check in visitor"
                   disabled={!selectedPartnerKey}
                 />
+              </div>
+            )}
+
+            {searched && goyalEoiHits.length > 0 && scenario !== "found_goyal_eoi" && (
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-semibold text-gray-900">Also found in CRM</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  Optional — assign from CRM if this is a Goyal CRM EOI lead.
+                </p>
+                <ul className="mt-3 space-y-2">
+                  {goyalEoiHits.map((l) => (
+                    <li
+                      key={String(l.id || l.leadCode)}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 px-3 py-2.5 text-sm"
+                    >
+                      <div>
+                        <p className="font-medium text-gray-900">{l.fullName || "—"}</p>
+                        <p className="text-xs text-gray-500">
+                          {l.leadCode || l.id}
+                          {l.projectName ? ` · ${l.projectName}` : ""}
+                          {l.phone ? ` · ${l.phone}` : ""}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setAssignLead(l);
+                          setEoiAssignSalesId("");
+                          setAssignOpen(true);
+                        }}
+                      >
+                        Assign from CRM
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -1362,13 +1400,10 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
             {searched && scenario === "found_goyal_eoi" && (
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <StepLabel step={1} title="CRM match — assign to sales" />
+                <StepLabel step={1} title="CRM lead found — assign to sales" />
                 <p className="mb-4 text-sm text-gray-500">
-                  Found in Goyal CRM. Assign a salesperson so they can continue in Direct Booking.
+                  Matched in Goyal CRM from your search. Assign a salesperson to continue.
                 </p>
-                {goyalEoiSearchError ? (
-                  <p className="mb-3 text-sm text-amber-800">{goyalEoiSearchError}</p>
-                ) : null}
                 <ul className="space-y-3">
                   {goyalEoiHits.map((l) => {
                     const cpHint =
@@ -1409,7 +1444,10 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               </div>
             )}
 
-            {searched && scenario === "not_found" && goyalEoiSearchError && (
+            {searched &&
+              scenario === "not_found" &&
+              goyalEoiSearchError &&
+              !/invalid|revoked|unauthorized|not configured/i.test(goyalEoiSearchError) && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 CRM search failed: {goyalEoiSearchError}
               </div>

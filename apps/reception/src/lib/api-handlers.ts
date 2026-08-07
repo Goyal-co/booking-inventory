@@ -96,7 +96,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     }
   }
 
-  // Also search Goyal Hariyana CRM EOI leads (Lead ID / phone / email / name).
+  // Goyal Hariyana CRM EOI — best-effort only (never block Partner Portal results)
   let goyalEoiLeads: Array<Record<string, unknown>> = [];
   let goyalEoiError: string | undefined;
   if (q.trim() && getGoyalCrmCapabilities().webhookList) {
@@ -125,6 +125,7 @@ export async function GET_leadsSearch(req: NextRequest) {
       }
 
       const seen = new Set<string>();
+      let lastAuthError: string | undefined;
       for (const params of attempts) {
         try {
           const listed = await listGoyalLeads(params);
@@ -136,14 +137,21 @@ export async function GET_leadsSearch(req: NextRequest) {
           }
           if (goyalEoiLeads.length > 0) break;
         } catch (err) {
-          goyalEoiError =
+          const msg =
             err instanceof GoyalCrmError
               ? err.message
               : err instanceof Error
                 ? err.message
                 : "Goyal CRM search failed";
+          // Token misconfig is common — keep quiet unless CRM is the only source later
+          if (/invalid|revoked|unauthorized|401|403|not configured/i.test(msg)) {
+            lastAuthError = msg;
+          } else {
+            goyalEoiError = msg;
+          }
         }
       }
+      if (!goyalEoiLeads.length && lastAuthError) goyalEoiError = lastAuthError;
     } catch (err) {
       goyalEoiError =
         err instanceof GoyalCrmError
@@ -250,7 +258,11 @@ export async function GET_leadsSearch(req: NextRequest) {
       fromNotes?.partnerName ||
       null;
     const projectId = l.project?.id;
-    const projectName = l.project?.name;
+    const projectName =
+      l.project?.name ||
+      (typeof l.intentType === "string" && l.intentType.startsWith("eoi:")
+        ? l.intentType.slice(4).replace(/\|booked$/i, "")
+        : undefined);
     upsertOption({
       key: associationKey({
         eoiCpLeadId: l.eoiCpLeadId,
@@ -294,10 +306,33 @@ export async function GET_leadsSearch(req: NextRequest) {
     const sample = leads[0];
     const digits = q.replace(/\D/g, "");
     eoiIdentity = await fetchEoiLeadIdentity({
-      leadId: sample?.leadId || (/^(EOI-|LEAD-)/i.test(q.trim()) ? q.trim() : undefined),
-      phone: sample?.customerPhone || (digits.length >= 10 ? digits.slice(-10) : undefined),
+      leadId:
+        sample?.leadId ||
+        (/^(EOI-|LEAD-)/i.test(q.trim()) ? q.trim() : undefined) ||
+        undefined,
+      // Always pass phone/email from query when present so multi-project identity resolves
+      phone:
+        sample?.customerPhone ||
+        (digits.length >= 10 && !/^(EOI-|LEAD-)/i.test(q.trim())
+          ? digits.slice(-10)
+          : undefined),
       email: sample?.customerEmail || (q.includes("@") ? q.trim() : undefined),
     });
+    // If we only had Lead ID locally, retry with phone from identity/local once known
+    if (
+      eoiIdentity &&
+      eoiIdentity.associations.length <= 1 &&
+      (eoiIdentity.primaryPhone || sample?.customerPhone)
+    ) {
+      const richer = await fetchEoiLeadIdentity({
+        leadId: eoiIdentity.leadId || sample?.leadId,
+        phone: eoiIdentity.primaryPhone || sample?.customerPhone,
+        email: eoiIdentity.primaryEmail || sample?.customerEmail,
+      });
+      if (richer && richer.associations.length > eoiIdentity.associations.length) {
+        eoiIdentity = richer;
+      }
+    }
     if (eoiIdentity?.associations?.length) {
       for (const assoc of eoiIdentity.associations) {
         const partner = eoiIdentity.partners.find((p) => p.cpId === assoc.cpId);
@@ -369,22 +404,22 @@ export async function GET_leadsSearch(req: NextRequest) {
     String(b.submittedAt).localeCompare(String(a.submittedAt))
   );
 
-  // Multiple CP×project associations → reception must confirm which project today
-  if (eoiIdentity && partnerOptions.length > 0) {
-    if (
-      scenario === "not_found" ||
-      scenario === "empty_query" ||
-      scenario === "titan_needs_partner" ||
-      scenario === "found_goyal_eoi" ||
-      scenario === "found_single"
-    ) {
-      scenario = partnerOptions.length > 1 ? "found_multi_partner" : "found_single";
-    }
-  } else if (
-    partnerOptions.length > 1 &&
-    (scenario === "found_single" || scenario === "found_goyal_eoi")
-  ) {
+  // Final scenario: Partner Portal associations always win over CRM-only list UI
+  if (partnerOptions.length > 1) {
     scenario = "found_multi_partner";
+  } else if (partnerOptions.length === 1) {
+    scenario = "found_single";
+  } else if (goyalEoiLeads.length > 0) {
+    scenario = "found_goyal_eoi";
+  } else if (leads.length === 0 && titanNeedsPartner) {
+    scenario = "titan_needs_partner";
+  } else if (leads.length === 0 && !titanResult?.found) {
+    scenario = q.trim() ? "not_found" : "empty_query";
+  }
+
+  // Don't surface CRM token errors when Partner Portal / local already resolved the visitor
+  if (partnerOptions.length > 0 || leads.length > 0) {
+    goyalEoiError = undefined;
   }
 
   return NextResponse.json({
@@ -398,6 +433,7 @@ export async function GET_leadsSearch(req: NextRequest) {
           customerName: eoiIdentity.customerName,
           primaryPhone: eoiIdentity.primaryPhone,
           primaryEmail: eoiIdentity.primaryEmail,
+          associationCount: eoiIdentity.associations.length,
         }
       : null,
     goyalEoiLeads,

@@ -6,7 +6,6 @@ import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
 import {
   ConciergeBell,
-  ClipboardList,
   Users,
   LogOut,
 } from "lucide-react";
@@ -20,16 +19,15 @@ import {
 } from "@booking/ui";
 
 export const receptionNavItems = [
-  { href: "/dashboard", label: "Walk-in Desk", icon: ConciergeBell, match: (p: string) => p === "/dashboard" },
   {
-    href: "/dashboard/eoi",
-    label: "EOI Leads",
-    icon: ClipboardList,
-    match: (p: string) => p.startsWith("/dashboard/eoi"),
+    href: "/dashboard",
+    label: "Check-in desk",
+    icon: ConciergeBell,
+    match: (p: string) => p === "/dashboard" || p.startsWith("/dashboard/eoi"),
   },
   {
     href: "/dashboard/visits",
-    label: "Today's Visits",
+    label: "Today's visits",
     icon: Users,
     match: (p: string) => p.startsWith("/dashboard/visits"),
   },
