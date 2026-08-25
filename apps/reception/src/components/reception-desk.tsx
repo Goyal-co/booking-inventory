@@ -401,8 +401,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     const params = new URLSearchParams({
       page: String(page),
       limit: "20",
-      source: "eoi",
     });
+    // Do not send source=eoi — CRM stores Partner punches as partner_leads and
+    // rejects source=eoi with HTTP 400. Optional explicit filter via UI later.
     const searchTrim = eoiSearch.trim();
     const phoneTrim = eoiPhone.trim();
     const searchDigits = searchTrim.replace(/\D/g, "");
@@ -520,7 +521,15 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       }),
     });
     if (res.ok) {
-      toast.success("Assigned to salesperson — site visit checked in");
+      const d = await res.json().catch(() => ({}));
+      if (d.crmSynced) {
+        toast.success("Assigned — site visit checked in (CRM synced)");
+      } else {
+        toast.success("Assigned to salesperson — site visit checked in locally");
+        if (typeof d.crmError === "string" && d.crmError) {
+          toast.warning("CRM site-visit not synced", { description: d.crmError });
+        }
+      }
       await searchLocal();
       await refreshVisits();
       setAssignSalesId("");
@@ -856,8 +865,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         return;
       }
       toast.success(
-        `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — appears in their Direct Booking`
+        d.crmSynced
+          ? `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
+          : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — local site visit checked in`
       );
+      if (!d.crmSynced && typeof d.crmError === "string" && d.crmError) {
+        toast.warning("CRM site-visit not synced", { description: d.crmError });
+      }
       setAssignOpen(false);
       setAssignLead(null);
     } finally {
@@ -958,9 +972,12 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
             </div>
 
             {eoiCaps && eoiCaps.webhookList && !eoiCaps.staffApi && (
-              <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-                Listing works. Booking and “My leads” need a staff CRM login token configured on
-                Reception.
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                Listing/creating CRM leads works with your Partner token. CRM{" "}
+                <strong>Book</strong> and <strong>Site visit</strong> need a staff login JWT in{" "}
+                <code className="rounded bg-amber-100 px-1">GOYAL_CRM_API_TOKEN</code> (not the
+                Partner/Bearer access key — that returns 403). Assign still records a local site
+                visit and notifies the Partner Portal.
               </div>
             )}
 
@@ -1022,9 +1039,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
                         {eoiError
                           ? canListEoi
-                            ? "Could not load leads — check EOI_API_KEY"
-                            : "CRM list unavailable — set EOI_API_KEY"
-                          : "No EOI leads found"}
+                            ? "Could not load leads — check EOI_API_KEY (Bearer/api_key) or GOYAL_CRM_API_TOKEN (staff JWT)"
+                            : "CRM list unavailable — set EOI_API_KEY and/or GOYAL_CRM_API_TOKEN"
+                          : "No CRM / EOI leads found"}
                       </td>
                     </tr>
                   )}

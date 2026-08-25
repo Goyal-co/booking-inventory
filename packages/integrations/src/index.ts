@@ -27,6 +27,7 @@ export {
   normalizeWebhookLead,
   enrichLeadIdFromEoiList,
   enrichLeadIdFromStaffList,
+  resolveGoyalLeadId,
   bookGoyalLead,
   updateGoyalLead,
   markGoyalSiteVisit,

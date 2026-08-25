@@ -109,14 +109,13 @@ export async function GET_leadsSearch(req: NextRequest) {
 
       const attempts: Array<Parameters<typeof listGoyalLeads>[0]> = [];
       if (isEmail) {
-        attempts.push({ source: "eoi", page: 1, limit: 20, email: trimmed });
-        attempts.push({ source: "eoi", page: 1, limit: 20, search: trimmed });
+        attempts.push({ page: 1, limit: 20, email: trimmed });
+        attempts.push({ page: 1, limit: 20, search: trimmed });
       } else if (isPhoneOnly && phone) {
-        attempts.push({ source: "eoi", page: 1, limit: 20, phone });
-        attempts.push({ source: "eoi", page: 1, limit: 20, search: phone });
+        attempts.push({ page: 1, limit: 20, phone });
+        attempts.push({ page: 1, limit: 20, search: phone });
       } else {
         attempts.push({
-          source: "eoi",
           page: 1,
           limit: 20,
           search: trimmed,
@@ -463,14 +462,19 @@ export async function POST_assignLead(req: NextRequest, { params }: { params: Pr
   const body = await req.json();
   const parsed = leadAssignSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  const lead = await assignLeadToSales(id, parsed.data.salesUserId, parsed.data.notes, {
+  const result = await assignLeadToSales(id, parsed.data.salesUserId, parsed.data.notes, {
     visitingPartnerCpId: parsed.data.visitingPartnerCpId,
     visitingPartnerName: parsed.data.visitingPartnerName,
     eoiCpLeadId: parsed.data.eoiCpLeadId,
     projectId: parsed.data.projectId,
     projectName: parsed.data.projectName,
   });
-  return NextResponse.json({ lead });
+  return NextResponse.json({
+    lead: result.lead,
+    crmSynced: result.crmSynced,
+    crmError: result.crmError,
+    capabilities: getGoyalCrmCapabilities(),
+  });
 }
 
 const materializeTitanSchema = z.object({
@@ -616,9 +620,9 @@ function crmAuthHint(err: unknown, context: "list" | "staff" = "staff") {
   if (!authFail) return undefined;
 
   if (context === "list") {
-    return "EOI list/create auth failed. Set a valid EOI_API_KEY on the Reception service (do not put the webhook key in GOYAL_CRM_API_TOKEN). Book / My leads still need a separate staff JWT.";
+    return "Set EOI_API_KEY to the Partner/EOI access token (same value works as Bearer, X-EOI-Api-Key, or access_key). That token lists all CRM sources via GET /eoi/leads.";
   }
-  return "Book / My leads need GOYAL_CRM_API_TOKEN (staff JWT). List and create work with EOI_API_KEY via GET /eoi/leads and webhook.";
+  return "CRM book / site-visit / My leads need GOYAL_CRM_API_TOKEN = staff Supabase JWT (not the Partner access token — that has role api_token and returns 403). List + create work with EOI_API_KEY alone.";
 }
 
 export async function GET_eoiCapabilities() {
@@ -642,7 +646,9 @@ export async function GET_eoiLeads(req: NextRequest) {
   const listParams = {
     page,
     limit,
-    source: sp.get("source") ?? "eoi",
+    // Omit default source=eoi — webhook punches use source "partner_leads";
+    // filtering source=eoi returns HTTP 400 from CRM.
+    source: sp.get("source") || undefined,
     search: sp.get("search") ?? undefined,
     phone: sp.get("phone") ?? undefined,
     fullName: sp.get("fullName") ?? undefined,
@@ -740,7 +746,7 @@ export async function GET_eoiMyLeads(req: NextRequest) {
     const result = await listMyGoyalLeads({
       page,
       limit,
-      source: sp.get("source") ?? "eoi",
+      source: sp.get("source") ?? undefined,
       search: sp.get("search") ?? undefined,
       phone: sp.get("phone") ?? undefined,
       fullName: sp.get("fullName") ?? undefined,
@@ -795,7 +801,7 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!uuidRe.test(id)) {
     try {
-      const listed = await listGoyalLeads({ search: id, source: "eoi", limit: 10, page: 1 });
+      const listed = await listGoyalLeads({ search: id, limit: 10, page: 1 });
       const match =
         listed.leads.find((l) => l.leadCode === id) ||
         listed.leads.find((l) => l.id === id);
@@ -896,7 +902,7 @@ export async function POST_eoiAssign(
     crmLead = await getGoyalLead(id);
   } catch {
     try {
-      const listed = await listGoyalLeads({ search: id, source: "eoi", limit: 10, page: 1 });
+      const listed = await listGoyalLeads({ search: id, limit: 10, page: 1 });
       crmLead =
         listed.leads.find((l) => l.id === id) ||
         listed.leads.find((l) => l.leadCode === id) ||
@@ -926,7 +932,7 @@ export async function POST_eoiAssign(
   }
 
   try {
-    const lead = await assignGoyalLeadToSales({
+    const materialized = await assignGoyalLeadToSales({
       organizationId: user.organizationId,
       registeredById: user.id,
       salesUserId: sales.id,
@@ -938,7 +944,23 @@ export async function POST_eoiAssign(
       projectName: parsed.data.projectName || crmLead?.projectName || null,
       notes: parsed.data.notes,
     });
-    return NextResponse.json({ lead });
+
+    // Complete local site-visit check-in + push CRM when staff JWT is configured
+    const result = await assignLeadToSales(
+      materialized.id,
+      sales.id,
+      parsed.data.notes,
+      {
+        projectName: parsed.data.projectName || crmLead?.projectName || undefined,
+      }
+    );
+
+    return NextResponse.json({
+      lead: result.lead,
+      crmSynced: result.crmSynced,
+      crmError: result.crmError,
+      capabilities: getGoyalCrmCapabilities(),
+    });
   } catch (e) {
     console.error("[POST_eoiAssign]", e);
     return NextResponse.json(

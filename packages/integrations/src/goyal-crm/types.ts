@@ -35,6 +35,8 @@ export type GoyalCrmLead = {
 export type GoyalCrmLeadListParams = {
   page?: number;
   limit?: number;
+  /** true = GET /eoi/all-leads (full dump; prefer paginated list in UI) */
+  all?: boolean;
   source?: string;
   search?: string;
   phone?: string;
