@@ -192,7 +192,9 @@ export async function syncBookingToIntegrations(bookingId: string) {
     await logIntegrationSync(IntegrationSystem.POST_CRM, "booking", bookingId, {}, undefined, IntegrationSyncStatus.FAILED, e instanceof Error ? e.message : "Failed");
   }
 
-  // Only mark Partner Portal / Goyal CRM as booked after admin confirms the digital booking.
+  // Mark lead as booked in CRM + EOI only when booking is CONFIRMED:
+  // - requiresBookingApproval=true  → after admin approval
+  // - requiresBookingApproval=false → immediately on customer form submit
   const isConfirmed = booking.status === "CONFIRMED";
   if (isConfirmed) {
     const projectName = booking.unit.floor.tower.project.name;

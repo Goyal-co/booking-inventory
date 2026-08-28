@@ -103,6 +103,8 @@ export async function submitDigitalForm(token: string) {
 
   const projectId = block.unit.floor.tower.projectId;
   const project = block.unit.floor.tower.project;
+  // When enabled, booking stays PENDING until admin approves; CRM/EOI "booked" sync runs only then.
+  // When disabled, customer submission confirms the booking and triggers booked sync immediately.
   const requiresApproval = project.requiresBookingApproval === true;
 
   const activeTemplate = await prisma.bookingFormTemplate.findFirst({
@@ -146,6 +148,28 @@ export async function submitDigitalForm(token: string) {
       throw new BookingError("Unit already booked or pending approval", "ALREADY_BOOKED");
     }
 
+    let bookedWithCpId: string | null = null;
+    let bookedWithCpName: string | null = null;
+    if (block.leadId) {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const todayVisit = await tx.siteVisit.findFirst({
+        where: { leadId: block.leadId, checkedInAt: { gte: dayStart } },
+        orderBy: { checkedInAt: "desc" },
+      });
+      const leadRow = await tx.leadRegistry.findUnique({
+        where: { id: block.leadId },
+        select: { cpId: true },
+      });
+      bookedWithCpId = todayVisit?.visitingCpId || leadRow?.cpId || null;
+      bookedWithCpName =
+        todayVisit?.visitingCpName &&
+        todayVisit.visitingCpName !== bookedWithCpId
+          ? todayVisit.visitingCpName
+          : null;
+    }
+
+    const now = new Date();
     const b = await tx.booking.create({
       data: {
         unitId: block.unitId,
@@ -159,8 +183,11 @@ export async function submitDigitalForm(token: string) {
         totalPrice,
         status: requiresApproval ? BookingStatus.PENDING : BookingStatus.CONFIRMED,
         digitalFormStatus: "SUBMITTED",
-        submittedAt: new Date(),
+        submittedAt: now,
+        bookedAt: requiresApproval ? undefined : now,
         leadId: block.leadId,
+        bookedWithCpId,
+        bookedWithCpName,
       },
     });
 
