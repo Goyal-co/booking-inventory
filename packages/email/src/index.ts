@@ -40,6 +40,35 @@ function getBrevoApiKey(): string | undefined {
   return process.env.BREVO_API_KEY?.trim();
 }
 
+function isPlaceholderSender(email: string): boolean {
+  return /your-domain|example\.com|noreply@localhost/i.test(email);
+}
+
+export function getEmailConfigStatus() {
+  const apiKey = getBrevoApiKey();
+  const from = process.env.EMAIL_FROM?.trim() || "";
+  const mocked = shouldUseMockEmail();
+  let senderEmail = from;
+  const bracketMatch = from.match(/^(.+?)\s*<([^>]+)>$/);
+  if (bracketMatch) senderEmail = bracketMatch[2].trim();
+  else if (!from) senderEmail = "noreply@goyalprojects.com";
+
+  return {
+    ready: !mocked && !isPlaceholderSender(senderEmail),
+    mocked,
+    hasApiKey: Boolean(apiKey),
+    senderEmail,
+    senderName: process.env.EMAIL_FROM_NAME?.trim() || "Goyal & Co. | Hariyana Group",
+    issue: !apiKey
+      ? "BREVO_API_KEY missing on this service (sales sends booking form emails)"
+      : mocked
+        ? "BREVO_API_KEY looks like a placeholder"
+        : isPlaceholderSender(senderEmail)
+          ? `EMAIL_FROM (${senderEmail}) is not a verified Brevo sender — use alert@goyalco.email`
+          : undefined,
+  };
+}
+
 function optionsFromEnv(): string {
   return process.env.EMAIL_FROM?.trim() || "noreply@goyalprojects.com";
 }
@@ -54,6 +83,25 @@ function getSender(): { name: string; email: string } {
   return { name: fromName, email: from };
 }
 
+export function parseEmailErrorMessage(raw?: string | null): string {
+  if (!raw) return "Failed to send booking email";
+  try {
+    const parsed = JSON.parse(raw) as { message?: string; code?: string };
+    if (parsed.message) {
+      if (/api key is not enabled/i.test(parsed.message)) {
+        return "Brevo API key is disabled — enable it in Brevo → SMTP & API → API Keys, or set a working BREVO_API_KEY on the sales service";
+      }
+      return parsed.message;
+    }
+  } catch {
+    /* plain text */
+  }
+  if (/api key is not enabled/i.test(raw)) {
+    return "Brevo API key is disabled — enable it in Brevo → SMTP & API → API Keys";
+  }
+  return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+}
+
 export function shouldUseMockEmail(): boolean {
   const apiKey = getBrevoApiKey();
   if (!apiKey) return true;
@@ -61,6 +109,7 @@ export function shouldUseMockEmail(): boolean {
 }
 
 export async function sendEmail(options: EmailOptions): Promise<EmailSendResult> {
+  const config = getEmailConfigStatus();
   const sender = getSender();
   const fromOverride = options.from?.trim();
   const resolvedSender = fromOverride
@@ -74,7 +123,10 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
 
   if (shouldUseMockEmail()) {
     if (process.env.NODE_ENV === "production") {
-      return { success: false, error: "BREVO_API_KEY required in production" };
+      return {
+        success: false,
+        error: config.issue || "BREVO_API_KEY required in production on the sales service",
+      };
     }
     console.warn(
       "[Email] MOCK MODE — BREVO_API_KEY not loaded. Restart the server after updating .env.local"
@@ -89,6 +141,14 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
       );
     }
     return { success: true, id: `mock-${Date.now()}`, mocked: true };
+  }
+
+  if (isPlaceholderSender(resolvedSender.email)) {
+    return {
+      success: false,
+      error:
+        "EMAIL_FROM is not configured — set EMAIL_FROM=alert@goyalco.email (verified in Brevo) on the sales service",
+    };
   }
 
   const apiKey = getBrevoApiKey()!;
@@ -123,6 +183,34 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
     if (!res.ok) {
       const err = await res.text();
       console.error("[Email] Brevo API error:", err);
+
+      // If attachment caused failure, retry once without attachments (booking link still goes out).
+      if (options.attachments?.length) {
+        console.warn("[Email] Retrying without attachments…");
+        const retry = await fetch("https://api.brevo.com/v3/smtp/email", {
+          method: "POST",
+          headers: {
+            "api-key": apiKey,
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            sender: payload.sender,
+            to: payload.to,
+            subject: options.subject,
+            htmlContent: options.html,
+          }),
+        });
+        if (retry.ok) {
+          const data = (await retry.json()) as { messageId?: string };
+          console.log("[Email] Brevo sent (without attachment):", data.messageId);
+          return { success: true, id: data.messageId };
+        }
+        const retryErr = await retry.text();
+        console.error("[Email] Brevo retry error:", retryErr);
+        return { success: false, error: retryErr || err };
+      }
+
       return { success: false, error: err };
     }
 

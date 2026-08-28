@@ -1,10 +1,9 @@
 /**
- * Notify EOI Partner Portal when Reception / Booking Inventory completes
- * a site visit or confirms a booking.
+ * Sync lead status to EOI Partner Portal (site visit / booking confirmed).
+ * EOI sends milestone emails (CP + customer) via its own Brevo config.
+ * Digital booking form links are NOT sent here — sales sends those via @booking/email.
  *
- * Env (required on Reception + Sales deploy):
- *   EOI_CP_URL — live Partner Portal origin (e.g. https://eoi-web-phi.vercel.app)
- *   INTEGRATION_WEBHOOK_SECRET — must match EOI_CP
+ * Env (Reception + Sales): EOI_CP_URL, INTEGRATION_WEBHOOK_SECRET
  */
 
 export type EoiPortalEvent = "site_visit.completed" | "booking.confirmed";

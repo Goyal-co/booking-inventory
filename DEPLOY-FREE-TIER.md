@@ -177,8 +177,8 @@ Use a **unique** `NEXTAUTH_SECRET` if Render generated one per service — that 
 | `WS_EMIT_URL` | `https://booking-inventory-ws.onrender.com` |
 | `WS_INTERNAL_SECRET` | Same as WS service |
 | `CUSTOMER_URL` | `https://booking-inventory-customer.onrender.com` (**required** — booking emails use this) |
-| `BREVO_API_KEY` | Your Brevo API key |
-| `EMAIL_FROM` | e.g. `noreply@your-domain.com` |
+| `BREVO_API_KEY` | Brevo API key (**enabled** in Brevo dashboard) |
+| `EMAIL_FROM` | `alert@goyalco.email` (verified sender in Brevo) |
 | `EMAIL_FROM_NAME` | e.g. `Goyal & Co. \| Hariyana Group` |
 
 **Important:** Without `CUSTOMER_URL` on **sales**, emails fall back to `localhost:3003`. Set it after the customer service is live, then redeploy sales (or at least restart).

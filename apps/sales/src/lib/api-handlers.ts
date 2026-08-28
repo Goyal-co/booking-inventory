@@ -42,6 +42,7 @@ import {
   listAssignedDirectLeads,
 } from "@booking/database";
 import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema, attachCustomerToBlockSchema } from "@booking/validators";
+import { parseEmailErrorMessage } from "@booking/email";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
 
@@ -629,8 +630,8 @@ export async function POST_block_customer(req: NextRequest, { params }: { params
         result.emailResult?.success && !result.emailResult?.mocked
           ? undefined
           : result.emailResult?.mocked
-            ? "Email not sent — BREVO_API_KEY not loaded. Restart the sales app after saving .env.local"
-            : result.emailResult?.error || "Failed to send booking email",
+            ? "Email not sent — set BREVO_API_KEY and EMAIL_FROM on the sales service, then restart"
+            : parseEmailErrorMessage(result.emailResult?.error) || "Failed to send booking email",
       ...(process.env.NODE_ENV !== "production"
         ? { devBookingUrl: result.customerUrl }
         : {}),
