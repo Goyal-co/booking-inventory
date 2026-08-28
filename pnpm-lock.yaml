@@ -239,6 +239,9 @@ importers:
       '@booking/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@booking/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@booking/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
