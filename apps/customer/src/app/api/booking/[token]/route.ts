@@ -60,7 +60,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ toke
   const { token } = await params;
   const body = await req.json();
   const parsed = digitalFormStepSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  if (!parsed.success) {
+    const stepIssue = parsed.error.flatten().fieldErrors.step?.[0];
+    return NextResponse.json(
+      {
+        error: stepIssue ? `Invalid step: ${stepIssue}` : "Invalid form data",
+        details: parsed.error.flatten(),
+      },
+      { status: 400 }
+    );
+  }
   const form = await saveDigitalFormStep(token, parsed.data.step, parsed.data.data);
   if (!form) return NextResponse.json({ error: "Cannot update form" }, { status: 400 });
   return NextResponse.json({ ok: true, formData: form.formData });

@@ -242,6 +242,10 @@ export default function BookingFormPage() {
 
   const isViewOnly = (s: StepDef) => "viewOnly" in s && Boolean(s.viewOnly);
 
+  /** Documents are saved via /documents API; apartment/project are read-only previews. */
+  const skipFormSave = (s: StepDef) =>
+    isViewOnly(s) || s.id === "documents";
+
   const stepDone = useMemo(() => {
     return STEPS.map((s) => {
       const values = formData[s.id] ?? {};
@@ -280,7 +284,7 @@ export default function BookingFormPage() {
 
   const saveStep = async () => {
     if (linkError) return false;
-    if (isViewOnly(current)) return true;
+    if (skipFormSave(current)) return true;
     let dataToSave: Record<string, string | string[]> = { ...fields };
     if (current.id === "earnestDeposit") {
       const amt = String(dataToSave.amount ?? "").replace(/[, ]/g, "");

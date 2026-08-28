@@ -17,6 +17,8 @@ export const costSheetCalculateSchema = z.object({
 export const digitalFormStepSchema = z.object({
   step: z.enum([
     "cover",
+    "apartment",
+    "project",
     "applicant",
     "jointApplicant",
     "geographic",
@@ -28,6 +30,7 @@ export const digitalFormStepSchema = z.object({
     "realEstateAgents",
     "earnestDeposit",
     "terms",
+    "documents",
     "consent",
   ]),
   data: z.record(z.unknown()),
