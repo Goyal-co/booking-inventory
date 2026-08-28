@@ -470,6 +470,39 @@ function stripBookedIntent(intentType?: string | null) {
   return (intentType ?? "").replace(/\|booked$/i, "");
 }
 
+/**
+ * EOI Partner Portal project ids are not valid LeadRegistry.projectId FKs.
+ * Resolve to a local Booking Inventory project by id or name when possible.
+ */
+export async function resolveLocalBookingProjectId(
+  organizationId: string,
+  opts: { projectId?: string | null; projectName?: string | null }
+): Promise<string | undefined> {
+  const projectId = opts.projectId?.trim();
+  const projectName = opts.projectName?.trim();
+
+  if (projectId) {
+    const byId = await prisma.project.findFirst({
+      where: { id: projectId, organizationId },
+      select: { id: true },
+    });
+    if (byId) return byId.id;
+  }
+
+  if (projectName) {
+    const byName = await prisma.project.findFirst({
+      where: {
+        organizationId,
+        name: { equals: projectName, mode: "insensitive" },
+      },
+      select: { id: true },
+    });
+    if (byName) return byName.id;
+  }
+
+  return undefined;
+}
+
 type SiteVisitSnapshot = {
   id: string;
   status: string;
@@ -690,11 +723,23 @@ export async function assignLeadToSales(
     where: { id: salesUserId },
     select: { id: true, name: true },
   });
+  if (!salesUser) {
+    throw new Error("Salesperson not found");
+  }
 
   const existing = await prisma.leadRegistry.findUnique({
     where: { id: leadId },
-    select: { intentType: true, projectId: true },
+    select: { intentType: true, projectId: true, organizationId: true },
   });
+  if (!existing) {
+    throw new Error("Lead not found");
+  }
+
+  const localProjectId = await resolveLocalBookingProjectId(existing.organizationId, {
+    projectId: visiting?.projectId,
+    projectName: visiting?.projectName,
+  });
+
   const baseIntent = stripBookedIntent(existing?.intentType);
   const nextIntent = visiting?.projectName
     ? `eoi:${visiting.projectName}`
@@ -707,7 +752,7 @@ export async function assignLeadToSales(
       siteVisitStatus: "COMPLETED",
       ...(visiting?.visitingPartnerCpId ? { cpId: visiting.visitingPartnerCpId } : {}),
       ...(visiting?.eoiCpLeadId ? { eoiCpLeadId: visiting.eoiCpLeadId } : {}),
-      ...(visiting?.projectId ? { projectId: visiting.projectId } : {}),
+      ...(localProjectId ? { projectId: localProjectId } : {}),
       ...(nextIntent ? { intentType: nextIntent } : {}),
     },
     include: {
@@ -716,7 +761,7 @@ export async function assignLeadToSales(
     },
   });
 
-  const projectId = visiting?.projectId || lead.project?.id || undefined;
+  const projectId = localProjectId || lead.project?.id || undefined;
   const projectName = visiting?.projectName || lead.project?.name || undefined;
 
   await prisma.siteVisit.create({
@@ -833,13 +878,20 @@ export async function upsertLeadFromEoiCp(input: {
     : false;
   const looksLeadCode = Boolean(crmRef && /^EOI-/i.test(crmRef));
 
+  const projectNameFromIntent =
+    input.intentType?.startsWith("eoi:") ? input.intentType.slice(4).replace(/\|booked$/i, "") : undefined;
+  const localProjectId = await resolveLocalBookingProjectId(input.organizationId, {
+    projectId: input.projectId,
+    projectName: projectNameFromIntent,
+  });
+
   return prisma.leadRegistry.upsert({
     where: { leadId: input.leadId },
     create: {
       leadId: input.leadId,
       eoiCpLeadId: input.eoiCpLeadId,
       organizationId: input.organizationId,
-      projectId: input.projectId,
+      ...(localProjectId ? { projectId: localProjectId } : {}),
       customerName: input.customerName,
       customerEmail: input.customerEmail,
       customerPhone: input.customerPhone,
@@ -860,6 +912,7 @@ export async function upsertLeadFromEoiCp(input: {
       ...(looksLeadCode ? { goyalLeadCode: crmRef } : {}),
       intentType: input.intentType,
       ...(input.cpId ? { cpId: input.cpId } : {}),
+      ...(localProjectId ? { projectId: localProjectId } : {}),
     },
   });
 }

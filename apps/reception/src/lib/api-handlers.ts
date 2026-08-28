@@ -463,19 +463,39 @@ export async function POST_assignLead(req: NextRequest, { params }: { params: Pr
   const body = await req.json();
   const parsed = leadAssignSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  const result = await assignLeadToSales(id, parsed.data.salesUserId, parsed.data.notes, {
-    visitingPartnerCpId: parsed.data.visitingPartnerCpId,
-    visitingPartnerName: parsed.data.visitingPartnerName,
-    eoiCpLeadId: parsed.data.eoiCpLeadId,
-    projectId: parsed.data.projectId,
-    projectName: parsed.data.projectName,
+
+  const sales = await prisma.user.findFirst({
+    where: {
+      id: parsed.data.salesUserId,
+      organizationId: user.organizationId,
+      role: { in: ["SALES_EXEC", "SALES_MANAGER"] },
+      isActive: true,
+    },
   });
-  return NextResponse.json({
-    lead: result.lead,
-    crmSynced: result.crmSynced,
-    crmError: result.crmError,
-    capabilities: getGoyalCrmCapabilities(),
-  });
+  if (!sales) {
+    return NextResponse.json({ error: "Salesperson not found" }, { status: 404 });
+  }
+
+  try {
+    const result = await assignLeadToSales(id, parsed.data.salesUserId, parsed.data.notes, {
+      visitingPartnerCpId: parsed.data.visitingPartnerCpId,
+      visitingPartnerName: parsed.data.visitingPartnerName,
+      eoiCpLeadId: parsed.data.eoiCpLeadId,
+      projectId: parsed.data.projectId,
+      projectName: parsed.data.projectName,
+    });
+    return NextResponse.json({
+      lead: result.lead,
+      crmSynced: result.crmSynced,
+      crmError: result.crmError,
+      capabilities: getGoyalCrmCapabilities(),
+    });
+  } catch (e) {
+    console.error("[POST_assignLead]", e);
+    const message = e instanceof Error ? e.message : "Assign failed";
+    const status = message === "Lead not found" ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
 
 const materializeTitanSchema = z.object({
