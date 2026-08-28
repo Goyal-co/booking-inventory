@@ -13,6 +13,8 @@ const nextConfig = {
     "@booking/database",
     "@booking/validators",
     "@booking/realtime",
+    "@booking/email",
+    "@booking/pdf",
     "@goyal/ecosystem-contracts",
   ],
   serverExternalPackages: ["@prisma/client", "bcryptjs"],

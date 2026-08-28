@@ -289,7 +289,15 @@ function LiveBookingContent() {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      toast.error(data.error ?? "Failed to send booking link");
+      const err =
+        typeof data.error === "string"
+          ? data.error
+          : data.code === "CONFIG"
+            ? "Customer booking URL is misconfigured on the sales server (check CUSTOMER_URL)"
+            : res.status === 404
+              ? "Booking link API not found — restart the sales server"
+              : "Failed to send booking link";
+      toast.error(err);
       return;
     }
 

@@ -42,6 +42,32 @@ function looksLikeLocalhost(url: string) {
   return /localhost|127\.0\.0\.1/i.test(url);
 }
 
+function hostKey(url: string): string | null {
+  try {
+    const u = new URL(url.startsWith("http") ? url : `https://${url}`);
+    return u.host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function getSalesAppBaseUrl(): string {
+  return readEnvUrl("SALES_URL", "NEXTAUTH_URL");
+}
+
+function assertCustomerUrlDistinctFromSales(customerBase: string) {
+  const salesBase = getSalesAppBaseUrl();
+  if (!salesBase) return;
+  const customerHost = hostKey(customerBase);
+  const salesHost = hostKey(salesBase);
+  if (customerHost && salesHost && customerHost === salesHost) {
+    throw new Error(
+      `CUSTOMER_URL must point at the customer booking app, not the sales app (${salesBase}). ` +
+        `Set CUSTOMER_URL to your customer service URL (e.g. http://localhost:3003 locally or https://booking-inventory-customer.onrender.com in production).`
+    );
+  }
+}
+
 /** Strip whitespace and accidental wrapping quotes from Render/dashboard env values. */
 function readEnvUrl(...keys: string[]): string {
   for (const key of keys) {
@@ -76,7 +102,9 @@ export function getCustomerBaseUrl(): string {
     );
   }
 
-  return base || fallback;
+  const resolved = base || fallback;
+  assertCustomerUrlDistinctFromSales(resolved);
+  return resolved;
 }
 
 export function getCustomerUrlStatus() {

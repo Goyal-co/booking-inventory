@@ -21,8 +21,11 @@ const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
 ];
 
 export async function getDigitalFormByToken(token: string) {
+  const normalized = token.trim();
+  if (!normalized) return null;
+
   const form = await prisma.digitalBookingForm.findFirst({
-    where: { block: { bookingToken: token } },
+    where: { block: { bookingToken: normalized } },
     include: {
       documents: true,
       block: {
@@ -36,7 +39,24 @@ export async function getDigitalFormByToken(token: string) {
       },
     },
   });
-  if (!form?.block) return null;
+  if (!form?.block) {
+    const block = await prisma.block.findFirst({
+      where: { bookingToken: normalized },
+      include: {
+        digitalForm: { include: { documents: true } },
+        unit: {
+          include: {
+            floor: { include: { tower: { include: { project: true } } } },
+          },
+        },
+      },
+    });
+    if (!block?.digitalForm || block.expiresAt <= new Date()) return null;
+    return {
+      ...block.digitalForm,
+      block,
+    };
+  }
   if (form.block.expiresAt <= new Date()) return null;
   return form;
 }
