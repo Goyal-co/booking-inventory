@@ -18,7 +18,7 @@ import { signOut } from "next-auth/react";
 export const salesNavItems = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/live", label: "Live Booking", icon: Zap },
-  { href: "/app/direct-booking", label: "Direct Booking", icon: Handshake },
+  { href: "/app/direct-booking", label: "Assigned Leads", icon: Handshake },
   { href: "/app/blocked", label: "My Blocked Units", icon: Lock },
   { href: "/app/bookings", label: "Bookings Done", icon: CheckCircle },
   { href: "/app/projects", label: "My Projects", icon: FolderKanban },

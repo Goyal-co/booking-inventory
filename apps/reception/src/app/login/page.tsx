@@ -26,7 +26,11 @@ function ReceptionLoginForm() {
     setLoading(true);
     setError("");
 
-    const result = await signIn("credentials", { email, password, redirect: false });
+    const result = await signIn("credentials", {
+      email: email.trim().toLowerCase(),
+      password,
+      redirect: false,
+    });
 
     if (result?.error) {
       setError("Invalid email or password.");

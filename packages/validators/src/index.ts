@@ -38,8 +38,12 @@ export { normalizeMediaUrl } from "./media-url";
 export { amountToIndianWords } from "./amount-words";
 
 
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 export const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().transform(normalizeEmail),
   password: z.string().min(6),
 });
 
@@ -205,7 +209,7 @@ export const massBlockSchema = z.object({
 });
 
 export const createUserSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().transform(normalizeEmail),
   name: z.string().min(2),
   password: z.string().min(6),
   role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN", "SALES_MANAGER", "SALES_EXEC", "RECEPTION"]),
@@ -214,7 +218,7 @@ export const createUserSchema = z.object({
 
 export const createAdminUserSchema = z
   .object({
-    email: z.string().email(),
+    email: z.string().email().transform(normalizeEmail),
     name: z.string().min(2),
     password: z.string().min(8),
     role: z.enum(["SUPER_ADMIN", "PROJECT_ADMIN"]),
@@ -226,7 +230,7 @@ export const createAdminUserSchema = z
   });
 
 export const importUserRowSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().transform(normalizeEmail),
   name: z.string().min(2),
   password: z.string().min(6),
   role: z.enum(["SALES_MANAGER", "SALES_EXEC"]),
