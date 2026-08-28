@@ -2,6 +2,7 @@
   "extends": "@booking/config-typescript/nextjs.json",
   "compilerOptions": {
     "declaration": false,
+    "declarationMap": false,
     "plugins": [
       {
         "name": "next"

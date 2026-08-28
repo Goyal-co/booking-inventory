@@ -6,7 +6,7 @@
     "dev": "next dev --port 3003",
     "build": "next build",
     "start": "next start -p ${PORT:-3003}",
-    "lint": "next lint"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@booking/database": "workspace:*",

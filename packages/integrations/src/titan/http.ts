@@ -58,6 +58,6 @@ export const httpTitanCRM: TitanCRMProvider = {
       headers: { Authorization: `Bearer ${TITAN_KEY}` },
     });
     if (!res.ok) return null;
-    return res.json();
+    return res.json() as Promise<Record<string, unknown> | null>;
   },
 };

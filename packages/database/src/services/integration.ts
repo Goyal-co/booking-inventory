@@ -259,7 +259,7 @@ export async function syncBookingToIntegrations(bookingId: string) {
     }
 
     try {
-      const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+      const { notifyEoiPartnerPortalResolved } = await import("./eoi-cp-notify");
       const salesUser = booking.lead?.assignedSalesId
         ? await prisma.user.findUnique({
             where: { id: booking.lead.assignedSalesId },
@@ -271,7 +271,7 @@ export async function syncBookingToIntegrations(bookingId: string) {
         booking.bookedWithCpName !== booking.bookedWithCpId
           ? booking.bookedWithCpName
           : undefined;
-      await notifyEoiPartnerPortal({
+      await notifyEoiPartnerPortalResolved({
         event: "booking.confirmed",
         leadId: booking.lead?.leadId,
         eoiCpLeadId: booking.lead?.eoiCpLeadId,
@@ -600,11 +600,11 @@ export async function assignLeadToSales(
   // Push site visit to Goyal Hariyana CRM when linked (or discoverable by phone)
   let crmSynced = false;
   let crmError: string | undefined;
+  let crmId: string | null | undefined = lead.goyalCrmId;
   try {
     const { markGoyalSiteVisit, getGoyalCrmCapabilities, resolveGoyalLeadId } =
       await import("@booking/integrations");
     const caps = getGoyalCrmCapabilities();
-    let crmId = lead.goyalCrmId;
     if (!crmId || !/^[0-9a-f-]{36}$/i.test(crmId)) {
       const resolved = await resolveGoyalLeadId({
         idOrCode: lead.goyalCrmId || lead.goyalLeadCode || lead.titanCrmId,
@@ -618,7 +618,7 @@ export async function assignLeadToSales(
         });
       }
     }
-    if (crmId && caps.staffApi) {
+    if (crmId && caps.canBook) {
       await markGoyalSiteVisit(crmId, {
         siteVisit: true,
         siteVisitDone: true,
@@ -628,9 +628,9 @@ export async function assignLeadToSales(
         salespersonName: salesUser?.name ?? undefined,
       });
       crmSynced = true;
-    } else if (crmId && !caps.staffApi) {
+    } else if (crmId) {
       crmError =
-        "CRM site-visit skipped — set GOYAL_CRM_API_TOKEN to a staff Supabase JWT (Partner EOI_API_KEY cannot mark site visit; role=api_token → 403)";
+        "CRM site-visit skipped — set BEARER_AUTHORIZATION (permanent Partner token)";
       console.warn(`[assignLeadToSales] ${crmError}`);
     }
   } catch (e) {
@@ -638,32 +638,25 @@ export async function assignLeadToSales(
     console.error("[assignLeadToSales] Goyal site visit sync failed", e);
   }
 
-  // Push site-visit completed to EOI Partner Portal (Channel Partner leads)
-  if (
-    lead.eoiCpLeadId ||
-    visiting?.eoiCpLeadId ||
-    visiting?.visitingPartnerCpId ||
-    lead.source === "CHANNEL_PARTNER"
-  ) {
-    try {
-      const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
-      await notifyEoiPartnerPortal({
-        event: "site_visit.completed",
-        leadId: lead.leadId,
-        eoiCpLeadId: visiting?.eoiCpLeadId || lead.eoiCpLeadId,
-        cpId: visiting?.visitingPartnerCpId || lead.cpId,
-        cpName: visiting?.visitingPartnerName,
-        crmLeadId: lead.goyalCrmId || lead.titanCrmId,
-        phone: lead.customerPhone,
-        projectId,
-        projectName,
-        salespersonId: salesUserId,
-        salespersonName: salesUser?.name,
-        completedAt: new Date(),
-      });
-    } catch (e) {
-      console.error("[assignLeadToSales] EOI_CP site visit notify failed", e);
-    }
+  // Push site-visit completed to EOI Partner Portal (by phone / CRM id when configured)
+  try {
+    const { notifyEoiPartnerPortalResolved } = await import("./eoi-cp-notify");
+    await notifyEoiPartnerPortalResolved({
+      event: "site_visit.completed",
+      leadId: lead.leadId,
+      eoiCpLeadId: visiting?.eoiCpLeadId || lead.eoiCpLeadId,
+      cpId: visiting?.visitingPartnerCpId || lead.cpId,
+      cpName: visiting?.visitingPartnerName,
+      crmLeadId: crmId || lead.goyalCrmId || lead.titanCrmId,
+      phone: lead.customerPhone,
+      projectId,
+      projectName,
+      salespersonId: salesUserId,
+      salespersonName: salesUser?.name,
+      completedAt: new Date(),
+    });
+  } catch (e) {
+    console.error("[assignLeadToSales] EOI_CP site visit notify failed", e);
   }
 
   return { lead, crmSynced, crmError };
@@ -1061,8 +1054,8 @@ export async function markDirectLeadSiteVisitDone(input: {
     }
     if (!crmId) {
       crmError = "No Goyal CRM id — site visit marked locally only";
-    } else if (!caps.staffApi) {
-      crmError = "GOYAL_CRM_API_TOKEN required to push site visit to CRM";
+    } else if (!caps.canBook) {
+      crmError = "BEARER_AUTHORIZATION required to push site visit to CRM";
     } else {
       crmLead = await markGoyalSiteVisit(crmId, {
         siteVisit: true,
@@ -1080,12 +1073,12 @@ export async function markDirectLeadSiteVisitDone(input: {
   }
 
   try {
-    const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+    const { notifyEoiPartnerPortalResolved } = await import("./eoi-cp-notify");
     const projectHint =
       typeof lead.intentType === "string" && lead.intentType.startsWith("eoi:")
         ? lead.intentType.slice(4).replace(/\|booked$/i, "")
         : undefined;
-    await notifyEoiPartnerPortal({
+    await notifyEoiPartnerPortalResolved({
       event: "site_visit.completed",
       leadId: lead.leadId,
       eoiCpLeadId: lead.eoiCpLeadId,
@@ -1160,8 +1153,8 @@ export async function markDirectLeadBooked(input: {
 
     if (!crmId) {
       crmError = "No Goyal CRM id — marked booked locally only";
-    } else if (!caps.staffApi) {
-      crmError = "GOYAL_CRM_API_TOKEN required to push booking to CRM";
+    } else if (!caps.canBook) {
+      crmError = "BEARER_AUTHORIZATION required to push booking to CRM";
     } else {
       let existing: Record<string, unknown> = {};
       try {
@@ -1257,7 +1250,7 @@ export async function markDirectLeadBooked(input: {
     if (lead.goyalCrmId) {
       try {
         const { markGoyalSiteVisit, getGoyalCrmCapabilities } = await import("@booking/integrations");
-        if (getGoyalCrmCapabilities().staffApi) {
+        if (getGoyalCrmCapabilities().canBook) {
           await markGoyalSiteVisit(lead.goyalCrmId, {
             siteVisit: true,
             siteVisitDone: true,
@@ -1272,7 +1265,7 @@ export async function markDirectLeadBooked(input: {
     }
 
     try {
-      const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+      const { notifyEoiPartnerPortalResolved } = await import("./eoi-cp-notify");
       const projectHint =
         typeof baseIntent === "string" && baseIntent.startsWith("eoi:")
           ? baseIntent.slice(4)
@@ -1281,7 +1274,7 @@ export async function markDirectLeadBooked(input: {
         where: { id: input.salesUserId },
         select: { name: true },
       });
-      await notifyEoiPartnerPortal({
+      await notifyEoiPartnerPortalResolved({
         event: "site_visit.completed",
         leadId: lead.leadId,
         eoiCpLeadId: lead.eoiCpLeadId,
@@ -1316,7 +1309,7 @@ export async function markDirectLeadBooked(input: {
     undefined;
 
   try {
-    const { notifyEoiPartnerPortal } = await import("./eoi-cp-notify");
+    const { notifyEoiPartnerPortalResolved } = await import("./eoi-cp-notify");
     const projectHint =
       typeof baseIntent === "string" && baseIntent.startsWith("eoi:")
         ? baseIntent.slice(4)
@@ -1325,7 +1318,7 @@ export async function markDirectLeadBooked(input: {
       where: { id: input.salesUserId },
       select: { name: true },
     });
-    await notifyEoiPartnerPortal({
+    await notifyEoiPartnerPortalResolved({
       event: "booking.confirmed",
       leadId: lead.leadId,
       eoiCpLeadId: lead.eoiCpLeadId,

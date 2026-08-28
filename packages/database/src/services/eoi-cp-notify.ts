@@ -112,3 +112,76 @@ export async function notifyEoiPartnerPortal(input: {
     return { ok: false };
   }
 }
+
+type NotifyInput = Parameters<typeof notifyEoiPartnerPortal>[0];
+
+/** Resolve EOI_CP lead ids from phone when missing, then notify Partner Portal. */
+export async function notifyEoiPartnerPortalResolved(
+  input: NotifyInput
+): Promise<{ ok: boolean; skipped?: boolean; status?: number; notified?: number }> {
+  const phone = input.phone?.replace(/\D/g, "").slice(-10);
+  const hasDirectId =
+    Boolean(input.eoiCpLeadId?.trim()) ||
+    Boolean(input.leadId?.trim()) ||
+    Boolean(input.crmLeadId?.trim());
+
+  if (hasDirectId || !phone) {
+    const result = await notifyEoiPartnerPortal(input);
+    return { ...result, notified: result.ok ? 1 : 0 };
+  }
+
+  try {
+    const { fetchEoiLeadIdentity } = await import("./eoi-identity");
+    const identity = await fetchEoiLeadIdentity({ phone, leadId: input.leadId });
+    if (!identity?.associations?.length) {
+      const fallback = await notifyEoiPartnerPortal({ ...input, phone });
+      return { ...fallback, notified: fallback.ok ? 1 : 0 };
+    }
+
+    let associations = identity.associations;
+    if (input.projectId) {
+      associations = associations.filter((a) => a.projectId === input.projectId);
+    }
+    if (input.projectName) {
+      const name = input.projectName.toLowerCase();
+      associations = associations.filter(
+        (a) => a.projectName.toLowerCase() === name
+      );
+    }
+    if (input.cpId) {
+      associations = associations.filter((a) => a.cpId === input.cpId);
+    }
+    if (associations.length === 0) {
+      associations = identity.associations;
+    }
+
+    let notified = 0;
+    let lastStatus: number | undefined;
+    let anyOk = false;
+    for (const assoc of associations) {
+      const result = await notifyEoiPartnerPortal({
+        ...input,
+        leadId: input.leadId || assoc.publicLeadId || identity.leadId,
+        eoiCpLeadId: input.eoiCpLeadId || assoc.eoiCpLeadId,
+        cpId: input.cpId || assoc.cpId,
+        cpName: input.cpName || assoc.cpName,
+        phone,
+        projectId: input.projectId || assoc.projectId,
+        projectName: input.projectName || assoc.projectName,
+      });
+      if (result.ok) {
+        anyOk = true;
+        notified += 1;
+      }
+      if (result.status) lastStatus = result.status;
+      if (result.skipped) {
+        return { ok: false, skipped: true, notified: 0 };
+      }
+    }
+    return { ok: anyOk, status: lastStatus, notified };
+  } catch (e) {
+    console.error("[EOI_CP notify resolved] error", e);
+    const fallback = await notifyEoiPartnerPortal({ ...input, phone });
+    return { ...fallback, notified: fallback.ok ? 1 : 0 };
+  }
+}

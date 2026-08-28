@@ -9,7 +9,7 @@ import {
   upsertLeadFromTitanSearch,
   upsertLeadFromEoiCp,
   assignGoyalLeadToSales,
-  notifyEoiPartnerPortal,
+  notifyEoiPartnerPortalResolved,
   mapLeadForBookingSearch,
   parseVisitingPartnerFromNotes,
 } from "@booking/database";
@@ -22,6 +22,7 @@ import {
   getGoyalLead,
   createEoiLeadBestEffort,
   bookGoyalLead,
+  markGoyalSiteVisit,
 } from "@booking/integrations";
 
 async function getReceptionUser() {
@@ -550,18 +551,85 @@ export async function POST_materializeEoiLead(req: NextRequest) {
   return NextResponse.json({ lead }, { status: 201 });
 }
 
-export async function GET_availableSalespersons() {
+export async function GET_me() {
   const user = await getReceptionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const access = await prisma.userProjectAccess.findMany({
+    where: { userId: user.id },
+    select: { project: { select: { id: true, name: true } } },
+    orderBy: { project: { name: "asc" } },
+  });
+  const projects = access.map((row) => row.project);
+
+  return NextResponse.json({
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      organizationId: user.organizationId,
+      projectIds: projects.map((p) => p.id),
+      projects,
+    },
+  });
+}
+
+export async function GET_availableSalespersons(req: NextRequest) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const access = await prisma.userProjectAccess.findMany({
+    where: { userId: user.id },
+    select: { projectId: true },
+  });
+  const allowedProjectIds = access.map((row) => row.projectId);
+  if (allowedProjectIds.length === 0) {
+    return NextResponse.json({
+      sales: [],
+      hint: "No projects assigned — ask admin to assign projects to your reception account.",
+    });
+  }
+
+  const projectIdParam = req.nextUrl.searchParams.get("projectId")?.trim();
+  let projectFilterIds = allowedProjectIds;
+  if (projectIdParam) {
+    if (!allowedProjectIds.includes(projectIdParam)) {
+      return NextResponse.json({ error: "Project not assigned to you" }, { status: 403 });
+    }
+    projectFilterIds = [projectIdParam];
+  }
+
   const sales = await prisma.user.findMany({
     where: {
       organizationId: user.organizationId,
       isActive: true,
       role: { in: ["SALES_EXEC", "SALES_MANAGER"] },
+      projectAccess: { some: { projectId: { in: projectFilterIds } } },
     },
-    select: { id: true, name: true, email: true, role: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      projectAccess: {
+        where: { projectId: { in: projectFilterIds } },
+        select: { project: { select: { id: true, name: true } } },
+      },
+    },
+    orderBy: { name: "asc" },
   });
-  return NextResponse.json({ sales });
+
+  return NextResponse.json({
+    sales: sales.map((s) => ({
+      id: s.id,
+      name: s.name,
+      email: s.email,
+      role: s.role,
+      projects: s.projectAccess.map((p) => p.project),
+    })),
+    projectIds: projectFilterIds,
+  });
 }
 
 export async function GET_visitsToday() {
@@ -784,13 +852,13 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Webhook-created rows may only expose leadCode until staff API can resolve UUID
+  // Webhook-created rows may only expose leadCode until list resolves UUID
   if (id.startsWith("webhook-")) {
     return NextResponse.json(
       {
         error:
-          "Cannot book this lead yet — CRM returned no staff lead id. Open the lead from the list (UUID) and set GOYAL_CRM_API_TOKEN for booking.",
-        hint: "Book needs GOYAL_CRM_API_TOKEN (staff JWT). List/create work with EOI_API_KEY.",
+          "Cannot book this lead yet — CRM returned no staff lead id. Search by phone to resolve the lead UUID.",
+        hint: "Set BEARER_AUTHORIZATION (Partner token) for list, site-visit, and book.",
       },
       { status: 400 }
     );
@@ -812,9 +880,25 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
   }
 
   try {
-    const lead = await bookGoyalLead(bookId, parsed.data);
+    const caps = getGoyalCrmCapabilities();
+    if (caps.canBook) {
+      try {
+        await markGoyalSiteVisit(bookId, {
+          siteVisit: true,
+          siteVisitDone: true,
+          notes: "Site visit completed before booking (Reception)",
+        });
+      } catch (svErr) {
+        console.warn("[POST_eoiBook] CRM site-visit before book (non-fatal)", svErr);
+      }
+    }
 
-    // Keep Partner Portal / customer status in sync when booking is done in CRM.
+    const lead = await bookGoyalLead(bookId, parsed.data);
+    const phoneDigits = (lead.phone || "").replace(/\D/g, "").slice(-10);
+
+    let eoiCpSynced = false;
+    let eoiCpNotify: { ok: boolean; skipped?: boolean; notified?: number } | undefined;
+
     try {
       const registry = await prisma.leadRegistry.findFirst({
         where: {
@@ -822,8 +906,8 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
           OR: [
             { goyalCrmId: lead.id || bookId },
             ...(lead.leadCode ? [{ goyalLeadCode: lead.leadCode }] : []),
-            ...(lead.phone
-              ? [{ customerPhone: { contains: lead.phone.replace(/\D/g, "").slice(-10) } }]
+            ...(phoneDigits.length >= 10
+              ? [{ customerPhone: { contains: phoneDigits } }]
               : []),
           ],
         },
@@ -844,23 +928,40 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
         visitCp.visitingCpName !== visitCp.visitingCpId
           ? visitCp.visitingCpName
           : undefined;
-      await notifyEoiPartnerPortal({
-        event: "booking.confirmed",
+
+      const notifyBase = {
         leadId: registry?.leadId || lead.leadCode,
         eoiCpLeadId: registry?.eoiCpLeadId,
-        cpId: registry?.cpId,
+        cpId: registry?.cpId || visitCp?.visitingCpId,
         cpName,
         crmLeadId: lead.id || bookId,
-        phone: registry?.customerPhone || lead.phone,
+        phone: registry?.customerPhone || lead.phone || phoneDigits,
         projectId: registry?.project?.id,
         projectName: registry?.project?.name || lead.projectName,
         completedAt: new Date(),
+      };
+
+      await notifyEoiPartnerPortalResolved({
+        event: "site_visit.completed",
+        ...notifyBase,
       });
+
+      eoiCpNotify = await notifyEoiPartnerPortalResolved({
+        event: "booking.confirmed",
+        ...notifyBase,
+      });
+      eoiCpSynced = Boolean(eoiCpNotify.ok);
     } catch (notifyErr) {
       console.error("[POST_eoiBook] EOI_CP notify failed", notifyErr);
     }
 
-    return NextResponse.json({ lead });
+    return NextResponse.json({
+      lead,
+      crmSynced: true,
+      eoiCpSynced,
+      eoiCpNotify,
+      capabilities: getGoyalCrmCapabilities(),
+    });
   } catch (err) {
     const hint = crmAuthHint(err, "staff");
     if (err instanceof GoyalCrmError) {
@@ -959,6 +1060,7 @@ export async function POST_eoiAssign(
       lead: result.lead,
       crmSynced: result.crmSynced,
       crmError: result.crmError,
+      eoiCpSynced: true,
       capabilities: getGoyalCrmCapabilities(),
     });
   } catch (e) {
@@ -968,4 +1070,86 @@ export async function POST_eoiAssign(
       { status: 500 }
     );
   }
+}
+
+const siteVisitEoiLeadSchema = z.object({
+  phone: z.string().min(5).optional(),
+  projectName: z.string().optional(),
+  notes: z.string().optional(),
+  salesUserId: z.string().optional(),
+});
+
+/** Reception EOI desk → mark site visit done in CRM + sync EOI_CP (no local assign). */
+export async function POST_eoiSiteVisit(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const parsed = siteVisitEoiLeadSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  let crmLead: Awaited<ReturnType<typeof getGoyalLead>> | null = null;
+  try {
+    crmLead = await getGoyalLead(id);
+  } catch {
+    try {
+      const listed = await listGoyalLeads({ search: id, limit: 10, page: 1 });
+      crmLead =
+        listed.leads.find((l) => l.id === id) ||
+        listed.leads.find((l) => l.leadCode === id) ||
+        null;
+    } catch {
+      crmLead = null;
+    }
+  }
+
+  const phone = parsed.data.phone || crmLead?.phone;
+  const bookId = crmLead?.id || id;
+  let crmSynced = false;
+  let crmError: string | undefined;
+  let crmResult: unknown;
+
+  try {
+    const caps = getGoyalCrmCapabilities();
+    if (!caps.canBook) {
+      crmError = "BEARER_AUTHORIZATION required to push site visit to CRM";
+    } else {
+      crmResult = await markGoyalSiteVisit(bookId, {
+        siteVisit: true,
+        siteVisitDone: true,
+        notes: parsed.data.notes || "Site visit done (Reception EOI desk)",
+      });
+      crmSynced = true;
+    }
+  } catch (e) {
+    crmError = e instanceof Error ? e.message : "CRM site visit failed";
+  }
+
+  let eoiCpNotify: { ok: boolean; skipped?: boolean; notified?: number } | undefined;
+  try {
+    eoiCpNotify = await notifyEoiPartnerPortalResolved({
+      event: "site_visit.completed",
+      leadId: crmLead?.leadCode,
+      crmLeadId: crmLead?.id || bookId,
+      phone,
+      projectName: parsed.data.projectName || crmLead?.projectName,
+      completedAt: new Date(),
+    });
+  } catch (e) {
+    console.error("[POST_eoiSiteVisit] EOI_CP notify failed", e);
+  }
+
+  return NextResponse.json({
+    crmSynced,
+    crmError,
+    crmLead: crmResult,
+    eoiCpSynced: Boolean(eoiCpNotify?.ok),
+    eoiCpNotify,
+    capabilities: getGoyalCrmCapabilities(),
+  });
 }

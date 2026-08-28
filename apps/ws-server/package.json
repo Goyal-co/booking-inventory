@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@booking/database": "workspace:*",
@@ -16,6 +17,7 @@
     "tsx": "^4.19.2"
   },
   "devDependencies": {
+    "@booking/config-typescript": "workspace:*",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",

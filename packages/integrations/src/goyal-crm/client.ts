@@ -87,8 +87,8 @@ export function getGoyalCrmCapabilities() {
     webhookCreate: partner,
     webhookList: partner,
     canCreate: partner || staff,
-    /** Book / site-visit on CRM still need a staff JWT */
-    canBook: staff,
+    /** Book / site-visit work with BEARER_AUTHORIZATION (permanent Partner token) or staff JWT */
+    canBook: partner || staff,
     canListAllCrm: partner,
     baseUrl: baseUrl(),
   };
@@ -180,9 +180,22 @@ async function staffFetch(path: string, init: RequestInit = {}): Promise<unknown
   return body;
 }
 
+/** Staff JWT when set; otherwise permanent Partner token (BEARER_AUTHORIZATION). */
+async function crmMutationFetch(path: string, init: RequestInit = {}): Promise<unknown> {
+  if (staffToken()) {
+    try {
+      return await staffFetch(path, init);
+    } catch (err) {
+      if (!partnerAccessToken()) throw err;
+      console.warn("[Goyal CRM] staff mutation failed, trying Partner token", err);
+    }
+  }
+  return partnerFetch(path, init);
+}
+
 /** @deprecated use staffFetch — kept name for older call sites via crmFetch alias below */
 async function crmFetch(path: string, init: RequestInit = {}): Promise<unknown> {
-  return staffFetch(path, init);
+  return crmMutationFetch(path, init);
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -565,17 +578,17 @@ export async function bookGoyalLead(
   leadId: string,
   input: BookEoiLeadInput
 ): Promise<GoyalCrmLead> {
-  if (!staffToken()) {
+  if (!partnerAccessToken() && !staffToken()) {
     throw new GoyalCrmError(
-      "CRM book requires GOYAL_CRM_API_TOKEN (staff Supabase JWT). Partner EOI_API_KEY can list/create but cannot book (role api_token).",
-      403
+      "Configure BEARER_AUTHORIZATION or GOYAL_CRM_API_TOKEN for CRM book",
+      500
     );
   }
   const resolved =
     (await resolveGoyalLeadId({ idOrCode: leadId })) || leadId;
   const payload = compactEoiPayload(input as unknown as Record<string, unknown>);
   return normalizeStaffLead(
-    await crmFetch(`/leads/${encodeURIComponent(resolved)}/book`, {
+    await crmMutationFetch(`/leads/${encodeURIComponent(resolved)}/book`, {
       method: "POST",
       body: JSON.stringify(payload),
     })
@@ -587,17 +600,17 @@ export async function updateGoyalLead(
   leadId: string,
   input: UpdateGoyalLeadInput
 ): Promise<GoyalCrmLead> {
-  if (!staffToken()) {
+  if (!partnerAccessToken() && !staffToken()) {
     throw new GoyalCrmError(
-      "CRM lead update requires GOYAL_CRM_API_TOKEN (staff JWT)",
-      403
+      "Configure BEARER_AUTHORIZATION or GOYAL_CRM_API_TOKEN for CRM update",
+      500
     );
   }
   const resolved =
     (await resolveGoyalLeadId({ idOrCode: leadId })) || leadId;
   const payload = compactEoiPayload(input as unknown as Record<string, unknown>);
   return normalizeStaffLead(
-    await crmFetch(`/leads/${encodeURIComponent(resolved)}`, {
+    await crmMutationFetch(`/leads/${encodeURIComponent(resolved)}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     })
@@ -609,10 +622,10 @@ export async function markGoyalSiteVisit(
   leadId: string,
   input: MarkSiteVisitInput = {}
 ): Promise<GoyalCrmLead> {
-  if (!staffToken()) {
+  if (!partnerAccessToken() && !staffToken()) {
     throw new GoyalCrmError(
-      "CRM site-visit requires GOYAL_CRM_API_TOKEN (staff Supabase JWT). Partner EOI_API_KEY cannot mark site visit on CRM.",
-      403
+      "Configure BEARER_AUTHORIZATION or GOYAL_CRM_API_TOKEN for CRM site-visit",
+      500
     );
   }
   const resolved =
@@ -634,23 +647,28 @@ export async function markGoyalSiteVisit(
   ].filter(Boolean);
   const notes = visitNoteParts.join(" — ") || undefined;
 
-  const payload = compactEoiPayload({
+  const siteVisitPayload = compactEoiPayload({
     siteVisit: true,
     siteVisitDate: input.siteVisitDate ?? today,
     siteVisitDone: input.siteVisitDone ?? true,
     siteVisitDoneDate: input.siteVisitDoneDate ?? today,
-    ...(notes ? { notes } : {}),
-    ...(input.visitingCpId ? { channelPartnerId: input.visitingCpId } : {}),
-    ...(input.visitingCpName ? { channelPartnerName: input.visitingCpName } : {}),
   } as Record<string, unknown>);
 
   try {
-    return normalizeStaffLead(
-      await crmFetch(`/leads/${encodeURIComponent(resolved)}/site-visit`, {
+    const lead = normalizeStaffLead(
+      await crmMutationFetch(`/leads/${encodeURIComponent(resolved)}/site-visit`, {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(siteVisitPayload),
       })
     );
+    if (notes) {
+      try {
+        return await updateGoyalLead(resolved, { notes } as UpdateGoyalLeadInput);
+      } catch {
+        return lead;
+      }
+    }
+    return lead;
   } catch (err) {
     if (err instanceof GoyalCrmError && (err.status === 404 || err.status === 405)) {
       return updateGoyalLead(resolved, {

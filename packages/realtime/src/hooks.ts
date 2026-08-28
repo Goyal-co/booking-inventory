@@ -1,10 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, type MutableRefObject } from "react";
 import { io, Socket } from "socket.io-client";
 import type { RealtimeEventMap } from "./index";
 
-export function useRealtime(projectId: string | null) {
+export type UseRealtimeReturn = {
+  subscribe: <K extends keyof RealtimeEventMap>(
+    event: K,
+    handler: (payload: RealtimeEventMap[K]) => void
+  ) => () => void;
+  isConnected: boolean;
+  socket: MutableRefObject<Socket | null>;
+};
+
+export function useRealtime(projectId: string | null): UseRealtimeReturn {
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
