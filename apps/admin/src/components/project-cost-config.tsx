@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@booking/ui";
 import { toast } from "sonner";
 import { ProjectCostExcelSection } from "./project-cost-excel-section";
-import type { CostSheetLineRow, ExcelColumnOption } from "./project-cost-sheet-lines-panel";
+import type { CostSheetLineRow } from "./project-cost-sheet-lines-panel";
 
 interface ScheduleRow {
   id?: string;
@@ -70,7 +70,6 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
   const [unitMaster, setUnitMaster] = useState<UnitMasterRow[]>([]);
   const [unitDraft, setUnitDraft] = useState<UnitMasterRow>(emptyUnitRow());
   const [costSheetLines, setCostSheetLines] = useState<CostSheetLineRow[]>([]);
-  const [excelColumnOptions, setExcelColumnOptions] = useState<ExcelColumnOption[]>([]);
   const [excelColumnMap, setExcelColumnMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -324,7 +323,6 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
         lineDefinitions={costSheetLines}
         sharedColumnMap={excelColumnMap}
         onSharedColumnMapChange={setExcelColumnMap}
-        onExcelColumnsChange={setExcelColumnOptions}
         onCostSheetLinesChange={setCostSheetLines}
       />
 

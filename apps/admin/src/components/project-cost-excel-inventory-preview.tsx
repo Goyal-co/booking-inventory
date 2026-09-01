@@ -46,6 +46,69 @@ function statusBadgeClass(status: string) {
   return "bg-gray-100 text-gray-700";
 }
 
+function CostSheetPreviewBody({
+  selectableUnits,
+  selectedUnitId,
+  onSelectUnit,
+  selectedUnit,
+  loadingCostSheet,
+  costSheet,
+}: {
+  selectableUnits: InventoryPreviewUnit[];
+  selectedUnitId: string;
+  onSelectUnit: (unitId: string) => void;
+  selectedUnit: InventoryPreviewUnit | undefined;
+  loadingCostSheet: boolean;
+  costSheet: CostSheetEngineData | null;
+}) {
+  return (
+  <>
+    <div className="flex flex-wrap items-end gap-4">
+      <div className="min-w-[240px]">
+        <Label>Select unit</Label>
+        <select
+          className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+          value={selectedUnitId}
+          onChange={(e) => onSelectUnit(e.target.value)}
+        >
+          {selectableUnits.map((unit) => (
+            <option key={unit.id} value={unit.id}>
+              {unit.towerName} / {unit.unitNumber}
+              {unit.status !== "AVAILABLE" ? ` (${unit.status})` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+      {selectedUnit ? (
+        <p className="text-sm text-gray-600">
+          {selectedUnit.configuration || "—"} · {fmtNum(selectedUnit.saleableAreaSqft)} sq.ft.
+          {selectedUnit.baseRatePerSqft
+            ? ` · ${formatPrice(selectedUnit.baseRatePerSqft)}/sq.ft`
+            : ""}
+        </p>
+      ) : null}
+    </div>
+    {loadingCostSheet ? (
+      <p className="text-sm text-gray-500">Calculating cost sheet…</p>
+    ) : costSheet ? (
+      <CostSheetEngineView
+        costSheet={costSheet}
+        title={
+          selectedUnit
+            ? `Cost sheet — ${selectedUnit.towerName} / ${selectedUnit.unitNumber}`
+            : "Cost sheet"
+        }
+      />
+    ) : (
+      <p className="text-sm text-amber-700">
+        Cost sheet unavailable for this unit. Check saleable area, base rate in Excel, and payment
+        schedule / other charges for this project.
+      </p>
+    )}
+  </>
+  );
+}
+
 export function ProjectCostExcelInventoryPreview({
   projectId,
   units: unitsProp,
@@ -164,163 +227,95 @@ export function ProjectCostExcelInventoryPreview({
   return (
     <div className="space-y-6">
       {showInventoryTable ? (
-      <Card>
-        <CardHeader>
-          <CardTitle>Inventory preview ({units.length} units)</CardTitle>
-          <p className="text-sm text-gray-600">
-            Units in project inventory after Excel sync.{" "}
-            <strong>{availableUnits.length}</strong> available for booking.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto rounded-lg border max-h-80">
-            <table className="min-w-full text-sm">
-              <thead className="sticky top-0 bg-gray-50 text-left text-xs text-gray-500">
-                <tr>
-                  <th className="px-3 py-2">Tower / Wing</th>
-                  <th className="px-3 py-2">Unit</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2 text-right">Floor</th>
-                  <th className="px-3 py-2 text-right">Saleable sq.ft.</th>
-                  <th className="px-3 py-2 text-right">Base ₹/sq.ft</th>
-                  <th className="px-3 py-2">Excel row</th>
-                </tr>
-              </thead>
-              <tbody>
-                {units.map((unit) => (
-                  <tr
-                    key={unit.id}
-                    className={`border-t cursor-pointer hover:bg-brand-50/50 ${
-                      unit.id === selectedUnitId ? "bg-brand-50" : ""
-                    }`}
-                    onClick={() => setSelectedUnitId(unit.id)}
-                  >
-                    <td className="px-3 py-2">{unit.towerName}</td>
-                    <td className="px-3 py-2 font-medium">{unit.unitNumber}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(unit.status)}`}
-                      >
-                        {unit.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{unit.configuration || "—"}</td>
-                    <td className="px-3 py-2 text-right">{unit.floor}</td>
-                    <td className="px-3 py-2 text-right">{fmtNum(unit.saleableAreaSqft)}</td>
-                    <td className="px-3 py-2 text-right">{fmtNum(unit.baseRatePerSqft)}</td>
-                    <td className="px-3 py-2">
-                      {unit.hasMasterRow ? (
-                        <span className="text-green-700">Linked</span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
+        <Card>
+          <CardHeader>
+            <CardTitle>Inventory preview ({units.length} units)</CardTitle>
+            <p className="text-sm text-gray-600">
+              Units in project inventory after Excel sync.{" "}
+              <strong>{availableUnits.length}</strong> available for booking.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto rounded-lg border max-h-80">
+              <table className="min-w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50 text-left text-xs text-gray-500">
+                  <tr>
+                    <th className="px-3 py-2">Tower / Wing</th>
+                    <th className="px-3 py-2">Unit</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2 text-right">Floor</th>
+                    <th className="px-3 py-2 text-right">Saleable sq.ft.</th>
+                    <th className="px-3 py-2 text-right">Base ₹/sq.ft</th>
+                    <th className="px-3 py-2">Excel row</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                </thead>
+                <tbody>
+                  {units.map((unit) => (
+                    <tr
+                      key={unit.id}
+                      className={`border-t cursor-pointer hover:bg-brand-50/50 ${
+                        unit.id === selectedUnitId ? "bg-brand-50" : ""
+                      }`}
+                      onClick={() => setSelectedUnitId(unit.id)}
+                    >
+                      <td className="px-3 py-2">{unit.towerName}</td>
+                      <td className="px-3 py-2 font-medium">{unit.unitNumber}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(unit.status)}`}
+                        >
+                          {unit.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{unit.configuration || "—"}</td>
+                      <td className="px-3 py-2 text-right">{unit.floor}</td>
+                      <td className="px-3 py-2 text-right">{fmtNum(unit.saleableAreaSqft)}</td>
+                      <td className="px-3 py-2 text-right">{fmtNum(unit.baseRatePerSqft)}</td>
+                      <td className="px-3 py-2">
+                        {unit.hasMasterRow ? (
+                          <span className="text-green-700">Linked</span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
 
       {showCostSheetPreview ? (
         embedded ? (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-end gap-4">
-              <div className="min-w-[240px]">
-                <Label>Select unit</Label>
-                <select
-                  className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-                  value={selectedUnitId}
-                  onChange={(e) => setSelectedUnitId(e.target.value)}
-                >
-                  {selectableUnits.map((unit) => (
-                    <option key={unit.id} value={unit.id}>
-                      {unit.towerName} / {unit.unitNumber}
-                      {unit.status !== "AVAILABLE" ? ` (${unit.status})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {selectedUnit ? (
-                <p className="text-sm text-gray-600">
-                  {selectedUnit.configuration || "—"} · {fmtNum(selectedUnit.saleableAreaSqft)} sq.ft.
-                  {selectedUnit.baseRatePerSqft
-                    ? ` · ${formatPrice(selectedUnit.baseRatePerSqft)}/sq.ft`
-                    : ""}
-                </p>
-              ) : null}
-            </div>
-            {loadingCostSheet ? (
-              <p className="text-sm text-gray-500">Calculating cost sheet…</p>
-            ) : costSheet ? (
-              <CostSheetEngineView
-                costSheet={costSheet}
-                title={
-                  selectedUnit
-                    ? `Cost sheet — ${selectedUnit.towerName} / ${selectedUnit.unitNumber}`
-                    : "Cost sheet"
-                }
-              />
-            ) : (
-              <p className="text-sm text-amber-700">
-                Cost sheet unavailable for this unit. Check saleable area, base rate in Excel, and
-                payment schedule / other charges for this project.
-              </p>
-            )}
+            <CostSheetPreviewBody
+              selectableUnits={selectableUnits}
+              selectedUnitId={selectedUnitId}
+              onSelectUnit={setSelectedUnitId}
+              selectedUnit={selectedUnit}
+              loadingCostSheet={loadingCostSheet}
+              costSheet={costSheet}
+            />
           </div>
         ) : (
-      <Card>
-        <CardHeader>
-          <CardTitle>Cost sheet preview</CardTitle>
-          <div className="mt-2 flex flex-wrap items-end gap-4">
-            <div className="min-w-[240px]">
-              <Label>Select unit</Label>
-              <select
-                className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-                value={selectedUnitId}
-                onChange={(e) => setSelectedUnitId(e.target.value)}
-              >
-                {selectableUnits.map((unit) => (
-                  <option key={unit.id} value={unit.id}>
-                    {unit.towerName} / {unit.unitNumber}
-                    {unit.status !== "AVAILABLE" ? ` (${unit.status})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {selectedUnit ? (
-              <p className="text-sm text-gray-600">
-                {selectedUnit.configuration || "—"} · {fmtNum(selectedUnit.saleableAreaSqft)} sq.ft.
-                {selectedUnit.baseRatePerSqft
-                  ? ` · ${formatPrice(selectedUnit.baseRatePerSqft)}/sq.ft`
-                  : ""}
-              </p>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loadingCostSheet ? (
-            <p className="text-sm text-gray-500">Calculating cost sheet…</p>
-          ) : costSheet ? (
-            <CostSheetEngineView
-              costSheet={costSheet}
-              title={
-                selectedUnit
-                  ? `Cost sheet — ${selectedUnit.towerName} / ${selectedUnit.unitNumber}`
-                  : "Cost sheet"
-              }
-            />
-          ) : (
-            <p className="text-sm text-amber-700">
-              Cost sheet unavailable for this unit. Check saleable area, base rate in Excel, and
-              payment schedule / other charges for this project.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Cost sheet preview</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <CostSheetPreviewBody
+                selectableUnits={selectableUnits}
+                selectedUnitId={selectedUnitId}
+                onSelectUnit={setSelectedUnitId}
+                selectedUnit={selectedUnit}
+                loadingCostSheet={loadingCostSheet}
+                costSheet={costSheet}
+              />
+            </CardContent>
+          </Card>
         )
       ) : null}
     </div>

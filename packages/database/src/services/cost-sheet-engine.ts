@@ -15,17 +15,26 @@ import { isPartACostSheetLine } from "./cost-excel-utils";
 const SQFT_TO_SQM = 0.092903;
 const DEFAULT_GST_PERCENT = 5;
 
+type LineDefinitionRef = {
+  id: string;
+  key: string;
+  label: string;
+  role: CostSheetLineRole;
+  systemField?: string | null;
+  includeInGross?: boolean;
+};
+
 function findLineByKeys(
-  lineDefinitions: Array<{ id: string; key: string; label: string; role: CostSheetLineRole }>,
+  lineDefinitions: LineDefinitionRef[],
   keys: string[],
   labelPattern?: RegExp
-) {
+): LineDefinitionRef | null {
   for (const key of keys) {
     const found = lineDefinitions.find((d) => d.key === key);
     if (found) return found;
   }
   if (labelPattern) {
-    return lineDefinitions.find((d) => labelPattern.test(d.label));
+    return lineDefinitions.find((d) => labelPattern.test(d.label)) ?? null;
   }
   return null;
 }
