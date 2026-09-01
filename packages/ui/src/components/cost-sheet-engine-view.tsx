@@ -30,9 +30,21 @@ export interface CostSheetEngineData {
   otherCharges: Array<{ name: string; amount: number }>;
   otherChargesTotal: number;
   grossApartmentValue: number;
+  partAItems?: Array<{
+    key: string;
+    label: string;
+    displayValue: string;
+  }>;
+  lineItems?: Array<{
+    key: string;
+    label: string;
+    amount: number;
+    source?: string;
+  }>;
   towerName?: string;
   unitNumber?: string;
   configuration?: string;
+  pricingSource?: "excel" | "computed";
 }
 
 interface CostSheetEngineViewProps {
@@ -63,22 +75,25 @@ export function CostSheetEngineView({
     costSheet.floorLabel || (costSheet.floor != null ? String(costSheet.floor) : "—");
   const gstPercent = costSheet.gstPercent ?? 5;
 
-  const inventoryRows: Array<[string, string]> = [
-    ["Wing", wing],
-    ["Apartment No.", apartmentNo],
-    ["Accommodation Type", accommodation],
-    ["Floors", floorLabel],
-    ["Saleable Area (Sq.ft.)", fmtNum(costSheet.saleableAreaSqft)],
-    ["Carpet Area (Sq.Mt)* Excluding Balcony / Utility Area", fmtNum(costSheet.carpetAreaSqm)],
-    ["Carpet Area (Sq.ft)* Excluding Balcony / Utility Area", fmtNum(costSheet.carpetAreaSqft)],
-    ["Balcony Area (Sq.Mt.)", fmtNum(costSheet.balconyAreaSqm)],
-    ["Balcony Area (Sq.ft.)", fmtNum(costSheet.balconyAreaSqft)],
-    ["Unit Price per sq.ft. on Saleable Area (Rs.)", formatPrice(costSheet.saleablePricePerSqft)],
-    ["Unit Price per sq.ft. on Carpet Area (Rs.)", formatPrice(costSheet.carpetPricePerSqft)],
-    ["Basic Sale Value", formatPrice(costSheet.basicSaleValue)],
-    [`GST applicable on Basic Sale Value (${gstPercent}%)`, formatPrice(costSheet.gstAmount)],
-    ["Basic Sale Value with GST (A)", formatPrice(costSheet.basicSaleValueWithGst)],
-  ];
+  const inventoryRows: Array<[string, string]> =
+    costSheet.partAItems && costSheet.partAItems.length > 0
+      ? costSheet.partAItems.map((row) => [row.label, row.displayValue])
+      : [
+          ["Wing", wing],
+          ["Apartment No.", apartmentNo],
+          ["Accommodation Type", accommodation],
+          ["Floors", floorLabel],
+          ["Saleable Area (Sq.ft.)", fmtNum(costSheet.saleableAreaSqft)],
+          ["Carpet Area (Sq.Mt)* Excluding Balcony / Utility Area", fmtNum(costSheet.carpetAreaSqm)],
+          ["Carpet Area (Sq.ft)* Excluding Balcony / Utility Area", fmtNum(costSheet.carpetAreaSqft)],
+          ["Balcony Area (Sq.Mt.)", fmtNum(costSheet.balconyAreaSqm)],
+          ["Balcony Area (Sq.ft.)", fmtNum(costSheet.balconyAreaSqft)],
+          ["Unit Price per sq.ft. on Saleable Area (Rs.)", formatPrice(costSheet.saleablePricePerSqft)],
+          ["Unit Price per sq.ft. on Carpet Area (Rs.)", formatPrice(costSheet.carpetPricePerSqft)],
+          ["Basic Sale Value", formatPrice(costSheet.basicSaleValue)],
+          [`GST applicable on Basic Sale Value (${gstPercent}%)`, formatPrice(costSheet.gstAmount)],
+          ["Basic Sale Value with GST (A)", formatPrice(costSheet.basicSaleValueWithGst)],
+        ];
 
   const paymentTotal = costSheet.paymentSchedule.reduce((s, p) => s + Number(p.amount || 0), 0);
   const paymentPct = costSheet.paymentSchedule.reduce((s, p) => s + Number(p.percentage || 0), 0);
@@ -89,6 +104,9 @@ export function CostSheetEngineView({
         <h3 className="font-semibold">{title}</h3>
         {costSheet.projectName ? (
           <p className="mt-0.5 text-xs text-white/80">{costSheet.projectName}</p>
+        ) : null}
+        {costSheet.pricingSource === "excel" ? (
+          <p className="mt-0.5 text-xs text-white/70">Values from Excel MASTER SHEET</p>
         ) : null}
       </div>
 
@@ -154,16 +172,26 @@ export function CostSheetEngineView({
       </div>
       <table className="w-full text-sm">
         <tbody>
-          {costSheet.otherCharges.length === 0 ? (
+          {(costSheet.lineItems && costSheet.lineItems.length > 0
+            ? costSheet.lineItems.map((item) => ({ name: item.label, amount: item.amount }))
+            : costSheet.otherCharges).length === 0 ? (
             <tr>
               <td colSpan={2} className="px-4 py-3 text-gray-400">
                 No other charges configured for this project
               </td>
             </tr>
           ) : (
-            costSheet.otherCharges.map((charge) => (
-              <tr key={charge.name} className="border-b border-gray-100">
-                <td className="px-4 py-2 text-gray-700">{charge.name}</td>
+            (costSheet.lineItems && costSheet.lineItems.length > 0
+              ? costSheet.lineItems
+              : costSheet.otherCharges.map((c) => ({
+                  key: c.name,
+                  label: c.name,
+                  amount: c.amount,
+                }))).map((charge) => (
+              <tr key={charge.label ?? (charge as { name?: string }).name} className="border-b border-gray-100">
+                <td className="px-4 py-2 text-gray-700">
+                  {charge.label ?? (charge as { name?: string }).name}
+                </td>
                 <td className="px-4 py-2 text-right font-medium text-gray-900">
                   {formatPrice(charge.amount)}
                 </td>

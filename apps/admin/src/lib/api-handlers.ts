@@ -351,13 +351,19 @@ export async function DELETE_project(_req: NextRequest, { params }: { params: Pr
   });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const bookingCount = await prisma.booking.count({
-    where: { unit: { floor: { tower: { projectId: id } } } },
+  const activeBookingCount = await prisma.booking.count({
+    where: {
+      unit: { floor: { tower: { projectId: id } } },
+      status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+    },
   });
 
-  if (bookingCount > 0) {
+  if (activeBookingCount > 0) {
     return NextResponse.json(
-      { error: "Cannot delete project with existing bookings" },
+      {
+        error:
+          "Cannot delete project with active bookings. Cancel or resolve pending/confirmed bookings first.",
+      },
       { status: 409 }
     );
   }

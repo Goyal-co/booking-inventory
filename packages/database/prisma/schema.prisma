@@ -35,6 +35,26 @@ enum ChargeCalcMode {
   RATE_PER_AREA
 }
 
+enum CostSheetLineRole {
+  IDENTITY
+  AREA
+  RATE
+  COMPUTED_INPUT
+  OTHER_CHARGE
+  DISPLAY_ONLY
+}
+
+enum CostSheetLineCalcMode {
+  IMPORTED_AMOUNT
+  FIXED
+  RATE_PER_AREA
+}
+
+enum CostExcelPricingMode {
+  IMPORT
+  LIVE
+}
+
 enum PaymentStageType {
   FIXED
   PERCENTAGE
@@ -260,6 +280,9 @@ model Project {
   paymentScheduleTemplates PaymentScheduleTemplate[]
   otherChargeTemplates OtherChargeTemplate[]
   unitMasterRows  UnitMasterRow[]
+  costSheetLineDefinitions CostSheetLineDefinition[]
+  projectCostExcelMapping ProjectCostExcelMapping?
+  costExcelImportBatches CostExcelImportBatch[]
   constructionReports ConstructionReport[]
   leads           LeadRegistry[]
   defaultSaleablePricePerSqft Decimal? @db.Decimal(14, 2)
@@ -558,6 +581,59 @@ model OtherChargeTemplate {
   @@index([projectId, sortOrder])
 }
 
+model CostSheetLineDefinition {
+  id              String                @id @default(cuid())
+  projectId       String
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  key             String
+  label           String
+  sortOrder       Int                   @default(0)
+  role            CostSheetLineRole
+  systemField     String?
+  calcMode        CostSheetLineCalcMode?
+  includeInGross  Boolean               @default(false)
+  includeInGstBase Boolean              @default(false)
+  isRequired      Boolean               @default(false)
+  fixedAmount     Decimal?              @db.Decimal(14, 2)
+  rate            Decimal?              @db.Decimal(14, 4)
+  areaField       String?
+  months          Int?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@unique([projectId, key])
+  @@index([projectId, sortOrder])
+}
+
+model ProjectCostExcelMapping {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sheetName       String
+  headerRowIndex  Int      @default(1)
+  columnMap       Json
+  pricingMode     CostExcelPricingMode @default(IMPORT)
+  excelSourceUrl  String?
+  updatedAt       DateTime @updatedAt
+  updatedById     String?
+  createdAt       DateTime @default(now())
+}
+
+model CostExcelImportBatch {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName        String
+  rowCount        Int      @default(0)
+  mappingSnapshot Json
+  errors          Json?
+  createdAt       DateTime @default(now())
+  createdById     String?
+  unitMasterRows  UnitMasterRow[]
+
+  @@index([projectId, createdAt])
+}
+
 model UnitMasterRow {
   id                String   @id @default(cuid())
   projectId         String
@@ -572,12 +648,21 @@ model UnitMasterRow {
   carpetAreaSqm     Decimal? @db.Decimal(12, 2)
   balconyAreaSqft   Decimal? @db.Decimal(12, 2)
   balconyAreaSqm    Decimal? @db.Decimal(12, 2)
+  baseRatePerSqft   Decimal? @db.Decimal(14, 2)
+  premiumCharges    Decimal? @db.Decimal(14, 2)
+  status            String?
+  importedValues    Json?
+  sourceFileName    String?
+  importedAt        DateTime?
+  importBatchId     String?
+  importBatch       CostExcelImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
   unitId            String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@unique([projectId, tower, unitNo])
   @@index([projectId])
+  @@index([importBatchId])
 }
 
 model ConstructionReport {

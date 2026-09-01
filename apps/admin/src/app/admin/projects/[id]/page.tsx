@@ -795,7 +795,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             This action cannot be undone.
           </p>
           <p className="text-sm text-red-600">
-            Deletion is blocked if any units have bookings.
+            Deletion is blocked only if units have active bookings (pending or confirmed).
+            Rejected and cancelled bookings are removed with the project.
           </p>
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" onClick={() => setShowDeleteModal(false)}>Cancel</Button>

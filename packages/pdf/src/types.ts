@@ -28,6 +28,12 @@ export interface CostSheetResult {
   otherCharges: Array<{ name: string; amount: number }>;
   otherChargesTotal: number;
   grossApartmentValue: number;
+  lineItems?: Array<{
+    key: string;
+    label: string;
+    amount: number;
+    source?: string;
+  }>;
   /** legacy aliases used by older snapshots */
   towerName?: string;
   unitNumber?: string;

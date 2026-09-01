@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@booking/ui";
 import { toast } from "sonner";
+import { ProjectCostExcelSection } from "./project-cost-excel-section";
+import type { CostSheetLineRow, ExcelColumnOption } from "./project-cost-sheet-lines-panel";
 
 interface ScheduleRow {
   id?: string;
@@ -37,6 +39,12 @@ interface UnitMasterRow {
   carpetAreaSqm?: number | string | null;
   balconyAreaSqft?: number | string | null;
   balconyAreaSqm?: number | string | null;
+  baseRatePerSqft?: number | string | null;
+  premiumCharges?: number | string | null;
+  status?: string | null;
+  importedValues?: Record<string, number | string> | null;
+  sourceFileName?: string | null;
+  importedAt?: string | null;
 }
 
 const emptyUnitRow = (): UnitMasterRow => ({
@@ -61,6 +69,9 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
   const [brochureUrl, setBrochureUrl] = useState("");
   const [unitMaster, setUnitMaster] = useState<UnitMasterRow[]>([]);
   const [unitDraft, setUnitDraft] = useState<UnitMasterRow>(emptyUnitRow());
+  const [costSheetLines, setCostSheetLines] = useState<CostSheetLineRow[]>([]);
+  const [excelColumnOptions, setExcelColumnOptions] = useState<ExcelColumnOption[]>([]);
+  const [excelColumnMap, setExcelColumnMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -289,8 +300,6 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
     load();
   };
 
-  if (loading) return <p className="text-sm text-gray-500">Loading cost configuration…</p>;
-
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-4">
@@ -298,19 +307,34 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
           Cost Sheet Config{projectName ? ` — ${projectName}` : ""}
         </h2>
         <p className="mt-1 text-sm text-gray-600">
-          Configure all cost sheet fields for this project: default ₹/sq.ft, GST, payment milestones,
-          other charges, and unit inventory master data used by Sales and the customer booking form.
+          Start with Excel upload and mapping (steps 1–4), then configure payment milestones,
+          Part B charges, pricing defaults, and unit master for Sales and the booking form.
         </p>
-        <div className="mt-3">
-          <Button variant="outline" size="sm" disabled={saving} onClick={seedTemplates}>
-            Seed sample payment + other charge templates
-          </Button>
-        </div>
+        {!loading ? (
+          <div className="mt-3">
+            <Button variant="outline" size="sm" disabled={saving} onClick={seedTemplates}>
+              Seed sample payment + other charge templates
+            </Button>
+          </div>
+        ) : null}
       </div>
 
+      <ProjectCostExcelSection
+        projectId={projectId}
+        lineDefinitions={costSheetLines}
+        sharedColumnMap={excelColumnMap}
+        onSharedColumnMapChange={setExcelColumnMap}
+        onExcelColumnsChange={setExcelColumnOptions}
+        onCostSheetLinesChange={setCostSheetLines}
+      />
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading payment schedules and charges…</p>
+      ) : (
+        <>
       <Card>
         <CardHeader>
-          <CardTitle>1. Pricing Defaults</CardTitle>
+          <CardTitle>5. Pricing Defaults</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-3">
           <div>
@@ -350,7 +374,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <div>
-            <CardTitle>2. Payment Schedule (on Basic Sale Value with GST — A)</CardTitle>
+            <CardTitle>6. Payment Schedule (on Basic Sale Value with GST — A)</CardTitle>
             <p className="mt-1 text-xs text-gray-500">
               Configure milestones with Fixed amount, Percentage of (A), or Formula (Balance Booking).
             </p>
@@ -479,7 +503,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <div>
-            <CardTitle>3. Other Cost Charges &amp; Expenses (B)</CardTitle>
+            <CardTitle>7. Other Cost Charges &amp; Expenses (B)</CardTitle>
             <p className="mt-1 text-xs text-gray-500">
               Fixed amounts or rate × area × months (e.g. maintenance = ₹5 × saleable sq.ft × 24).
             </p>
@@ -620,7 +644,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>4. Unit Master Inventory ({unitMaster.length} flats)</CardTitle>
+          <CardTitle>8. Unit Master Inventory ({unitMaster.length} flats)</CardTitle>
           <p className="mt-1 text-xs text-gray-500">
             Wing/Tower, Apartment No., Floor, Accommodation, Saleable/Carpet/Balcony areas (sq.ft + sq.m).
             These feed the cost sheet inventory section for each flat.
@@ -683,6 +707,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
                   <th className="px-3 py-2">Floor</th>
                   <th className="px-3 py-2">Type</th>
                   <th className="px-3 py-2">Saleable</th>
+                  <th className="px-3 py-2">Base ₹/sqft</th>
                   <th className="px-3 py-2">Carpet</th>
                   <th className="px-3 py-2">Balcony</th>
                   <th className="px-3 py-2" />
@@ -691,7 +716,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
               <tbody>
                 {unitMaster.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-4 text-gray-400">
+                    <td colSpan={9} className="px-3 py-4 text-gray-400">
                       No unit master rows yet
                     </td>
                   </tr>
@@ -705,6 +730,9 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
                       <td className="px-3 py-2">
                         {String(row.saleableAreaSqft)}
                         {row.saleableAreaSqm ? ` / ${row.saleableAreaSqm} m²` : ""}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.baseRatePerSqft != null ? String(row.baseRatePerSqft) : "—"}
                       </td>
                       <td className="px-3 py-2">
                         {row.carpetAreaSqft != null ? String(row.carpetAreaSqft) : "—"}
@@ -732,6 +760,9 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
           </div>
         </CardContent>
       </Card>
+
+        </>
+      )}
     </div>
   );
 }

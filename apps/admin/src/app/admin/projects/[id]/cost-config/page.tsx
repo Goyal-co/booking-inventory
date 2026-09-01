@@ -3,6 +3,7 @@
 import { use } from "react";
 import Link from "next/link";
 import { Button } from "@booking/ui";
+import { Toaster } from "sonner";
 import { ProjectCostConfigPanel } from "@/components/project-cost-config";
 
 export default function ProjectCostConfigPage({ params }: { params: Promise<{ id: string }> }) {
@@ -10,6 +11,7 @@ export default function ProjectCostConfigPage({ params }: { params: Promise<{ id
 
   return (
     <div className="space-y-4 p-6">
+      <Toaster position="top-right" richColors closeButton />
       <div className="flex items-center gap-3">
         <Link href={`/admin/projects/${id}`}>
           <Button variant="outline" size="sm">

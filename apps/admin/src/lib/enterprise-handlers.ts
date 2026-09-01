@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { CostSheetLineCalcMode, CostSheetLineRole } from "@booking/database";
 import {
   prisma,
   calculateCostSheet,
   retryIntegrationSync,
   Prisma,
+  executeCostExcelImport,
+  RIVIERA_DEFAULT_LINE_DEFINITIONS,
+  RIVIERA_FULL_LINE_DEFINITIONS,
+  COST_SHEET_SYSTEM_FIELDS,
+  clearLiveExcelCache,
+  syncProjectExcelFromUrl,
+  syncProjectExcelFromBuffer,
+  previewExcelFromUrl,
+  extractProjectExcelFromUrl,
+  extractProjectExcelFromBuffer,
+  listProjectInventoryPreviewUnits,
+  previewProjectCostSheet,
 } from "@booking/database";
 import {
   paymentScheduleTemplateSchema,
@@ -12,8 +25,16 @@ import {
   pricingDefaultsSchema,
   unitMasterRowSchema,
   bookingFormTemplateSchema,
+  costSheetLineDefinitionSchema,
+  costExcelMappingSchema,
 } from "@booking/validators";
 import { getAdminUser, denyUnlessProjectAccess } from "./project-access";
+import {
+  extractAllRowsFromSheet,
+  getPreviewCache,
+  previewExcelWorkbook,
+  readExcelBuffer,
+} from "./cost-excel-parse";
 
 export async function GET_paymentSchedules(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAdminUser();
@@ -113,12 +134,33 @@ export async function POST_costSheetCalculate(req: NextRequest) {
   const user = await getAdminUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json();
-  if (!body.unitId || !body.saleablePricePerSqft) {
-    return NextResponse.json({ error: "unitId and saleablePricePerSqft required" }, { status: 400 });
+  if (!body.unitId) {
+    return NextResponse.json({ error: "unitId required" }, { status: 400 });
   }
-  const result = await calculateCostSheet(body.unitId, Number(body.saleablePricePerSqft));
-  if (!result) return NextResponse.json({ error: "Unable to calculate" }, { status: 404 });
+
+  if (body.saleablePricePerSqft != null && Number(body.saleablePricePerSqft) > 0) {
+    const result = await calculateCostSheet(body.unitId, Number(body.saleablePricePerSqft));
+    if (!result) return NextResponse.json({ error: "Unable to calculate" }, { status: 404 });
+    return NextResponse.json({ costSheet: result });
+  }
+
+  const result = await previewProjectCostSheet(body.unitId);
+  if (!result) return NextResponse.json({ error: "Unable to calculate cost sheet for this unit" }, { status: 404 });
   return NextResponse.json({ costSheet: result });
+}
+
+export async function GET_inventoryPreviewUnits(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const units = await listProjectInventoryPreviewUnits(id);
+  return NextResponse.json({ units });
 }
 
 export async function GET_unitMaster(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -672,4 +714,464 @@ export async function POST_assignOrgTemplateToProject(
     },
   });
   return NextResponse.json({ template }, { status: 201 });
+}
+
+export async function GET_costSheetLines(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+  const lines = await prisma.costSheetLineDefinition.findMany({
+    where: { projectId: id },
+    orderBy: { sortOrder: "asc" },
+  });
+  return NextResponse.json({ lines, systemFields: COST_SHEET_SYSTEM_FIELDS });
+}
+
+export async function POST_costSheetLine(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+  const body = await req.json();
+  const parsed = costSheetLineDefinitionSchema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+  const data = {
+    ...parsed.data,
+    includeInGross: parsed.data.includeInGross ?? false,
+    includeInGstBase: parsed.data.includeInGstBase ?? false,
+    isRequired: parsed.data.isRequired ?? false,
+    sortOrder: parsed.data.sortOrder ?? 0,
+  };
+
+  const line = body.id
+    ? await prisma.costSheetLineDefinition.update({
+        where: { id: String(body.id) },
+        data,
+      })
+    : await prisma.costSheetLineDefinition.create({
+        data: { projectId: id, ...data },
+      });
+  return NextResponse.json({ line }, { status: body.id ? 200 : 201 });
+}
+
+export async function DELETE_costSheetLine(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id: projectId } = await params;
+  const denied = denyUnlessProjectAccess(user, projectId);
+  if (denied) return denied;
+  const lineId = req.nextUrl.searchParams.get("lineId");
+  if (!lineId) return NextResponse.json({ error: "lineId required" }, { status: 400 });
+
+  const mapping = await prisma.projectCostExcelMapping.findUnique({ where: { projectId } });
+  if (mapping?.columnMap && typeof mapping.columnMap === "object") {
+    const columnMap = { ...(mapping.columnMap as Record<string, string>) };
+    let changed = false;
+    for (const [k, v] of Object.entries(columnMap)) {
+      if (v === lineId) {
+        columnMap[k] = "__skip__";
+        changed = true;
+      }
+    }
+    if (changed) {
+      await prisma.projectCostExcelMapping.update({
+        where: { projectId },
+        data: { columnMap },
+      });
+    }
+  }
+
+  await prisma.costSheetLineDefinition.deleteMany({ where: { id: lineId, projectId } });
+  return NextResponse.json({ ok: true });
+}
+
+export async function POST_seedRivieraCostLines(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const body = await req.json().catch(() => ({}));
+  const full = Boolean(body?.full);
+  const seedRows = full ? RIVIERA_FULL_LINE_DEFINITIONS : RIVIERA_DEFAULT_LINE_DEFINITIONS;
+
+  const created = await prisma.$transaction(
+    seedRows.map((row) => {
+      const r = row as {
+        key: string;
+        label: string;
+        role: string;
+        systemField?: string;
+        calcMode?: string;
+        includeInGross?: boolean;
+        isRequired?: boolean;
+        sortOrder: number;
+      };
+      return prisma.costSheetLineDefinition.upsert({
+        where: { projectId_key: { projectId: id, key: r.key } },
+        create: {
+          projectId: id,
+          key: r.key,
+          label: r.label,
+          role: r.role as CostSheetLineRole,
+          systemField: r.systemField ?? null,
+          calcMode: (r.calcMode as CostSheetLineCalcMode | undefined) ?? null,
+          includeInGross: r.includeInGross ?? false,
+          isRequired: r.isRequired ?? false,
+          sortOrder: r.sortOrder,
+        },
+        update: {
+          label: r.label,
+          role: r.role as CostSheetLineRole,
+          systemField: r.systemField ?? null,
+          calcMode: (r.calcMode as CostSheetLineCalcMode | undefined) ?? null,
+          includeInGross: r.includeInGross ?? false,
+          isRequired: r.isRequired ?? false,
+          sortOrder: r.sortOrder,
+        },
+      });
+    })
+  );
+
+  return NextResponse.json({ seeded: created.length });
+}
+
+export async function GET_costExcelMapping(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+  const mapping = await prisma.projectCostExcelMapping.findUnique({ where: { projectId: id } });
+  return NextResponse.json({ mapping });
+}
+
+export async function PUT_costExcelMapping(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+  const body = await req.json();
+  const parsed = costExcelMappingSchema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+  const pricingMode = parsed.data.pricingMode ?? "IMPORT";
+  const excelSourceUrl =
+    parsed.data.excelSourceUrl === "" || parsed.data.excelSourceUrl == null
+      ? null
+      : parsed.data.excelSourceUrl;
+
+  if (pricingMode === "LIVE" && !excelSourceUrl) {
+    return NextResponse.json(
+      { error: "Excel source URL is required for Live mode" },
+      { status: 400 }
+    );
+  }
+
+  clearLiveExcelCache(id);
+
+  const mapping = await prisma.projectCostExcelMapping.upsert({
+    where: { projectId: id },
+    create: {
+      projectId: id,
+      sheetName: parsed.data.sheetName,
+      headerRowIndex: parsed.data.headerRowIndex,
+      columnMap: parsed.data.columnMap as Prisma.InputJsonValue,
+      pricingMode,
+      excelSourceUrl,
+      updatedById: user.id,
+    },
+    update: {
+      sheetName: parsed.data.sheetName,
+      headerRowIndex: parsed.data.headerRowIndex,
+      columnMap: parsed.data.columnMap as Prisma.InputJsonValue,
+      pricingMode,
+      excelSourceUrl,
+      updatedById: user.id,
+    },
+  });
+  return NextResponse.json({ mapping });
+}
+
+export async function POST_costExcelPreview(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const form = await req.formData();
+  const file = form.get("file");
+  if (!file || typeof file === "string") {
+    return NextResponse.json({ error: "file required" }, { status: 400 });
+  }
+
+  try {
+    const { buffer, fileName } = await readExcelBuffer(file as File);
+    const sheetName = form.get("sheetName")?.toString();
+    const headerRowIndex = form.get("headerRowIndex")
+      ? Number(form.get("headerRowIndex"))
+      : undefined;
+    const preview = previewExcelWorkbook(buffer, fileName, {
+      sheetName: sheetName || undefined,
+      headerRowIndex,
+      projectId: id,
+    });
+    return NextResponse.json({ preview });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to parse Excel";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function POST_costExcelImport(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const mapping = await prisma.projectCostExcelMapping.findUnique({ where: { projectId: id } });
+  if (!mapping) {
+    return NextResponse.json({ error: "Save Excel column mapping before import" }, { status: 400 });
+  }
+
+  const columnMap = mapping.columnMap as Record<string, string>;
+  let buffer: Buffer | null = null;
+  let fileName = mapping.sheetName;
+
+  const contentType = req.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await req.formData();
+    const file = form.get("file");
+    const previewToken = form.get("previewToken")?.toString();
+    if (file && typeof file !== "string") {
+      const read = await readExcelBuffer(file as File);
+      buffer = read.buffer;
+      fileName = read.fileName;
+    } else if (previewToken) {
+      const cached = getPreviewCache(id, previewToken);
+      if (!cached) return NextResponse.json({ error: "Preview expired — upload file again" }, { status: 400 });
+      buffer = cached.buffer;
+      fileName = cached.fileName;
+    }
+  } else {
+    const body = await req.json().catch(() => ({}));
+    const previewToken = body.previewToken as string | undefined;
+    if (previewToken) {
+      const cached = getPreviewCache(id, previewToken);
+      if (!cached) return NextResponse.json({ error: "Preview expired — upload file again" }, { status: 400 });
+      buffer = cached.buffer;
+      fileName = cached.fileName;
+    }
+  }
+
+  if (!buffer) {
+    return NextResponse.json({ error: "file or previewToken required" }, { status: 400 });
+  }
+
+  try {
+    const rows = extractAllRowsFromSheet(buffer, mapping.sheetName, mapping.headerRowIndex);
+    const result = await executeCostExcelImport({
+      projectId: id,
+      fileName,
+      createdById: user.id,
+      columnMap,
+      mappingSnapshot: {
+        sheetName: mapping.sheetName,
+        headerRowIndex: mapping.headerRowIndex,
+        columnMap,
+      },
+      rows,
+      headerRowIndex: mapping.headerRowIndex,
+    });
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Import failed";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function GET_costExcelBatches(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+  const limit = Number(_req.nextUrl.searchParams.get("limit") ?? 20);
+  const batches = await prisma.costExcelImportBatch.findMany({
+    where: { projectId: id },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(limit, 50),
+  });
+  return NextResponse.json({ batches });
+}
+
+export async function POST_costExcelSync(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const contentType = req.headers.get("content-type") ?? "";
+
+  try {
+    if (contentType.includes("multipart/form-data")) {
+      const form = await req.formData();
+      const file = form.get("file");
+      if (!file || typeof file === "string") {
+        return NextResponse.json({ error: "file required" }, { status: 400 });
+      }
+      const { buffer, fileName } = await readExcelBuffer(file as File);
+      const replaceInventory = form.get("replaceInventory") !== "false";
+      let columnMapOverride: Record<string, string> | undefined;
+      const rawMap = form.get("columnMap");
+      if (typeof rawMap === "string" && rawMap.trim()) {
+        try {
+          columnMapOverride = JSON.parse(rawMap) as Record<string, string>;
+        } catch {
+          return NextResponse.json({ error: "Invalid columnMap JSON" }, { status: 400 });
+        }
+      }
+      const result = await syncProjectExcelFromBuffer({
+        projectId: id,
+        buffer,
+        fileName,
+        createdById: user.id,
+        replaceInventory,
+        columnMapOverride,
+      });
+      return NextResponse.json({ sync: result });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const excelSourceUrl = typeof body.excelSourceUrl === "string" ? body.excelSourceUrl.trim() : "";
+    if (!excelSourceUrl) {
+      return NextResponse.json({ error: "excelSourceUrl is required" }, { status: 400 });
+    }
+
+    const columnMapOverride =
+      body.columnMap && typeof body.columnMap === "object"
+        ? (body.columnMap as Record<string, string>)
+        : undefined;
+
+    const result = await syncProjectExcelFromUrl({
+      projectId: id,
+      excelSourceUrl,
+      createdById: user.id,
+      sheetName: typeof body.sheetName === "string" ? body.sheetName : undefined,
+      headerRowIndex:
+        body.headerRowIndex != null ? Number(body.headerRowIndex) : undefined,
+      replaceInventory: body.replaceInventory !== false,
+      columnMapOverride,
+    });
+    return NextResponse.json({ sync: result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Sync failed";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function POST_costExcelPreviewUrl(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const body = await req.json().catch(() => ({}));
+  const excelSourceUrl = typeof body.excelSourceUrl === "string" ? body.excelSourceUrl.trim() : "";
+  if (!excelSourceUrl) {
+    return NextResponse.json({ error: "excelSourceUrl is required" }, { status: 400 });
+  }
+
+  const columnMapOverride =
+    body.columnMap && typeof body.columnMap === "object"
+      ? (body.columnMap as Record<string, string>)
+      : undefined;
+
+  try {
+    const preview = await previewExcelFromUrl({
+      projectId: id,
+      excelSourceUrl,
+      sheetName: typeof body.sheetName === "string" ? body.sheetName : undefined,
+      headerRowIndex:
+        body.headerRowIndex != null ? Number(body.headerRowIndex) : undefined,
+      columnMapOverride,
+    });
+    return NextResponse.json({ preview });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Preview failed";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function POST_costExcelExtract(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const denied = denyUnlessProjectAccess(user, id);
+  if (denied) return denied;
+
+  const contentType = req.headers.get("content-type") ?? "";
+
+  try {
+    if (contentType.includes("multipart/form-data")) {
+      const form = await req.formData();
+      const file = form.get("file");
+      if (!file || typeof file === "string") {
+        return NextResponse.json({ error: "file required" }, { status: 400 });
+      }
+      const { buffer, fileName } = await readExcelBuffer(file as File);
+      let columnMapOverride: Record<string, string> | undefined;
+      const rawMap = form.get("columnMap");
+      if (typeof rawMap === "string" && rawMap.trim()) {
+        columnMapOverride = JSON.parse(rawMap) as Record<string, string>;
+      }
+      const sheetName = form.get("sheetName")?.toString();
+      const headerRowIndex = form.get("headerRowIndex")
+        ? Number(form.get("headerRowIndex"))
+        : undefined;
+      const extract = await extractProjectExcelFromBuffer({
+        projectId: id,
+        buffer,
+        fileName,
+        createdById: user.id,
+        columnMapOverride,
+        sheetName: sheetName || undefined,
+        headerRowIndex,
+      });
+      return NextResponse.json({ extract });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const excelSourceUrl = typeof body.excelSourceUrl === "string" ? body.excelSourceUrl.trim() : "";
+    if (!excelSourceUrl) {
+      return NextResponse.json({ error: "excelSourceUrl or file required" }, { status: 400 });
+    }
+    const columnMapOverride =
+      body.columnMap && typeof body.columnMap === "object"
+        ? (body.columnMap as Record<string, string>)
+        : undefined;
+    const extract = await extractProjectExcelFromUrl({
+      projectId: id,
+      excelSourceUrl,
+      createdById: user.id,
+      sheetName: typeof body.sheetName === "string" ? body.sheetName : undefined,
+      headerRowIndex:
+        body.headerRowIndex != null ? Number(body.headerRowIndex) : undefined,
+      columnMapOverride,
+    });
+    return NextResponse.json({ extract });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Extract failed";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
 }

@@ -412,6 +412,44 @@ export const unitMasterRowSchema = z.object({
   carpetAreaSqm: z.number().positive().optional().nullable(),
   balconyAreaSqft: z.number().positive().optional().nullable(),
   balconyAreaSqm: z.number().positive().optional().nullable(),
+  baseRatePerSqft: z.number().positive().optional().nullable(),
+  premiumCharges: z.number().optional().nullable(),
+  status: z.string().optional().nullable(),
+});
+
+export const costSheetLineRoleEnum = z.enum([
+  "IDENTITY",
+  "AREA",
+  "RATE",
+  "COMPUTED_INPUT",
+  "OTHER_CHARGE",
+  "DISPLAY_ONLY",
+]);
+
+export const costSheetLineCalcModeEnum = z.enum(["IMPORTED_AMOUNT", "FIXED", "RATE_PER_AREA"]);
+
+export const costSheetLineDefinitionSchema = z.object({
+  key: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/),
+  label: z.string().min(1).max(200),
+  sortOrder: z.number().int().optional(),
+  role: costSheetLineRoleEnum,
+  systemField: z.string().optional().nullable(),
+  calcMode: costSheetLineCalcModeEnum.optional().nullable(),
+  includeInGross: z.boolean().optional(),
+  includeInGstBase: z.boolean().optional(),
+  isRequired: z.boolean().optional(),
+  fixedAmount: z.number().optional().nullable(),
+  rate: z.number().positive().optional().nullable(),
+  areaField: z.enum(["saleable", "carpet", "balcony"]).optional().nullable(),
+  months: z.number().int().positive().optional().nullable(),
+});
+
+export const costExcelMappingSchema = z.object({
+  sheetName: z.string().min(1),
+  headerRowIndex: z.number().int().min(1).max(50),
+  columnMap: z.record(z.string()),
+  pricingMode: z.enum(["IMPORT", "LIVE"]).optional(),
+  excelSourceUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
 });
 
 const optionalUrlOrPath = z

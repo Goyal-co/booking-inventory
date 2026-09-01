@@ -23,7 +23,8 @@
     "@booking/pdf": "workspace:*",
     "@booking/validators": "workspace:*",
     "@goyal/ecosystem-contracts": "workspace:*",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@booking/config-typescript": "workspace:*",
