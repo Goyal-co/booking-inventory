@@ -53,6 +53,8 @@ export const leadAssignSchema = z.object({
   eoiCpLeadId: z.string().min(1).max(120).optional(),
   projectId: z.string().min(1).max(120).optional(),
   projectName: z.string().min(1).max(200).optional(),
+  /** Customer email OTP confirming site visit (required). */
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit OTP sent to the customer"),
 });
 
 export const integrationEventSchema = z.object({

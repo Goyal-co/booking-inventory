@@ -40,11 +40,17 @@ import {
   getCustomerBookingUrl,
   getCustomerDashboardUrl,
   listAssignedDirectLeads,
+  markDirectLeadBooked,
+  generateCustomerOtp,
+  verifyCustomerOtp,
+  consumeCustomerOtpVerified,
+  isCustomerOtpVerified,
 } from "@booking/database";
 import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema, attachCustomerToBlockSchema } from "@booking/validators";
-import { parseEmailErrorMessage } from "@booking/email";
+import { parseEmailErrorMessage, sendEmail, otpVerificationEmail } from "@booking/email";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
+import { z } from "zod";
 
 async function getSessionUser() {
   const session = await auth();
@@ -957,17 +963,101 @@ export async function POST_directLeadSiteVisit(
   );
 }
 
-export async function POST_directLeadBook(
+const directBookSchema = z.object({
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit OTP sent to the customer"),
+  bookedDate: z.string().optional(),
+  sourceOfEnquiry: z.string().optional(),
+});
+
+export async function POST_directLeadBookOtpSend(
   _req: NextRequest,
-  _ctx: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json(
-    {
-      error:
-        "Booking is confirmed via Live Booking: send the customer the digital form, then admin approval syncs CRM and EOI Partner Portal.",
+  const { id } = await params;
+
+  const lead = await prisma.leadRegistry.findFirst({
+    where: {
+      id,
+      organizationId: user.organizationId,
+      OR: [{ assignedSalesId: user.id }, { assignedSalesId: null }],
     },
-    { status: 403 }
-  );
+    select: {
+      id: true,
+      customerEmail: true,
+      customerName: true,
+      project: { select: { name: true } },
+    },
+  });
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+  if (!lead.customerEmail) {
+    return NextResponse.json({ error: "Customer email is required to send OTP" }, { status: 400 });
+  }
+
+  const otp = generateCustomerOtp("DIRECT_BOOKING", lead.id);
+  const { subject, html } = otpVerificationEmail({
+    otp,
+    projectName: lead.project?.name,
+    purpose: "DIRECT_BOOKING",
+  });
+  const emailResult = await sendEmail({ to: lead.customerEmail, subject, html });
+  if (!emailResult.success) {
+    return NextResponse.json(
+      {
+        error: emailResult.error || "Failed to send OTP email",
+        ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+      },
+      { status: 502 },
+    );
+  }
+  return NextResponse.json({
+    sent: true,
+    email: lead.customerEmail,
+    ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+  });
+}
+
+export async function POST_directLeadBook(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const parsed = directBookSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const otpOk =
+    verifyCustomerOtp("DIRECT_BOOKING", id, parsed.data.otp)
+    || (isCustomerOtpVerified("DIRECT_BOOKING", id)
+      && consumeCustomerOtpVerified("DIRECT_BOOKING", id));
+  if (!otpOk) {
+    return NextResponse.json(
+      { error: "Invalid or expired OTP. Send a new code to the customer email." },
+      { status: 400 },
+    );
+  }
+  consumeCustomerOtpVerified("DIRECT_BOOKING", id);
+
+  try {
+    const result = await markDirectLeadBooked({
+      leadRegistryId: id,
+      salesUserId: user.id,
+      bookedDate: parsed.data.bookedDate,
+      sourceOfEnquiry: parsed.data.sourceOfEnquiry || "Live Booking Direct",
+    });
+    return NextResponse.json({
+      lead: result.lead,
+      crmSynced: result.crmSynced,
+      crmError: result.crmError,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Could not mark booked";
+    const status = /not found/i.test(message) ? 404 : /not assigned/i.test(message) ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }

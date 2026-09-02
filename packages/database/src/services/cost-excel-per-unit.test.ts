@@ -45,9 +45,9 @@ describe("per-unit Excel cost sheet rows", () => {
     ];
 
     const lineDefs = [
-      { id: "line-estamp", key: "e_stamping", label: "E-stamping Charges", systemField: null },
-      { id: "line-sale", key: "sale_value", label: "Sale Value", systemField: null },
-      { id: "line-gross", key: "gross_value", label: "Gross Apartment Value", systemField: null },
+      { id: "line-estamp", key: "e_stamping", label: "E-stamping Charges", role: "OTHER_CHARGE", systemField: null },
+      { id: "line-sale", key: "sale_value", label: "Sale Value", role: "DISPLAY_ONLY", systemField: null },
+      { id: "line-gross", key: "gross_value", label: "Gross Apartment Value", role: "DISPLAY_ONLY", systemField: null },
     ];
 
     const columnMap = inferAutoColumnMap(headers, lineDefs);

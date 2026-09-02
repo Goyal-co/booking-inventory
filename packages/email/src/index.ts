@@ -286,22 +286,47 @@ export function blockNotificationEmail(params: {
   };
 }
 
-export function otpVerificationEmail(params: { otp: string; projectName?: string }) {
+export function otpVerificationEmail(params: {
+  otp: string;
+  projectName?: string;
+  purpose?: "BOOKING_FORM" | "SITE_VISIT" | "DIRECT_BOOKING";
+}) {
+  const purpose = params.purpose || "BOOKING_FORM";
+  const intro =
+    purpose === "SITE_VISIT"
+      ? "Use this one-time code to confirm your site visit at reception."
+      : purpose === "DIRECT_BOOKING"
+        ? "Use this one-time code to confirm your unit booking with sales."
+        : "Use this one-time code to verify your identity on the booking form.";
+  const header =
+    purpose === "SITE_VISIT"
+      ? "Site Visit Confirmation"
+      : purpose === "DIRECT_BOOKING"
+        ? "Booking Confirmation"
+        : "Identity Verification";
+  const subject =
+    purpose === "SITE_VISIT"
+      ? params.projectName
+        ? `Site visit OTP — ${params.projectName}`
+        : "Your site visit verification code"
+      : purpose === "DIRECT_BOOKING"
+        ? params.projectName
+          ? `Booking OTP — ${params.projectName}`
+          : "Your booking verification code"
+        : params.projectName
+          ? `Your verification code — ${params.projectName}`
+          : "Your booking form verification code";
+
   const html = wrapEmail([
-    emailHeader("Identity Verification"),
+    emailHeader(header),
     emailBody(`
-      <p style="margin:0 0 12px;color:${MUTED};">Use this one-time code to verify your identity on the booking form.</p>
+      <p style="margin:0 0 12px;color:${MUTED};">${intro}</p>
       <p style="margin:24px 0;text-align:center;font-size:32px;font-weight:700;letter-spacing:8px;color:${NAVY};">${params.otp}</p>
-      <p style="margin:0;font-size:12px;color:#94A3B8;text-align:center;">This code expires shortly. Do not share it with anyone.</p>
+      <p style="margin:0;font-size:12px;color:#94A3B8;text-align:center;">This code expires in 10 minutes. Do not share it with anyone.</p>
     `),
     emailSupportBlock(),
     emailFooter(),
   ]);
 
-  return {
-    subject: params.projectName
-      ? `Your verification code — ${params.projectName}`
-      : "Your booking form verification code",
-    html,
-  };
+  return { subject, html };
 }

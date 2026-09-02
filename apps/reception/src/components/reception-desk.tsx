@@ -218,6 +218,11 @@ function SalesAssignRow({
   confirmLabel,
   disabled,
   requireSales = true,
+  otp,
+  onOtpChange,
+  onSendOtp,
+  otpSending,
+  otpHint,
 }: {
   value: string;
   onChange: (id: string) => void;
@@ -226,6 +231,11 @@ function SalesAssignRow({
   confirmLabel: string;
   disabled?: boolean;
   requireSales?: boolean;
+  otp: string;
+  onOtpChange: (otp: string) => void;
+  onSendOtp: () => void;
+  otpSending?: boolean;
+  otpHint?: string;
 }) {
   return (
     <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50/80 p-4">
@@ -246,13 +256,35 @@ function SalesAssignRow({
             ))}
           </select>
         </div>
-        <Button
-          className="shrink-0"
-          disabled={disabled || (requireSales && !value)}
-          onClick={onConfirm}
-        >
-          {confirmLabel}
-        </Button>
+      </div>
+      <div className="mt-3 space-y-2">
+        <StepLabel step={3} title="Customer OTP (site visit)" />
+        <p className="text-xs text-gray-500">
+          Send a code to the customer email, then enter it to confirm the site visit.
+          {otpHint ? ` ${otpHint}` : ""}
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <Label>OTP</Label>
+            <Input
+              value={otp}
+              onChange={(e) => onOtpChange(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="6-digit code"
+              inputMode="numeric"
+              className="mt-1"
+            />
+          </div>
+          <Button type="button" variant="outline" disabled={otpSending} onClick={onSendOtp}>
+            {otpSending ? "Sending…" : "Send OTP"}
+          </Button>
+          <Button
+            className="shrink-0"
+            disabled={disabled || (requireSales && !value) || otp.length !== 6}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -283,6 +315,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
   const [assignSalesId, setAssignSalesId] = useState("");
+  const [siteVisitOtp, setSiteVisitOtp] = useState("");
+  const [otpSending, setOtpSending] = useState(false);
   const [searched, setSearched] = useState(false);
   const [titanResult, setTitanResult] = useState<{
     found?: boolean;
@@ -334,6 +368,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignLead, setAssignLead] = useState<EoiLead | null>(null);
   const [eoiAssignSalesId, setEoiAssignSalesId] = useState("");
+  const [eoiAssignOtp, setEoiAssignOtp] = useState("");
+  const [eoiOtpSending, setEoiOtpSending] = useState(false);
   const [assignBusy, setAssignBusy] = useState(false);
 
   const canUseStaffEoi = eoiCaps?.staffApi === true;
@@ -508,11 +544,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       projectName?: string;
     }
   ) => {
+    if (!/^\d{6}$/.test(siteVisitOtp)) {
+      toast.error("Enter the 6-digit OTP sent to the customer");
+      return;
+    }
     const res = await fetch(`/api/leads/${leadId}/assign`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         salesUserId,
+        otp: siteVisitOtp,
         visitingPartnerCpId: partner?.visitingPartnerCpId,
         visitingPartnerName: partner?.visitingPartnerName,
         eoiCpLeadId: partner?.eoiCpLeadId,
@@ -533,9 +574,31 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       await searchLocal();
       await refreshVisits();
       setAssignSalesId("");
+      setSiteVisitOtp("");
     } else {
       const d = await res.json().catch(() => ({}));
       toast.error(typeof d.error === "string" ? d.error : "Assign failed");
+    }
+  };
+
+  const sendLeadOtp = async (leadId: string) => {
+    if (!leadId) {
+      toast.error("Resolve the visitor lead first, then send OTP");
+      return;
+    }
+    setOtpSending(true);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/otp/send`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof d.error === "string" ? d.error : "Could not send OTP");
+        if (typeof d.devOtp === "string") setSiteVisitOtp(d.devOtp);
+        return;
+      }
+      toast.success(`OTP sent to ${d.email || "customer"}`);
+      if (typeof d.devOtp === "string") setSiteVisitOtp(d.devOtp);
+    } finally {
+      setOtpSending(false);
     }
   };
 
@@ -845,6 +908,10 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       toast.error("Select a salesperson");
       return;
     }
+    if (!/^\d{6}$/.test(eoiAssignOtp)) {
+      toast.error("Enter the 6-digit OTP sent to the customer");
+      return;
+    }
     setAssignBusy(true);
     try {
       const res = await fetch(`/api/eoi/leads/${assignLead.id}/assign`, {
@@ -852,6 +919,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           salesUserId: eoiAssignSalesId,
+          otp: eoiAssignOtp,
           fullName: assignLead.fullName,
           phone: assignLead.phone,
           email: assignLead.email || undefined,
@@ -874,6 +942,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       }
       setAssignOpen(false);
       setAssignLead(null);
+      setEoiAssignOtp("");
     } finally {
       setAssignBusy(false);
     }
@@ -1263,6 +1332,17 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   onConfirm={() => void confirmAndAssign()}
                   confirmLabel="Check in visitor"
                   disabled={!selectedPartnerKey}
+                  otp={siteVisitOtp}
+                  onOtpChange={setSiteVisitOtp}
+                  otpSending={otpSending}
+                  onSendOtp={() => {
+                    const leadId =
+                      selectedLeadId
+                      || partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey)?.leadId
+                      || leads[0]?.id
+                      || "";
+                    void sendLeadOtp(leadId);
+                  }}
                 />
               </div>
             )}
@@ -1411,6 +1491,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   sales={sales}
                   onConfirm={() => void confirmAndAssign()}
                   confirmLabel="Check in visitor"
+                  otp={siteVisitOtp}
+                  onOtpChange={setSiteVisitOtp}
+                  otpSending={otpSending}
+                  onSendOtp={() => {
+                    const leadId = selectedLeadId || leads[0]?.id || "";
+                    void sendLeadOtp(leadId);
+                  }}
                 />
               </div>
             )}
@@ -1507,6 +1594,31 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   confirmLabel={walkInSalesId ? "Register & check in" : "Register walk-in"}
                   disabled={!walkIn.customerName || !walkIn.customerPhone}
                   requireSales={false}
+                  otp={siteVisitOtp}
+                  onOtpChange={setSiteVisitOtp}
+                  otpSending={otpSending}
+                  otpHint="Email required on the walk-in form before OTP."
+                  onSendOtp={async () => {
+                    if (!walkIn.customerEmail) {
+                      toast.error("Enter customer email to send OTP");
+                      return;
+                    }
+                    // Ensure lead exists so OTP can be keyed to it
+                    const res = await fetch("/api/leads/walkin", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(walkIn),
+                    });
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      toast.error(typeof d.error === "string" ? d.error : "Could not register walk-in");
+                      return;
+                    }
+                    if (d.lead?.id) {
+                      setSelectedLeadId(d.lead.id);
+                      await sendLeadOtp(d.lead.id);
+                    }
+                  }}
                 />
               </div>
             )}
@@ -1891,11 +2003,56 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               ))}
             </select>
           </div>
+          <div>
+            <Label>Customer OTP</Label>
+            <div className="mt-1 flex gap-2">
+              <Input
+                value={eoiAssignOtp}
+                onChange={(e) => setEoiAssignOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="6-digit code"
+                inputMode="numeric"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={eoiOtpSending || !assignLead}
+                onClick={async () => {
+                  if (!assignLead) return;
+                  setEoiOtpSending(true);
+                  try {
+                    const res = await fetch(`/api/eoi/leads/${assignLead.id}/otp/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        email: assignLead.email || undefined,
+                        projectName: assignLead.projectName || undefined,
+                      }),
+                    });
+                    const d = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      toast.error(typeof d.error === "string" ? d.error : "Could not send OTP");
+                      if (typeof d.devOtp === "string") setEoiAssignOtp(d.devOtp);
+                      return;
+                    }
+                    toast.success(`OTP sent to ${d.email || "customer"}`);
+                    if (typeof d.devOtp === "string") setEoiAssignOtp(d.devOtp);
+                  } finally {
+                    setEoiOtpSending(false);
+                  }
+                }}
+              >
+                {eoiOtpSending ? "Sending…" : "Send OTP"}
+              </Button>
+            </div>
+          </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setAssignOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={assignBusy || !eoiAssignSalesId} onClick={() => void submitAssignEoi()}>
+            <Button
+              disabled={assignBusy || !eoiAssignSalesId || eoiAssignOtp.length !== 6}
+              onClick={() => void submitAssignEoi()}
+            >
               {assignBusy ? "Assigning…" : "Assign"}
             </Button>
           </div>

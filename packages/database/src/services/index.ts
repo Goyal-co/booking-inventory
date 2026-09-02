@@ -26,3 +26,4 @@ export * from "./integration";
 export * from "./eoi-cp-notify";
 export * from "./eoi-identity";
 export * from "./digital-booking";
+export * from "./customer-otp";

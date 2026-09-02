@@ -12,6 +12,10 @@ import {
   notifyEoiPartnerPortalResolved,
   mapLeadForBookingSearch,
   parseVisitingPartnerFromNotes,
+  generateCustomerOtp,
+  verifyCustomerOtp,
+  consumeCustomerOtpVerified,
+  isCustomerOtpVerified,
 } from "@booking/database";
 import { walkInLeadSchema, leadAssignSchema } from "@booking/validators";
 import {
@@ -24,6 +28,7 @@ import {
   bookGoyalLead,
   markGoyalSiteVisit,
 } from "@booking/integrations";
+import { sendEmail, otpVerificationEmail } from "@booking/email";
 
 async function getReceptionUser() {
   const session = await auth();
@@ -464,6 +469,29 @@ export async function POST_assignLead(req: NextRequest, { params }: { params: Pr
   const parsed = leadAssignSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
+  const lead = await prisma.leadRegistry.findFirst({
+    where: { id, organizationId: user.organizationId },
+    select: { id: true, customerEmail: true },
+  });
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+  if (!lead.customerEmail) {
+    return NextResponse.json(
+      { error: "Customer email is required to send OTP and complete site visit" },
+      { status: 400 },
+    );
+  }
+
+  const otpOk =
+    verifyCustomerOtp("SITE_VISIT", id, parsed.data.otp)
+    || (isCustomerOtpVerified("SITE_VISIT", id) && consumeCustomerOtpVerified("SITE_VISIT", id));
+  if (!otpOk) {
+    return NextResponse.json(
+      { error: "Invalid or expired OTP. Send a new code to the customer email." },
+      { status: 400 },
+    );
+  }
+  consumeCustomerOtpVerified("SITE_VISIT", id);
+
   const sales = await prisma.user.findFirst({
     where: {
       id: parsed.data.salesUserId,
@@ -496,6 +524,84 @@ export async function POST_assignLead(req: NextRequest, { params }: { params: Pr
     const status = message === "Lead not found" ? 404 : 500;
     return NextResponse.json({ error: message }, { status });
   }
+}
+
+/** Send site-visit OTP to the lead's customer email. */
+export async function POST_leadSiteVisitOtpSend(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+
+  const lead = await prisma.leadRegistry.findFirst({
+    where: { id, organizationId: user.organizationId },
+    select: {
+      id: true,
+      customerEmail: true,
+      customerName: true,
+      project: { select: { name: true } },
+    },
+  });
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+  if (!lead.customerEmail) {
+    return NextResponse.json({ error: "Customer email is required to send OTP" }, { status: 400 });
+  }
+
+  const otp = generateCustomerOtp("SITE_VISIT", lead.id);
+  const { subject, html } = otpVerificationEmail({
+    otp,
+    projectName: lead.project?.name,
+    purpose: "SITE_VISIT",
+  });
+  const emailResult = await sendEmail({
+    to: lead.customerEmail,
+    subject,
+    html,
+  });
+  if (!emailResult.success) {
+    return NextResponse.json(
+      {
+        error: emailResult.mocked
+          ? "Email not sent — BREVO_API_KEY not loaded on reception"
+          : emailResult.error || "Failed to send OTP email",
+        ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+      },
+      { status: 502 },
+    );
+  }
+
+  return NextResponse.json({
+    sent: true,
+    email: lead.customerEmail,
+    ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+  });
+}
+
+export async function POST_leadSiteVisitOtpVerify(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const otp = typeof body.otp === "string" ? body.otp.trim() : "";
+  if (!/^\d{6}$/.test(otp)) {
+    return NextResponse.json({ error: "Enter the 6-digit OTP" }, { status: 400 });
+  }
+
+  const lead = await prisma.leadRegistry.findFirst({
+    where: { id, organizationId: user.organizationId },
+    select: { id: true },
+  });
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+  if (!verifyCustomerOtp("SITE_VISIT", id, otp)) {
+    return NextResponse.json({ error: "Invalid or expired OTP" }, { status: 400 });
+  }
+  return NextResponse.json({ verified: true });
 }
 
 const materializeTitanSchema = z.object({
@@ -1002,7 +1108,57 @@ const assignEoiLeadSchema = z.object({
   projectName: z.string().optional(),
   leadCode: z.string().optional(),
   notes: z.string().optional(),
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit OTP sent to the customer"),
 });
+
+export async function POST_eoiSiteVisitOtpSend(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  let email =
+    typeof body.email === "string" && body.email.includes("@") ? body.email.trim() : "";
+  let projectName = typeof body.projectName === "string" ? body.projectName : undefined;
+
+  if (!email) {
+    try {
+      const crmLead = await getGoyalLead(id);
+      email = crmLead?.email || "";
+      projectName = projectName || crmLead?.projectName || undefined;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!email) {
+    return NextResponse.json({ error: "Customer email is required to send OTP" }, { status: 400 });
+  }
+
+  const subjectId = `eoi:${id}`;
+  const otp = generateCustomerOtp("SITE_VISIT", subjectId);
+  const { subject, html } = otpVerificationEmail({
+    otp,
+    projectName,
+    purpose: "SITE_VISIT",
+  });
+  const emailResult = await sendEmail({ to: email, subject, html });
+  if (!emailResult.success) {
+    return NextResponse.json(
+      {
+        error: emailResult.error || "Failed to send OTP email",
+        ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+      },
+      { status: 502 },
+    );
+  }
+  return NextResponse.json({
+    sent: true,
+    email,
+    ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+  });
+}
 
 /** Reception EOI desk → materialize CRM lead + assign to local sales (Direct Booking). */
 export async function POST_eoiAssign(
@@ -1017,6 +1173,19 @@ export async function POST_eoiAssign(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
+
+  const eoiOtpSubject = `eoi:${id}`;
+  const otpOk =
+    verifyCustomerOtp("SITE_VISIT", eoiOtpSubject, parsed.data.otp)
+    || (isCustomerOtpVerified("SITE_VISIT", eoiOtpSubject)
+      && consumeCustomerOtpVerified("SITE_VISIT", eoiOtpSubject));
+  if (!otpOk) {
+    return NextResponse.json(
+      { error: "Invalid or expired OTP. Send a new code to the customer email." },
+      { status: 400 },
+    );
+  }
+  consumeCustomerOtpVerified("SITE_VISIT", eoiOtpSubject);
 
   let crmLead: Awaited<ReturnType<typeof getGoyalLead>> | null = null;
   try {

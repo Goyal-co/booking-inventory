@@ -125,6 +125,8 @@ function LiveBookingContent() {
   const [leadResults, setLeadResults] = useState<BookingLeadResult[]>([]);
   const [selectedLead, setSelectedLead] = useState<BookingLeadResult | null>(null);
   const [leadBookBusy, setLeadBookBusy] = useState(false);
+  const [bookOtp, setBookOtp] = useState("");
+  const [bookOtpSending, setBookOtpSending] = useState(false);
   const [customerUrl, setCustomerUrl] = useState<string | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapData, setHeatmapData] = useState<Record<string, number>>({});
@@ -351,12 +353,17 @@ function LiveBookingContent() {
       toast.message("Lead is already marked booked");
       return;
     }
+    if (!/^\d{6}$/.test(bookOtp)) {
+      toast.error("Enter the 6-digit OTP sent to the customer");
+      return;
+    }
     setLeadBookBusy(true);
     try {
       const res = await fetch(`/api/direct-leads/${selectedLead.id}/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          otp: bookOtp,
           bookedDate: new Date().toISOString().slice(0, 10),
           sourceOfEnquiry: "Live Booking",
         }),
@@ -375,6 +382,7 @@ function LiveBookingContent() {
             }
           : prev
       );
+      setBookOtp("");
       if (data.crmSynced) toast.success("Lead marked booked — CRM updated");
       else
         toast.success("Lead marked booked", {
@@ -382,6 +390,29 @@ function LiveBookingContent() {
         });
     } finally {
       setLeadBookBusy(false);
+    }
+  };
+
+  const sendBookOtp = async () => {
+    if (!selectedLead?.id) {
+      toast.error("Select a lead first");
+      return;
+    }
+    setBookOtpSending(true);
+    try {
+      const res = await fetch(`/api/direct-leads/${selectedLead.id}/book/otp/send`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Could not send OTP");
+        if (typeof data.devOtp === "string") setBookOtp(data.devOtp);
+        return;
+      }
+      toast.success(`OTP sent to ${data.email || "customer"}`);
+      if (typeof data.devOtp === "string") setBookOtp(data.devOtp);
+    } finally {
+      setBookOtpSending(false);
     }
   };
 
@@ -949,14 +980,37 @@ function LiveBookingContent() {
                       Booked
                     </span>
                   ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={leadBookBusy}
-                      onClick={() => void markLeadBooked()}
-                    >
-                      {leadBookBusy ? "Marking…" : "Mark as Booked"}
-                    </Button>
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          value={bookOtp}
+                          onChange={(e) => setBookOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          placeholder="OTP"
+                          className="w-28"
+                          inputMode="numeric"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={bookOtpSending}
+                          onClick={() => void sendBookOtp()}
+                        >
+                          {bookOtpSending ? "Sending…" : "Send OTP"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={leadBookBusy || bookOtp.length !== 6}
+                          onClick={() => void markLeadBooked()}
+                        >
+                          {leadBookBusy ? "Marking…" : "Mark as Booked"}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Direct booking — no digital form. Customer confirms via email OTP.
+                      </p>
+                    </div>
                   )}
                 </div>
                 <dl className="grid gap-2 sm:grid-cols-2">

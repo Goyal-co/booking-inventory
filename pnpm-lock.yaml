@@ -175,6 +175,9 @@ importers:
       '@booking/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@booking/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@booking/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -449,6 +452,9 @@ importers:
       '@booking/config-typescript':
         specifier: workspace:*
         version: link:../config-typescript
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.19
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
