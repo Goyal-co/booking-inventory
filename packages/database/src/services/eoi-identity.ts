@@ -53,6 +53,8 @@ export async function fetchEoiLeadIdentity(query: {
   leadId?: string | null;
   phone?: string | null;
   email?: string | null;
+  /** Soft cap for reception search (default 3s). */
+  timeoutMs?: number;
 }): Promise<EoiIdentityPayload | null> {
   const base = eoiBaseUrl();
   const secret = webhookSecret();
@@ -72,6 +74,7 @@ export async function fetchEoiLeadIdentity(query: {
         Authorization: `Bearer ${secret}`,
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(query.timeoutMs ?? 3_000),
     });
     if (!res.ok) return null;
     const body = (await res.json().catch(() => null)) as

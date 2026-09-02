@@ -86,86 +86,93 @@ export async function GET_leadsSearch(req: NextRequest) {
   const user = await getReceptionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const q = req.nextUrl.searchParams.get("q") ?? "";
+  const trimmed = q.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  const phone = digits.length >= 10 ? digits.slice(-10) : undefined;
+  const EXTERNAL_MS = Number(process.env.RECEPTION_SEARCH_EXTERNAL_TIMEOUT_MS || 3_000);
+
+  // Local DB first (usually <200ms). External CRM/EOI run in parallel with hard caps.
   const leads = await searchLeads(user.organizationId, q);
 
   const { getTitanCRMProvider } = await import("@booking/integrations");
-  let titanResult: Record<string, unknown> | null = null;
-  if (q.trim()) {
+  const { fetchEoiLeadIdentity } = await import("@booking/database");
+
+  const sample = leads[0];
+  const titanPromise = (async (): Promise<Record<string, unknown> | null> => {
+    if (!trimmed) return null;
     try {
-      const digits = q.replace(/\D/g, "");
-      titanResult = await getTitanCRMProvider().searchLead({
-        leadId: /^(TITAN|CP-|WALKIN-|EOI-)/i.test(q) ? q : undefined,
-        phone: digits.length >= 10 ? digits.slice(-10) : /^\d+$/.test(q) ? q : undefined,
+      return await getTitanCRMProvider().searchLead({
+        leadId: /^(TITAN|CP-|WALKIN-|EOI-)/i.test(trimmed) ? trimmed : undefined,
+        phone: phone || (/^\d+$/.test(trimmed) ? trimmed : undefined),
       });
     } catch {
-      /* optional */
+      return null;
     }
-  }
+  })();
 
-  // Goyal Hariyana CRM EOI — best-effort only (never block Partner Portal results)
-  let goyalEoiLeads: Array<Record<string, unknown>> = [];
-  let goyalEoiError: string | undefined;
-  if (q.trim() && getGoyalCrmCapabilities().webhookList) {
+  const goyalPromise = (async (): Promise<{
+    leads: Array<Record<string, unknown>>;
+    error?: string;
+  }> => {
+    if (!trimmed || !getGoyalCrmCapabilities().webhookList) {
+      return { leads: [] };
+    }
     try {
-      const trimmed = q.trim();
-      const digits = trimmed.replace(/\D/g, "");
-      const phone = digits.length >= 10 ? digits.slice(-10) : undefined;
       const isEmail = trimmed.includes("@");
       const isPhoneOnly = Boolean(phone && !/[A-Za-z@]/.test(trimmed));
+      // One attempt only — dual fallbacks were doubling hung CRM waits.
+      const params: Parameters<typeof listGoyalLeads>[0] = isEmail
+        ? { page: 1, limit: 20, email: trimmed }
+        : isPhoneOnly && phone
+          ? { page: 1, limit: 20, phone }
+          : {
+              page: 1,
+              limit: 20,
+              search: trimmed,
+              ...(phone ? { phone } : {}),
+            };
 
-      const attempts: Array<Parameters<typeof listGoyalLeads>[0]> = [];
-      if (isEmail) {
-        attempts.push({ page: 1, limit: 20, email: trimmed });
-        attempts.push({ page: 1, limit: 20, search: trimmed });
-      } else if (isPhoneOnly && phone) {
-        attempts.push({ page: 1, limit: 20, phone });
-        attempts.push({ page: 1, limit: 20, search: phone });
-      } else {
-        attempts.push({
-          page: 1,
-          limit: 20,
-          search: trimmed,
-          ...(phone ? { phone } : {}),
-        });
-      }
-
-      const seen = new Set<string>();
-      let lastAuthError: string | undefined;
-      for (const params of attempts) {
-        try {
-          const listed = await listGoyalLeads(params);
-          for (const lead of listed.leads) {
-            const key = String(lead.id || lead.leadCode || "");
-            if (!key || seen.has(key)) continue;
-            seen.add(key);
-            goyalEoiLeads.push(lead as unknown as Record<string, unknown>);
-          }
-          if (goyalEoiLeads.length > 0) break;
-        } catch (err) {
-          const msg =
-            err instanceof GoyalCrmError
-              ? err.message
-              : err instanceof Error
-                ? err.message
-                : "Goyal CRM search failed";
-          // Token misconfig is common — keep quiet unless CRM is the only source later
-          if (/invalid|revoked|unauthorized|401|403|not configured/i.test(msg)) {
-            lastAuthError = msg;
-          } else {
-            goyalEoiError = msg;
-          }
-        }
-      }
-      if (!goyalEoiLeads.length && lastAuthError) goyalEoiError = lastAuthError;
+      const listed = await listGoyalLeads(params, {
+        fast: true,
+        signal: AbortSignal.timeout(EXTERNAL_MS),
+      });
+      return {
+        leads: listed.leads.map((lead) => lead as unknown as Record<string, unknown>),
+      };
     } catch (err) {
-      goyalEoiError =
+      const msg =
         err instanceof GoyalCrmError
           ? err.message
           : err instanceof Error
             ? err.message
             : "Goyal CRM search failed";
+      if (/timeout|abort/i.test(msg)) {
+        return { leads: [], error: "Goyal CRM search timed out" };
+      }
+      return { leads: [], error: msg };
     }
-  }
+  })();
+
+  const eoiPromise = fetchEoiLeadIdentity({
+    leadId:
+      sample?.leadId ||
+      (/^(EOI-|LEAD-)/i.test(trimmed) ? trimmed : undefined) ||
+      undefined,
+    phone:
+      sample?.customerPhone ||
+      (phone && !/^(EOI-|LEAD-)/i.test(trimmed) ? phone : undefined),
+    email: sample?.customerEmail || (trimmed.includes("@") ? trimmed : undefined),
+    timeoutMs: EXTERNAL_MS,
+  });
+
+  const [titanResult, goyalResult, eoiIdentity] = await Promise.all([
+    titanPromise,
+    goyalPromise,
+    eoiPromise,
+  ]);
+
+  const goyalEoiLeads = goyalResult.leads;
+  let goyalEoiError = goyalResult.error;
 
   const partnerIds = new Set(
     leads.map((l) => l.cpId).filter((id): id is string => Boolean(id && String(id).trim()))
@@ -182,7 +189,7 @@ export async function GET_leadsSearch(req: NextRequest) {
     | "not_found"
     | "empty_query" = "empty_query";
 
-  if (!q.trim()) scenario = "empty_query";
+  if (!trimmed) scenario = "empty_query";
   // Prefer live Goyal CRM EOI hits when local registry has nothing yet.
   else if (leads.length === 0 && goyalEoiLeads.length > 0) scenario = "found_goyal_eoi";
   else if (leads.length === 0 && titanNeedsPartner) scenario = "titan_needs_partner";
@@ -305,39 +312,7 @@ export async function GET_leadsSearch(req: NextRequest) {
   }
 
   // Enrich with EOI canonical identity — one selectable row per CP×project punch
-  let eoiIdentity: Awaited<ReturnType<typeof import("@booking/database").fetchEoiLeadIdentity>> = null;
   try {
-    const { fetchEoiLeadIdentity } = await import("@booking/database");
-    const sample = leads[0];
-    const digits = q.replace(/\D/g, "");
-    eoiIdentity = await fetchEoiLeadIdentity({
-      leadId:
-        sample?.leadId ||
-        (/^(EOI-|LEAD-)/i.test(q.trim()) ? q.trim() : undefined) ||
-        undefined,
-      // Always pass phone/email from query when present so multi-project identity resolves
-      phone:
-        sample?.customerPhone ||
-        (digits.length >= 10 && !/^(EOI-|LEAD-)/i.test(q.trim())
-          ? digits.slice(-10)
-          : undefined),
-      email: sample?.customerEmail || (q.includes("@") ? q.trim() : undefined),
-    });
-    // If we only had Lead ID locally, retry with phone from identity/local once known
-    if (
-      eoiIdentity &&
-      eoiIdentity.associations.length <= 1 &&
-      (eoiIdentity.primaryPhone || sample?.customerPhone)
-    ) {
-      const richer = await fetchEoiLeadIdentity({
-        leadId: eoiIdentity.leadId || sample?.leadId,
-        phone: eoiIdentity.primaryPhone || sample?.customerPhone,
-        email: eoiIdentity.primaryEmail || sample?.customerEmail,
-      });
-      if (richer && richer.associations.length > eoiIdentity.associations.length) {
-        eoiIdentity = richer;
-      }
-    }
     if (eoiIdentity?.associations?.length) {
       for (const assoc of eoiIdentity.associations) {
         const partner = eoiIdentity.partners.find((p) => p.cpId === assoc.cpId);
@@ -419,7 +394,7 @@ export async function GET_leadsSearch(req: NextRequest) {
   } else if (leads.length === 0 && titanNeedsPartner) {
     scenario = "titan_needs_partner";
   } else if (leads.length === 0 && !titanResult?.found) {
-    scenario = q.trim() ? "not_found" : "empty_query";
+    scenario = trimmed ? "not_found" : "empty_query";
   }
 
   // Don't surface CRM token errors when Partner Portal / local already resolved the visitor

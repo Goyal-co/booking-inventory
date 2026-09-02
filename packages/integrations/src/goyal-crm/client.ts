@@ -144,7 +144,14 @@ async function partnerFetch(path: string, init: RequestInit = {}): Promise<unkno
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(`${baseUrl()}${path}`, { ...init, headers });
+  const method = (init.method || "GET").toUpperCase();
+  // Bound hung CRM GETs; mutations keep caller-provided signal or default longer.
+  const signal =
+    init.signal
+    ?? (method === "GET"
+      ? AbortSignal.timeout(Number(process.env.GOYAL_CRM_GET_TIMEOUT_MS || 3_000))
+      : AbortSignal.timeout(Number(process.env.GOYAL_CRM_MUTATION_TIMEOUT_MS || 15_000)));
+  const res = await fetch(`${baseUrl()}${path}`, { ...init, headers, signal });
   const body = await parseJson(res);
   if (!res.ok) {
     throw new GoyalCrmError(
@@ -168,7 +175,13 @@ async function staffFetch(path: string, init: RequestInit = {}): Promise<unknown
   if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
-  const res = await fetch(`${baseUrl()}${path}`, { ...init, headers });
+  const method = (init.method || "GET").toUpperCase();
+  const signal =
+    init.signal
+    ?? (method === "GET"
+      ? AbortSignal.timeout(Number(process.env.GOYAL_CRM_GET_TIMEOUT_MS || 3_000))
+      : AbortSignal.timeout(Number(process.env.GOYAL_CRM_MUTATION_TIMEOUT_MS || 15_000)));
+  const res = await fetch(`${baseUrl()}${path}`, { ...init, headers, signal });
   const body = await parseJson(res);
   if (!res.ok) {
     throw new GoyalCrmError(
@@ -361,7 +374,8 @@ export function normalizeWebhookLead(
  * Auth: access_key query + Bearer + X-EOI-Api-Key (CRM accepts any one).
  */
 export async function listGoyalLeadsViaEoiKey(
-  params: GoyalCrmLeadListParams = {}
+  params: GoyalCrmLeadListParams = {},
+  opts?: { signal?: AbortSignal; fast?: boolean }
 ): Promise<GoyalCrmLeadListResult> {
   const key = partnerAccessToken();
   if (!key) {
@@ -375,18 +389,23 @@ export async function listGoyalLeadsViaEoiKey(
     { access_key: key, api_key: key }
   );
 
-  const tryPaths = wantAll
-    ? [`/eoi/all-leads${qs}`, `/webhooks/eoi/all-leads${qs}`, `/eoi/leads${qs}`, `/webhooks/eoi/leads${qs}`]
-    : [`/eoi/leads${qs}`, `/webhooks/eoi/leads${qs}`];
+  // Reception search needs one fast path — fallbacks are for offline tooling only.
+  const tryPaths = opts?.fast
+    ? [`/eoi/leads${qs}`]
+    : wantAll
+      ? [`/eoi/all-leads${qs}`, `/webhooks/eoi/all-leads${qs}`, `/eoi/leads${qs}`, `/webhooks/eoi/leads${qs}`]
+      : [`/eoi/leads${qs}`, `/webhooks/eoi/leads${qs}`];
 
   let lastErr: unknown;
   for (const path of tryPaths) {
     try {
-      const body = await partnerFetch(path, { method: "GET" });
+      const body = await partnerFetch(path, { method: "GET", signal: opts?.signal });
       return toListResult(body, page, wantAll ? extractLeads(body).length || limit : limit);
     } catch (err) {
       lastErr = err;
       if (err instanceof GoyalCrmError && err.status < 500 && err.status !== 404) throw err;
+      if (err instanceof Error && err.name === "TimeoutError") throw err;
+      if (err instanceof Error && err.name === "AbortError") throw err;
     }
   }
   throw lastErr instanceof Error
@@ -446,13 +465,14 @@ export async function listGoyalLeadsStaff(
  * Optional staff JWT fallback if partner key missing.
  */
 export async function listGoyalLeads(
-  params: GoyalCrmLeadListParams = {}
+  params: GoyalCrmLeadListParams = {},
+  opts?: { signal?: AbortSignal; fast?: boolean }
 ): Promise<GoyalCrmLeadListResult> {
   if (partnerAccessToken()) {
     try {
-      return await listGoyalLeadsViaEoiKey(params);
+      return await listGoyalLeadsViaEoiKey(params, opts);
     } catch (err) {
-      if (!staffToken()) throw err;
+      if (!staffToken() || opts?.fast) throw err;
       console.warn("[Goyal CRM] partner /eoi/leads failed, trying staff /leads", err);
     }
   }

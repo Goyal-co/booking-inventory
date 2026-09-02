@@ -56,6 +56,7 @@ export const httpTitanCRM: TitanCRMProvider = {
     if (query.phone) params.set("phone", query.phone);
     const res = await fetch(`${TITAN_BASE}/leads/search?${params}`, {
       headers: { Authorization: `Bearer ${TITAN_KEY}` },
+      signal: AbortSignal.timeout(Number(process.env.TITAN_CRM_SEARCH_TIMEOUT_MS || 3_000)),
     });
     if (!res.ok) return null;
     return res.json() as Promise<Record<string, unknown> | null>;
