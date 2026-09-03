@@ -14,6 +14,7 @@
     "db:bootstrap": "pnpm exec tsx prisma/bootstrap.ts",
     "db:reset": "prisma db push --force-reset && pnpm exec tsx prisma/seed.ts",
     "build": "prisma generate",
+    "lint": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
