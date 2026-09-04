@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { GET_leadsSearch } from "@/lib/api-handlers";
+import { GET_leadsSearch } from "@/lib/logged-handlers";
 
 /** Hard ceiling — search aborts external CRM/EOI well before this. */
 export const maxDuration = 10;

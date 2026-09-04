@@ -2,6 +2,7 @@ import { createServer } from "http";
 import express from "express";
 import cors from "cors";
 import { Server } from "socket.io";
+import { prisma } from "@booking/database";
 import { getProjectRoom, REALTIME_EVENTS } from "@booking/realtime";
 import "./expiry-worker";
 
@@ -69,8 +70,30 @@ app.post("/emit", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+app.get("/health", async (req, res) => {
+  const live = String(req.query.live ?? "") === "1";
+  const timestamp = new Date().toISOString();
+  res.setHeader("cache-control", "no-store");
+
+  if (live) {
+    return res.status(200).json({ status: "ok", live: true, service: "ws-server", timestamp });
+  }
+
+  let database = false;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    database = true;
+  } catch {
+    database = false;
+  }
+
+  const ok = database;
+  return res.status(ok ? 200 : 503).json({
+    status: ok ? "ok" : "degraded",
+    service: "ws-server",
+    checks: { database },
+    timestamp,
+  });
 });
 
 const PORT = process.env.PORT || process.env.WS_PORT || 3002;

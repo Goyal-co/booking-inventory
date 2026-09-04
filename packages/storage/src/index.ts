@@ -15,6 +15,8 @@ import {
 
 export * from "./provider";
 export { blobGetDownloadUrl, blobObjectExists, blobDelete } from "./vercel-blob";
+export { blobHealthCheck, s3HealthCheck, storageHealthCheck } from "./health";
+export { runBookingHealthCheck } from "./app-health";
 
 export interface UploadResult {
   key: string;

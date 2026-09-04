@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { DELETE_blocks, GET_block_detail, PATCH_block_detail } from "@/lib/api-handlers";
+import { DELETE_blocks, GET_block_detail, PATCH_block_detail } from "@/lib/logged-handlers";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   return GET_block_detail(_req, ctx);

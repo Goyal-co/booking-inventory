@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@booking/database";
 import { generateOtp } from "@/lib/otp";
 import { sendEmail, otpVerificationEmail } from "@booking/email";
+import { logger, redactEmail, withLoggedHandler } from "@booking/logger";
 
-export async function POST(_req: Request, { params }: { params: Promise<{ token: string }> }) {
+async function POST_handler(_req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const block = await prisma.block.findFirst({
     where: { bookingToken: token },
@@ -25,7 +26,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ token:
     html,
   });
 
-  if (!emailResult.success) {
+  if (!emailResult.success || emailResult.mocked) {
+    logger.error("customer.otp.send", "OTP email failed", {
+      email: redactEmail(block.customerEmail),
+      mocked: !!emailResult.mocked,
+    });
     return NextResponse.json(
       {
         error: emailResult.mocked
@@ -37,9 +42,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ token:
     );
   }
 
+  logger.info("customer.otp.send", "OTP email sent", {
+    email: redactEmail(block.customerEmail),
+    messageId: emailResult.id,
+  });
+
   return NextResponse.json({
     sent: true,
     mocked: !!emailResult.mocked,
     ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
   });
 }
+
+export const POST = withLoggedHandler("customer.booking.otp.send", POST_handler);

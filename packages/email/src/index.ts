@@ -14,6 +14,7 @@ import {
   NAVY,
   MUTED,
 } from "./layout";
+import { logger, redactEmail } from "@booking/logger";
 
 export interface EmailAttachment {
   name: string;
@@ -123,27 +124,26 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
 
   if (shouldUseMockEmail()) {
     if (process.env.NODE_ENV === "production") {
+      logger.error("email.send", "BREVO_API_KEY required in production", {
+        to: redactEmail(options.to),
+      });
       return {
         success: false,
         error: config.issue || "BREVO_API_KEY required in production on the sales service",
       };
     }
-    console.warn(
-      "[Email] MOCK MODE — BREVO_API_KEY not loaded. Restart the server after updating .env.local"
-    );
-    console.log("[Email Mock] From:", `${resolvedSender.name} <${resolvedSender.email}>`);
-    console.log("[Email Mock] To:", options.to);
-    console.log("[Email Mock] Subject:", options.subject);
-    if (options.attachments?.length) {
-      console.log(
-        "[Email Mock] Attachments:",
-        options.attachments.map((a) => a.name).join(", ")
-      );
-    }
+    logger.warn("email.send", "MOCK MODE — BREVO_API_KEY not loaded", {
+      to: redactEmail(options.to),
+      subject: options.subject,
+      attachments: options.attachments?.length || 0,
+    });
     return { success: true, id: `mock-${Date.now()}`, mocked: true };
   }
 
   if (isPlaceholderSender(resolvedSender.email)) {
+    logger.error("email.send", "EMAIL_FROM is not a verified sender", {
+      sender: resolvedSender.email,
+    });
     return {
       success: false,
       error:
@@ -152,7 +152,7 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
   }
 
   const apiKey = getBrevoApiKey()!;
-  console.log("[Email] Sending via Brevo to:", options.to);
+  logger.debug("email.send", "Sending via Brevo", { to: redactEmail(options.to) });
   try {
     const payload: Record<string, unknown> = {
       sender: {
@@ -182,11 +182,14 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
 
     if (!res.ok) {
       const err = await res.text();
-      console.error("[Email] Brevo API error:", err);
+      logger.error("email.brevo", "Brevo API error", {
+        status: res.status,
+        to: redactEmail(options.to),
+      });
 
       // If attachment caused failure, retry once without attachments (booking link still goes out).
       if (options.attachments?.length) {
-        console.warn("[Email] Retrying without attachments…");
+        logger.warn("email.brevo", "Retrying without attachments");
         const retry = await fetch("https://api.brevo.com/v3/smtp/email", {
           method: "POST",
           headers: {
@@ -203,11 +206,14 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
         });
         if (retry.ok) {
           const data = (await retry.json()) as { messageId?: string };
-          console.log("[Email] Brevo sent (without attachment):", data.messageId);
+          logger.info("email.send", "Brevo sent (without attachment)", {
+            messageId: data.messageId,
+            to: redactEmail(options.to),
+          });
           return { success: true, id: data.messageId };
         }
         const retryErr = await retry.text();
-        console.error("[Email] Brevo retry error:", retryErr);
+        logger.error("email.brevo", "Brevo retry error", { status: retry.status });
         return { success: false, error: retryErr || err };
       }
 
@@ -215,10 +221,13 @@ export async function sendEmail(options: EmailOptions): Promise<EmailSendResult>
     }
 
     const data = (await res.json()) as { messageId?: string };
-    console.log("[Email] Brevo sent:", data.messageId);
+    logger.info("email.send", "Brevo sent", {
+      messageId: data.messageId,
+      to: redactEmail(options.to),
+    });
     return { success: true, id: data.messageId };
   } catch (error) {
-    console.error("[Email] Brevo request failed:", error);
+    logger.error("email.brevo", "Brevo request failed", { to: redactEmail(options.to) }, error);
     return { success: false, error: String(error) };
   }
 }

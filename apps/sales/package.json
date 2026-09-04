@@ -12,6 +12,7 @@
     "@booking/database": "workspace:*",
     "@booking/email": "workspace:*",
     "@booking/integrations": "workspace:*",
+    "@booking/logger": "workspace:*",
     "@booking/pdf": "workspace:*",
     "@booking/realtime": "workspace:*",
     "@booking/ui": "workspace:*",

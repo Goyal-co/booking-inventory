@@ -1,13 +1,19 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
+import { logger } from "@booking/logger";
 
 const ADMIN_ROLES = ["SUPER_ADMIN", "PROJECT_ADMIN"];
 
 export default auth((req) => {
+  const path = req.nextUrl.pathname;
+  if (path.startsWith("/api/") && !path.startsWith("/api/auth")) {
+    logger.debug("admin.api", "request", { method: req.method, path });
+  }
+
   const isLoggedIn = !!req.auth;
-  const isLoginPage = req.nextUrl.pathname.startsWith("/login");
-  const isApiAuth = req.nextUrl.pathname.startsWith("/api/auth");
-  const isAdminRoute = req.nextUrl.pathname.startsWith("/admin");
+  const isLoginPage = path.startsWith("/login");
+  const isApiAuth = path.startsWith("/api/auth");
+  const isAdminRoute = path.startsWith("/admin");
 
   if (isApiAuth) return NextResponse.next();
 
@@ -30,5 +36,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/admin", "/admin/:path*", "/login"],
+  matcher: ["/admin", "/admin/:path*", "/login", "/api/:path*"],
 };

@@ -1,4 +1,4 @@
-import { GET_availableSalespersons } from "@/lib/api-handlers";
+import { GET_availableSalespersons } from "@/lib/logged-handlers";
 import type { NextRequest } from "next/server";
 
 export async function GET(req: NextRequest) {

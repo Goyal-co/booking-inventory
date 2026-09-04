@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
+const path = require("path");
+
 const securityHeaders = [
   { key: "X-DNS-Prefetch-Control", value: "on" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
@@ -7,15 +9,21 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+const useStandalone = !process.env.VERCEL;
+
 const nextConfig = {
+  ...(useStandalone ? { output: "standalone" } : {}),
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@booking/ui",
     "@booking/database",
     "@booking/validators",
     "@booking/realtime",
     "@booking/pdf",
+    "@booking/logger",
     "@goyal/ecosystem-contracts",
     "@goyal/integration-hub",
+    "@goyal/storage",
   ],
   serverExternalPackages: ["@prisma/client", "bcryptjs"],
   devIndicators: false,

@@ -1,0 +1,148 @@
+# AWS / VM production stack for Booking_Inventory.
+# Copy .env.production.example → .env.production and fill secrets.
+#   docker compose -f docker-compose.production.yml --env-file .env.production up --build -d
+#
+# Local postgres/redis only: docker compose up -d  (see docker-compose.yml)
+#
+# Each Next app listens on :3000 inside the container; host ports differ.
+# Object storage: set STORAGE_PROVIDER=s3 (or BLOB_READ_WRITE_TOKEN for Vercel Blob).
+
+services:
+  sales:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: sales
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP: sales
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_URL: ${SALES_URL:-https://sales.your-domain.com}
+      WS_EMIT_URL: ${WS_EMIT_URL:-http://ws:3002}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health?live=1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      ws:
+        condition: service_healthy
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: admin
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP: admin
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_URL: ${ADMIN_URL:-https://admin.your-domain.com}
+      WS_EMIT_URL: ${WS_EMIT_URL:-http://ws:3002}
+      # Only sales runs migrate/bootstrap to avoid races
+      SKIP_DB_MIGRATE: "1"
+      SKIP_ADMIN_BOOTSTRAP: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health?live=1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      sales:
+        condition: service_healthy
+      ws:
+        condition: service_healthy
+
+  customer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: customer
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP: customer
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_URL: ${CUSTOMER_URL:-https://booking.your-domain.com}
+      SKIP_DB_MIGRATE: "1"
+      SKIP_ADMIN_BOOTSTRAP: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health?live=1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      sales:
+        condition: service_healthy
+
+  reception:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: reception
+    restart: unless-stopped
+    ports:
+      - "3004:3000"
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP: reception
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_URL: ${RECEPTION_URL:-https://reception.your-domain.com}
+      SKIP_DB_MIGRATE: "1"
+      SKIP_ADMIN_BOOTSTRAP: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health?live=1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      sales:
+        condition: service_healthy
+
+  ws:
+    build:
+      context: .
+      dockerfile: Dockerfile.ws
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      WS_PORT: "3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/health?live=1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

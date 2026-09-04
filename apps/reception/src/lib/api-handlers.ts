@@ -29,6 +29,7 @@ import {
   markGoyalSiteVisit,
 } from "@booking/integrations";
 import { sendEmail, otpVerificationEmail } from "@booking/email";
+import { logger, redactEmail } from "@booking/logger";
 
 async function getReceptionUser() {
   const session = await auth();
@@ -402,6 +403,21 @@ export async function GET_leadsSearch(req: NextRequest) {
     goyalEoiError = undefined;
   }
 
+  if (goyalResult.error) {
+    logger.warn("reception.leads.search", "Goyal CRM search issue", {
+      error: goyalResult.error,
+    });
+  }
+
+  logger.info("reception.leads.search", "search complete", {
+    scenario,
+    local: leads.length,
+    crm: goyalEoiLeads.length,
+    partners: partnerOptions.length,
+    titan: titanResult?.found ? 1 : 0,
+    eoi: eoiIdentity ? 1 : 0,
+  });
+
   return NextResponse.json({
     leads: leads.map(mapLeadForBookingSearch),
     titanResult,
@@ -537,6 +553,12 @@ export async function POST_leadSiteVisitOtpSend(
   });
   // Never claim "sent" for mock mode — customer inbox never receives anything.
   if (!emailResult.success || emailResult.mocked) {
+    logger.error("reception.otp.send", "OTP email failed", {
+      purpose: "SITE_VISIT",
+      subjectId: lead.id,
+      email: redactEmail(lead.customerEmail),
+      mocked: !!emailResult.mocked,
+    });
     return NextResponse.json(
       {
         error: emailResult.mocked
@@ -547,6 +569,13 @@ export async function POST_leadSiteVisitOtpSend(
       { status: 502 },
     );
   }
+
+  logger.info("reception.otp.send", "OTP email sent", {
+    purpose: "SITE_VISIT",
+    subjectId: lead.id,
+    email: redactEmail(lead.customerEmail),
+    messageId: emailResult.id,
+  });
 
   return NextResponse.json({
     sent: true,
@@ -576,8 +605,10 @@ export async function POST_leadSiteVisitOtpVerify(
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
   if (!verifyCustomerOtp("SITE_VISIT", id, otp)) {
+    logger.warn("reception.otp.verify", "invalid or expired OTP", { subjectId: id });
     return NextResponse.json({ error: "Invalid or expired OTP" }, { status: 400 });
   }
+  logger.info("reception.otp.verify", "OTP verified", { subjectId: id, purpose: "SITE_VISIT" });
   return NextResponse.json({ verified: true });
 }
 
@@ -1122,6 +1153,12 @@ export async function POST_eoiSiteVisitOtpSend(
   });
   const emailResult = await sendEmail({ to: email, subject, html });
   if (!emailResult.success || emailResult.mocked) {
+    logger.error("reception.eoi.otp.send", "OTP email failed", {
+      purpose: "SITE_VISIT",
+      subjectId,
+      email: redactEmail(email),
+      mocked: !!emailResult.mocked,
+    });
     return NextResponse.json(
       {
         error: emailResult.mocked
@@ -1132,6 +1169,12 @@ export async function POST_eoiSiteVisitOtpSend(
       { status: 502 },
     );
   }
+  logger.info("reception.eoi.otp.send", "OTP email sent", {
+    purpose: "SITE_VISIT",
+    subjectId,
+    email: redactEmail(email),
+    messageId: emailResult.id,
+  });
   return NextResponse.json({
     sent: true,
     email,

@@ -48,6 +48,7 @@ import {
 } from "@booking/database";
 import { createBlockSchema, createBookingSchema, unitFiltersSchema, dashboardRangeSchema, attachCustomerToBlockSchema } from "@booking/validators";
 import { parseEmailErrorMessage, sendEmail, otpVerificationEmail } from "@booking/email";
+import { logger, redactEmail } from "@booking/logger";
 import { emitRealtimeEvent } from "@booking/database";
 import { REALTIME_EVENTS } from "@booking/realtime";
 import { z } from "zod";
@@ -1003,6 +1004,12 @@ export async function POST_directLeadBookOtpSend(
   });
   const emailResult = await sendEmail({ to: lead.customerEmail, subject, html });
   if (!emailResult.success || emailResult.mocked) {
+    logger.error("sales.otp.send", "OTP email failed", {
+      purpose: "DIRECT_BOOKING",
+      subjectId: lead.id,
+      email: redactEmail(lead.customerEmail),
+      mocked: !!emailResult.mocked,
+    });
     return NextResponse.json(
       {
         error: emailResult.mocked
@@ -1013,6 +1020,12 @@ export async function POST_directLeadBookOtpSend(
       { status: 502 },
     );
   }
+  logger.info("sales.otp.send", "OTP email sent", {
+    purpose: "DIRECT_BOOKING",
+    subjectId: lead.id,
+    email: redactEmail(lead.customerEmail),
+    messageId: emailResult.id,
+  });
   return NextResponse.json({
     sent: true,
     email: lead.customerEmail,

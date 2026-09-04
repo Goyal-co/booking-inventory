@@ -6,6 +6,8 @@
  * Env (Reception + Sales): EOI_CP_URL, INTEGRATION_WEBHOOK_SECRET
  */
 
+import { logger, redactPhone } from "@booking/logger";
+
 export type EoiPortalEvent = "site_visit.completed" | "booking.confirmed";
 
 function eoiBaseUrl() {
@@ -51,7 +53,7 @@ export async function notifyEoiPartnerPortal(input: {
   const base = eoiBaseUrl();
   const secret = webhookSecret();
   if (!base || !secret) {
-    console.warn("[EOI_CP notify] skipped — set EOI_CP_URL and INTEGRATION_WEBHOOK_SECRET");
+    logger.warn("eoi.notify", "skipped — set EOI_CP_URL and INTEGRATION_WEBHOOK_SECRET");
     return { ok: false, skipped: true };
   }
 
@@ -60,7 +62,7 @@ export async function notifyEoiPartnerPortal(input: {
   const crmLeadId = input.crmLeadId?.trim() || undefined;
   const phone = normalizePhone(input.phone);
   if (!leadId && !eoiCpLeadId && !crmLeadId && !phone) {
-    console.warn("[EOI_CP notify] skipped — need leadId, eoiCpLeadId, crmLeadId, or phone");
+    logger.warn("eoi.notify", "skipped — need leadId, eoiCpLeadId, crmLeadId, or phone");
     return { ok: false, skipped: true };
   }
 
@@ -102,12 +104,22 @@ export async function notifyEoiPartnerPortal(input: {
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
-      console.error("[EOI_CP notify] failed", res.status, body);
+      logger.error("eoi.notify", "failed", {
+        status: res.status,
+        event: input.event,
+        phone: redactPhone(phone),
+      });
       return { ok: false, status: res.status, body };
     }
+    logger.info("eoi.notify", "synced", {
+      status: res.status,
+      event: input.event,
+      phone: redactPhone(phone),
+      leadId,
+    });
     return { ok: true, status: res.status, body };
   } catch (e) {
-    console.error("[EOI_CP notify] error", e);
+    logger.error("eoi.notify", "error", { event: input.event }, e);
     return { ok: false };
   }
 }

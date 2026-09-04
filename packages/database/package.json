@@ -21,6 +21,7 @@
     "@prisma/client": "^6.1.0",
     "@booking/email": "workspace:*",
     "@booking/integrations": "workspace:*",
+    "@booking/logger": "workspace:*",
     "@booking/pdf": "workspace:*",
     "@booking/validators": "workspace:*",
     "@goyal/ecosystem-contracts": "workspace:*",

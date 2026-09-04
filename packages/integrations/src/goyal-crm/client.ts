@@ -7,6 +7,7 @@ import type {
   UpdateGoyalLeadInput,
   MarkSiteVisitInput,
 } from "./types";
+import { logger } from "@booking/logger";
 
 export class GoyalCrmError extends Error {
   status: number;
@@ -200,7 +201,7 @@ async function crmMutationFetch(path: string, init: RequestInit = {}): Promise<u
       return await staffFetch(path, init);
     } catch (err) {
       if (!partnerAccessToken()) throw err;
-      console.warn("[Goyal CRM] staff mutation failed, trying Partner token", err);
+      logger.warn("crm.goyal", "staff mutation failed, trying Partner token", undefined, err);
     }
   }
   return partnerFetch(path, init);
@@ -323,7 +324,7 @@ export async function resolveGoyalLeadId(params: {
       if (match?.id && looksLikeUuid(match.id)) return match.id;
     }
   } catch (err) {
-    console.warn("[Goyal CRM] resolveGoyalLeadId failed", err);
+    logger.warn("crm.goyal", "resolveGoyalLeadId failed", undefined, err);
   }
   return idOrCode && looksLikeUuid(idOrCode) ? idOrCode : null;
 }
@@ -470,14 +471,25 @@ export async function listGoyalLeads(
 ): Promise<GoyalCrmLeadListResult> {
   if (partnerAccessToken()) {
     try {
-      return await listGoyalLeadsViaEoiKey(params, opts);
+      const result = await listGoyalLeadsViaEoiKey(params, opts);
+      logger.info("crm.goyal", "list leads ok", {
+        via: "partner",
+        count: result.leads?.length ?? 0,
+        fast: !!opts?.fast,
+      });
+      return result;
     } catch (err) {
       if (!staffToken() || opts?.fast) throw err;
-      console.warn("[Goyal CRM] partner /eoi/leads failed, trying staff /leads", err);
+      logger.warn("crm.goyal", "partner /eoi/leads failed, trying staff /leads", undefined, err);
     }
   }
   if (staffToken()) {
-    return listGoyalLeadsStaff(params);
+    const result = await listGoyalLeadsStaff(params);
+    logger.info("crm.goyal", "list leads ok", {
+      via: "staff",
+      count: result.leads?.length ?? 0,
+    });
+    return result;
   }
   throw new GoyalCrmError(
     "Configure EOI_API_KEY (Partner access token for GET /eoi/leads). Optional GOYAL_CRM_API_TOKEN (staff JWT) for book/site-visit.",
@@ -579,7 +591,7 @@ export async function createEoiLeadBestEffort(
       return { lead, via: "webhook" };
     } catch (err) {
       if (!staff) throw err;
-      console.warn("[Goyal CRM] webhook create failed, trying staff", err);
+      logger.warn("crm.goyal", "webhook create failed, trying staff", undefined, err);
     }
   }
 

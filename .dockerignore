@@ -1,0 +1,33 @@
+# Dependencies & build output
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+**/coverage
+**/*.tsbuildinfo
+
+# VCS / editor / CI
+.git
+.github
+.cursor
+.vscode
+.idea
+
+# Secrets — never bake into the image
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.production.example
+!**/.env.example
+
+# Deploy sidecars / noise
+**/*.md
+**/*.test.ts
+**/*.test.tsx
+docker-compose*.yml
+infra
+e2e
+**/playwright-report
+**/test-results

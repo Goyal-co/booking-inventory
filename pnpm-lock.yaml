@@ -23,6 +23,9 @@ importers:
       '@booking/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@booking/pdf':
         specifier: workspace:*
         version: link:../../packages/pdf
@@ -111,6 +114,9 @@ importers:
       '@booking/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@booking/pdf':
         specifier: workspace:*
         version: link:../../packages/pdf
@@ -181,12 +187,18 @@ importers:
       '@booking/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@booking/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@booking/validators':
         specifier: workspace:*
         version: link:../../packages/validators
+      '@goyal/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -251,6 +263,9 @@ importers:
       '@booking/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@booking/pdf':
         specifier: workspace:*
         version: link:../../packages/pdf
@@ -371,6 +386,9 @@ importers:
       '@booking/integrations':
         specifier: workspace:*
         version: link:../integrations
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../logger
       '@booking/pdf':
         specifier: workspace:*
         version: link:../pdf
@@ -423,6 +441,10 @@ importers:
         version: 5.9.3
 
   packages/email:
+    dependencies:
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../logger
     devDependencies:
       '@booking/config-typescript':
         specifier: workspace:*
@@ -448,6 +470,22 @@ importers:
         version: 5.9.3
 
   packages/integrations:
+    dependencies:
+      '@booking/logger':
+        specifier: workspace:*
+        version: link:../logger
+    devDependencies:
+      '@booking/config-typescript':
+        specifier: workspace:*
+        version: link:../config-typescript
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.19
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/logger:
     devDependencies:
       '@booking/config-typescript':
         specifier: workspace:*

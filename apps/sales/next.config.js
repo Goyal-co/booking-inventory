@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
+const path = require("path");
+
 const securityHeaders = [
   { key: "X-DNS-Prefetch-Control", value: "on" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
@@ -7,7 +9,12 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+// Vercel ignores standalone; Docker / ECS / VM need it.
+const useStandalone = !process.env.VERCEL;
+
 const nextConfig = {
+  ...(useStandalone ? { output: "standalone" } : {}),
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@booking/ui",
     "@booking/database",
@@ -15,7 +22,9 @@ const nextConfig = {
     "@booking/realtime",
     "@booking/email",
     "@booking/pdf",
+    "@booking/logger",
     "@goyal/ecosystem-contracts",
+    "@goyal/storage",
   ],
   serverExternalPackages: ["@prisma/client", "bcryptjs"],
   devIndicators: false,
