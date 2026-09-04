@@ -1,11 +1,17 @@
-# Render Blueprint — Neon Postgres + web services
+# Render Blueprint — DEVELOPMENT server (branch: render)
 # Docs: https://render.com/docs/infrastructure-as-code
 #
+# Branch strategy:
+#   master / main  → production (Docker / AWS via compose.yml)
+#   render         → this blueprint (Render free-tier / staging)
+#
 # Before first deploy:
-#   1. Create a Neon database and copy DATABASE_URL (with ?sslmode=require)
-#   2. From your machine: pnpm db:push && pnpm db:bootstrap (see DEPLOY-FREE-TIER.md)
-#   3. Apply this blueprint, then set env vars marked "manual" in the Render dashboard
-#   4. Redeploy after setting public URLs (NEXTAUTH_URL, CUSTOMER_URL, CORS_ORIGINS, etc.)
+#   1. Point the Render Blueprint at the `render` git branch
+#   2. Create a Neon (or Render) Postgres DB and set DATABASE_URL (?sslmode=require)
+#   3. pnpm db:migrate:deploy && pnpm db:bootstrap (from a machine with DATABASE_URL)
+#   4. Set sync:false env vars in the dashboard, then redeploy with public *.onrender.com URLs
+#
+# Health: GET /health?live=1 (liveness) · GET /health (DB + storage readiness)
 
 services:
   - type: web
@@ -21,6 +27,8 @@ services:
         value: "20"
       - key: NODE_ENV
         value: production
+      - key: LOG_LEVEL
+        value: debug
       - key: DATABASE_URL
         sync: false
       - key: WS_INTERNAL_SECRET
@@ -35,23 +43,30 @@ services:
     region: oregon
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter admin build
     startCommand: pnpm --filter admin start
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "20"
       - key: NODE_ENV
         value: production
+      - key: LOG_LEVEL
+        value: debug
       - key: DATABASE_URL
         sync: false
       - key: NEXTAUTH_SECRET
         generateValue: true
       - key: NEXTAUTH_URL
         sync: false
-      # Used only as a fallback for legacy relative document URLs; prefer signed download APIs.
+      - key: ADMIN_URL
+        sync: false
+      - key: SALES_URL
+        sync: false
       - key: CUSTOMER_URL
+        sync: false
+      - key: RECEPTION_URL
         sync: false
       - key: WS_EMIT_URL
         sync: false
-      # Storage: Blob (preferred) or S3 — same as EOI. Do not commit real secrets.
       - key: BLOB_READ_WRITE_TOKEN
         sync: false
       - key: STORAGE_PROVIDER
@@ -69,6 +84,10 @@ services:
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: INTEGRATION_WEBHOOK_SECRET
+        sync: false
+      - key: EOI_CP_URL
         sync: false
       - key: WS_INTERNAL_SECRET
         fromService:
@@ -83,23 +102,31 @@ services:
     region: oregon
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter sales build
     startCommand: pnpm --filter sales start
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "20"
       - key: NODE_ENV
         value: production
+      - key: LOG_LEVEL
+        value: debug
       - key: DATABASE_URL
         sync: false
       - key: NEXTAUTH_SECRET
         generateValue: true
       - key: NEXTAUTH_URL
         sync: false
+      - key: SALES_URL
+        sync: false
+      - key: ADMIN_URL
+        sync: false
+      - key: CUSTOMER_URL
+        sync: false
+      - key: RECEPTION_URL
+        sync: false
       - key: NEXT_PUBLIC_WS_URL
         sync: false
       - key: WS_EMIT_URL
-        sync: false
-      # Required for booking emails — set to customer service public URL after first deploy
-      - key: CUSTOMER_URL
         sync: false
       - key: BREVO_API_KEY
         sync: false
@@ -107,6 +134,20 @@ services:
         sync: false
       - key: EMAIL_FROM_NAME
         sync: false
+      - key: BLOB_READ_WRITE_TOKEN
+        sync: false
+      - key: STORAGE_PROVIDER
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: ap-south-1
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: TITAN_CRM_PROVIDER
+        value: mock
       - key: WS_INTERNAL_SECRET
         fromService:
           type: web
@@ -120,11 +161,14 @@ services:
     region: oregon
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter customer build
     startCommand: pnpm --filter customer start
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "20"
       - key: NODE_ENV
         value: production
+      - key: LOG_LEVEL
+        value: debug
       - key: DATABASE_URL
         sync: false
       - key: CUSTOMER_URL
@@ -152,4 +196,66 @@ services:
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+  - type: web
+    name: booking-inventory-reception
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter reception build
+    startCommand: pnpm --filter reception start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: debug
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: RECEPTION_URL
+        sync: false
+      - key: SALES_URL
+        sync: false
+      - key: ADMIN_URL
+        sync: false
+      - key: CUSTOMER_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        sync: false
+      - key: GOYAL_CRM_API_URL
+        sync: false
+      - key: EOI_API_KEY
+        sync: false
+      - key: BEARER_AUTHORIZATION
+        sync: false
+      - key: GOYAL_CRM_API_TOKEN
+        sync: false
+      - key: EOI_CP_URL
+        sync: false
+      - key: INTEGRATION_WEBHOOK_SECRET
+        sync: false
+      - key: TITAN_CRM_PROVIDER
+        value: mock
+      - key: BLOB_READ_WRITE_TOKEN
+        sync: false
+      - key: STORAGE_PROVIDER
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: ap-south-1
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
         sync: false
