@@ -535,11 +535,12 @@ export async function POST_leadSiteVisitOtpSend(
     subject,
     html,
   });
-  if (!emailResult.success) {
+  // Never claim "sent" for mock mode — customer inbox never receives anything.
+  if (!emailResult.success || emailResult.mocked) {
     return NextResponse.json(
       {
         error: emailResult.mocked
-          ? "Email not sent — BREVO_API_KEY not loaded on reception"
+          ? "Email not sent — BREVO_API_KEY not loaded on reception. Set it in apps/reception/.env.local and restart the server."
           : emailResult.error || "Failed to send OTP email",
         ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
       },
@@ -550,6 +551,7 @@ export async function POST_leadSiteVisitOtpSend(
   return NextResponse.json({
     sent: true,
     email: lead.customerEmail,
+    messageId: emailResult.id,
     ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
   });
 }
@@ -1119,10 +1121,12 @@ export async function POST_eoiSiteVisitOtpSend(
     purpose: "SITE_VISIT",
   });
   const emailResult = await sendEmail({ to: email, subject, html });
-  if (!emailResult.success) {
+  if (!emailResult.success || emailResult.mocked) {
     return NextResponse.json(
       {
-        error: emailResult.error || "Failed to send OTP email",
+        error: emailResult.mocked
+          ? "Email not sent — BREVO_API_KEY not loaded on reception. Set it in apps/reception/.env.local and restart the server."
+          : emailResult.error || "Failed to send OTP email",
         ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
       },
       { status: 502 },
@@ -1131,6 +1135,7 @@ export async function POST_eoiSiteVisitOtpSend(
   return NextResponse.json({
     sent: true,
     email,
+    messageId: emailResult.id,
     ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
   });
 }

@@ -1002,10 +1002,12 @@ export async function POST_directLeadBookOtpSend(
     purpose: "DIRECT_BOOKING",
   });
   const emailResult = await sendEmail({ to: lead.customerEmail, subject, html });
-  if (!emailResult.success) {
+  if (!emailResult.success || emailResult.mocked) {
     return NextResponse.json(
       {
-        error: emailResult.error || "Failed to send OTP email",
+        error: emailResult.mocked
+          ? "Email not sent — BREVO_API_KEY not loaded on sales. Set it in apps/sales/.env.local and restart the server."
+          : emailResult.error || "Failed to send OTP email",
         ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
       },
       { status: 502 },
@@ -1014,6 +1016,7 @@ export async function POST_directLeadBookOtpSend(
   return NextResponse.json({
     sent: true,
     email: lead.customerEmail,
+    messageId: emailResult.id,
     ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
   });
 }

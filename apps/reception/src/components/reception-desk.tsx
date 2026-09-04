@@ -314,6 +314,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [partnerOptions, setPartnerOptions] = useState<PartnerOption[]>([]);
   const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
+  /** Which match the receptionist is acting on — partner portal row or CRM row. */
+  const [selectedKind, setSelectedKind] = useState<"partner" | "crm">("partner");
+  const [selectedCrmId, setSelectedCrmId] = useState("");
   const [assignSalesId, setAssignSalesId] = useState("");
   const [siteVisitOtp, setSiteVisitOtp] = useState("");
   const [otpSending, setOtpSending] = useState(false);
@@ -418,8 +421,20 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     setSelectedPartnerKey(
       nextPartners[0] ? partnerOptionKey(nextPartners[0]) : nextLeads[0]?.cpId ?? ""
     );
-    setSelectedLeadId(nextLeads[0]?.id ?? "");
+    setSelectedLeadId(nextLeads[0]?.id ?? nextPartners[0]?.leadId ?? "");
+    if (nextPartners.length > 0) {
+      setSelectedKind("partner");
+      setSelectedCrmId("");
+    } else if (nextGoyal.length > 0) {
+      setSelectedKind("crm");
+      setSelectedCrmId(String(nextGoyal[0].id || nextGoyal[0].leadCode || ""));
+    } else {
+      setSelectedKind("partner");
+      setSelectedCrmId("");
+    }
     setAssignSalesId("");
+    setSiteVisitOtp("");
+    setEoiAssignOtp("");
 
     if (nextScenario === "not_found") {
       const digits = query.replace(/\D/g, "");
@@ -583,7 +598,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
   const sendLeadOtp = async (leadId: string) => {
     if (!leadId) {
-      toast.error("Resolve the visitor lead first, then send OTP");
+      toast.error("Select a lead first, then send OTP");
       return;
     }
     setOtpSending(true);
@@ -597,6 +612,40 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       }
       toast.success(`OTP sent to ${d.email || "customer"}`);
       if (typeof d.devOtp === "string") setSiteVisitOtp(d.devOtp);
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const sendCrmLeadOtp = async (crmLead: EoiLead) => {
+    if (!crmLead?.id) {
+      toast.error("Select a CRM lead first");
+      return;
+    }
+    setOtpSending(true);
+    try {
+      const res = await fetch(`/api/eoi/leads/${crmLead.id}/otp/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: crmLead.email || undefined,
+          projectName: crmLead.projectName || undefined,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof d.error === "string" ? d.error : "Could not send OTP");
+        if (typeof d.devOtp === "string") {
+          setSiteVisitOtp(d.devOtp);
+          setEoiAssignOtp(d.devOtp);
+        }
+        return;
+      }
+      toast.success(`OTP sent to ${d.email || "customer"}`);
+      if (typeof d.devOtp === "string") {
+        setSiteVisitOtp(d.devOtp);
+        setEoiAssignOtp(d.devOtp);
+      }
     } finally {
       setOtpSending(false);
     }
@@ -684,7 +733,121 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     return d.lead as { id: string; leadId: string };
   };
 
+  /** Materialize selected EOI/Titan row if needed, then send OTP — never block on "resolve first". */
+  const sendOtpForSelection = async () => {
+    if (selectedKind === "crm") {
+      const crm =
+        goyalEoiHits.find((l) => String(l.id || l.leadCode) === selectedCrmId) ||
+        goyalEoiHits[0];
+      if (!crm) {
+        toast.error("Select a CRM lead first");
+        return;
+      }
+      await sendCrmLeadOtp(crm);
+      return;
+    }
+
+    const opt =
+      partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey) ||
+      partnerOptions[0];
+    let leadId =
+      selectedLeadId ||
+      opt?.leadId ||
+      leads.find((l) => l.eoiCpLeadId && l.eoiCpLeadId === opt?.eoiCpLeadId)?.id ||
+      leads[0]?.id ||
+      "";
+
+    if (!leadId && opt?.eoiCpLeadId && opt.publicLeadId) {
+      const created = await materializeFromEoi({
+        cpId: opt.cpId,
+        partnerName: opt.partnerName,
+        publicLeadId: opt.publicLeadId,
+        eoiCpLeadId: opt.eoiCpLeadId,
+        projectId: opt.projectId,
+        projectName: opt.projectName,
+        tag: opt.tag,
+      });
+      if (!created) return;
+      leadId = created.id;
+      setSelectedLeadId(leadId);
+    } else if (!leadId && titanResult?.found) {
+      const created = await materializeFromTitan({
+        cpId: opt?.cpId,
+        partnerName: opt?.partnerName,
+        publicLeadId: opt?.publicLeadId || String(titanResult.leadId ?? ""),
+        tag: opt?.tag,
+      });
+      if (!created) return;
+      leadId = created.id;
+      setSelectedLeadId(leadId);
+    }
+
+    if (!leadId) {
+      toast.error("Select a Partner Portal or CRM lead first");
+      return;
+    }
+    await sendLeadOtp(leadId);
+  };
+
   const confirmAndAssign = async () => {
+    if (selectedKind === "crm") {
+      const crm =
+        goyalEoiHits.find((l) => String(l.id || l.leadCode) === selectedCrmId) ||
+        goyalEoiHits[0];
+      if (!crm) {
+        toast.error("Select a CRM lead first");
+        return;
+      }
+      if (!assignSalesId) {
+        toast.error("Select a salesperson");
+        return;
+      }
+      if (!/^\d{6}$/.test(siteVisitOtp)) {
+        toast.error("Enter the 6-digit OTP sent to the customer");
+        return;
+      }
+      setAssignLead(crm);
+      setEoiAssignSalesId(assignSalesId);
+      setEoiAssignOtp(siteVisitOtp);
+      // Reuse CRM assign API directly
+      setAssignBusy(true);
+      try {
+        const res = await fetch(`/api/eoi/leads/${crm.id}/assign`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            salesUserId: assignSalesId,
+            otp: siteVisitOtp,
+            fullName: crm.fullName || undefined,
+            phone: crm.phone || undefined,
+            email: crm.email || undefined,
+            projectName: crm.projectName || undefined,
+            leadCode: crm.leadCode || undefined,
+          }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast.error(typeof d.error === "string" ? d.error : "Assign failed");
+          return;
+        }
+        toast.success(
+          d.crmSynced
+            ? `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
+            : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"}`
+        );
+        if (!d.crmSynced && typeof d.crmError === "string" && d.crmError) {
+          toast.warning("CRM site-visit not synced", { description: d.crmError });
+        }
+        setSiteVisitOtp("");
+        setAssignSalesId("");
+        await searchLocal();
+        await refreshVisits();
+      } finally {
+        setAssignBusy(false);
+      }
+      return;
+    }
+
     if (!assignSalesId) {
       toast.error("Select a salesperson");
       return;
@@ -1267,21 +1430,54 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               </div>
             )}
 
-            {searched && scenario === "found_multi_partner" && (
+            {searched &&
+              (partnerOptions.length > 0 ||
+                goyalEoiHits.length > 0 ||
+                scenario === "found_single" ||
+                scenario === "found_multi_partner" ||
+                scenario === "found_goyal_eoi") &&
+              (partnerOptions.length > 0 ||
+                goyalEoiHits.length > 0 ||
+                leads.length > 0 ||
+                titanResult?.found === true ||
+                Boolean(eoiIdentityHint)) && (
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <StepLabel step={1} title="Which project are they here for?" />
+                <StepLabel step={1} title="Select which lead to proceed with" />
                 <p className="mb-4 text-sm text-gray-500">
-                  {partnerOptions.length} project
-                  {partnerOptions.length === 1 ? "" : "s"} found for this visitor. Select the one
-                  for today&apos;s visit.
+                  Partner Portal and CRM matches are listed separately. Select one, then send OTP
+                  and check in.
                 </p>
                 <div className="space-y-2">
-                  {partnerOptions.map((p) => {
+                  {(partnerOptions.length > 0
+                    ? partnerOptions
+                    : leads.length > 0 || titanResult?.found || eoiIdentityHint
+                      ? [
+                          {
+                            key: "fallback",
+                            leadId: leads[0]?.id ?? null,
+                            publicLeadId: leads[0]?.leadId ?? String(titanResult?.leadId ?? eoiIdentityHint?.leadId ?? ""),
+                            cpId: leads[0]?.cpId ?? partnerOptions[0]?.cpId ?? "",
+                            partnerName:
+                              leads[0]?.visitingCp?.partnerName ||
+                              "No partner on file",
+                            submittedAt: "",
+                            source: leads[0]?.source ?? "LOCAL",
+                            projectName: leads[0]?.project?.name,
+                            projectId: undefined,
+                            eoiCpLeadId: leads[0]?.eoiCpLeadId ?? undefined,
+                          } satisfies PartnerOption,
+                        ]
+                      : []
+                  ).map((p) => {
                     const key = partnerOptionKey(p);
-                    const selected = selectedPartnerKey === key;
+                    const selected =
+                      selectedKind === "partner" &&
+                      (partnerOptions.length <= 1
+                        ? selectedPartnerKey === key || !selectedPartnerKey
+                        : selectedPartnerKey === key);
                     return (
                       <label
-                        key={key}
+                        key={`partner-${key}`}
                         className={`block cursor-pointer rounded-xl border p-4 transition ${
                           selected
                             ? "border-gray-900 bg-gray-50 ring-1 ring-gray-900"
@@ -1292,15 +1488,19 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                           <input
                             type="radio"
                             className="mt-1"
-                            name="visiting-partner-project"
+                            name="visit-match"
                             checked={selected}
                             onChange={() => {
+                              setSelectedKind("partner");
                               setSelectedPartnerKey(key);
+                              setSelectedCrmId("");
                               if (p.leadId) setSelectedLeadId(p.leadId);
+                              else setSelectedLeadId("");
                             }}
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
+                              <StatusChip tone="info">Partner Portal</StatusChip>
                               <p className="text-base font-semibold text-gray-900">
                                 {p.projectName || p.tag || "Project not specified"}
                               </p>
@@ -1314,9 +1514,18 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                             </div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
                               <FieldRow label="Channel partner" value={p.partnerName} />
+                              <FieldRow label="Lead ID" value={p.publicLeadId || leads[0]?.leadId} />
                               <FieldRow
                                 label="Punched on"
-                                value={formatStamp(p.submittedAt)}
+                                value={p.submittedAt ? formatStamp(p.submittedAt) : undefined}
+                              />
+                              <FieldRow
+                                label="Source"
+                                value={
+                                  p.source === "CHANNEL_PARTNER"
+                                    ? "Partner Portal (EOI_CP)"
+                                    : p.source || undefined
+                                }
                               />
                             </div>
                           </div>
@@ -1324,192 +1533,11 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       </label>
                     );
                   })}
-                </div>
-                <SalesAssignRow
-                  value={assignSalesId}
-                  onChange={setAssignSalesId}
-                  sales={sales}
-                  onConfirm={() => void confirmAndAssign()}
-                  confirmLabel="Check in visitor"
-                  disabled={!selectedPartnerKey}
-                  otp={siteVisitOtp}
-                  onOtpChange={setSiteVisitOtp}
-                  otpSending={otpSending}
-                  onSendOtp={() => {
-                    const leadId =
-                      selectedLeadId
-                      || partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey)?.leadId
-                      || leads[0]?.id
-                      || "";
-                    void sendLeadOtp(leadId);
-                  }}
-                />
-              </div>
-            )}
 
-            {searched && goyalEoiHits.length > 0 && scenario !== "found_goyal_eoi" && (
-              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <h3 className="text-sm font-semibold text-gray-900">Also found in CRM</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  Optional — assign from CRM if this is a Goyal CRM EOI lead.
-                </p>
-                <ul className="mt-3 space-y-2">
-                  {goyalEoiHits.map((l) => (
-                    <li
-                      key={String(l.id || l.leadCode)}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 px-3 py-2.5 text-sm"
-                    >
-                      <div>
-                        <p className="font-medium text-gray-900">{l.fullName || "—"}</p>
-                        <p className="text-xs text-gray-500">
-                          {l.leadCode || l.id}
-                          {l.projectName ? ` · ${l.projectName}` : ""}
-                          {l.phone ? ` · ${l.phone}` : ""}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setAssignLead(l);
-                          setEoiAssignSalesId("");
-                          setAssignOpen(true);
-                        }}
-                      >
-                        Assign from CRM
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {searched &&
-              scenario === "found_single" &&
-              (leads.length > 0 ||
-                titanResult?.found === true ||
-                Boolean(eoiIdentityHint) ||
-                partnerOptions.length > 0) && (
-              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <StepLabel step={1} title="Confirm today’s visit details" />
-                <div className="mt-1 space-y-3">
-                  {(partnerOptions.length > 0
-                    ? partnerOptions
-                    : [
-                        {
-                          key: "fallback",
-                          leadId: leads[0]?.id ?? null,
-                          publicLeadId: leads[0]?.leadId ?? "",
-                          cpId: leads[0]?.cpId ?? "",
-                          partnerName:
-                            leads[0]?.visitingCp?.partnerName ||
-                            "No partner on file",
-                          submittedAt: "",
-                          source: leads[0]?.source ?? "",
-                          projectName: leads[0]?.project?.name,
-                          projectId: undefined,
-                          eoiCpLeadId: leads[0]?.eoiCpLeadId ?? undefined,
-                        } satisfies PartnerOption,
-                      ]
-                  ).map((p) => {
-                    const key = partnerOptionKey(p);
-                    const selected =
-                      partnerOptions.length <= 1 || selectedPartnerKey === key;
-                    return (
-                      <div
-                        key={key}
-                        className={`rounded-xl border p-4 ${
-                          selected
-                            ? "border-gray-900 bg-gray-50"
-                            : "border-gray-200"
-                        }`}
-                      >
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <FieldRow
-                            label="Project"
-                            value={p.projectName || p.tag || leads[0]?.project?.name || "—"}
-                          />
-                          <FieldRow label="Channel partner" value={p.partnerName} />
-                          <FieldRow label="Lead ID" value={p.publicLeadId || leads[0]?.leadId} />
-                          <FieldRow
-                            label="Source"
-                            value={
-                              p.source === "CHANNEL_PARTNER"
-                                ? "Partner Portal"
-                                : p.source || leads[0]?.source || undefined
-                            }
-                          />
-                        </div>
-                        {leads[0]?.todaySiteVisit ? (
-                          <p className="mt-3 text-xs text-gray-500">
-                            Already checked in today
-                            {leads[0].todaySiteVisit.salesUser?.name
-                              ? ` · ${leads[0].todaySiteVisit.salesUser.name}`
-                              : ""}{" "}
-                            · {formatStamp(leads[0].todaySiteVisit.checkedInAt)}
-                          </p>
-                        ) : null}
-                        {leads.length > 1 ? (
-                          <label className="mt-3 flex items-center gap-2 text-xs text-gray-600">
-                            <input
-                              type="radio"
-                              name="single-lead"
-                              checked={selectedLeadId === (p.leadId || "")}
-                              onChange={() => {
-                                if (p.leadId) setSelectedLeadId(p.leadId);
-                                setSelectedPartnerKey(key);
-                              }}
-                            />
-                            Use this record
-                          </label>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-
-                  {leads.length > 0 && leads[0]?.visitHistory && leads[0].visitHistory.length > 0 ? (
-                    <details className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
-                      <summary className="cursor-pointer text-xs font-medium text-gray-700">
-                        Previous site visits ({leads[0].visitHistory.length})
-                      </summary>
-                      <ul className="mt-2 space-y-1.5">
-                        {leads[0].visitHistory.slice(0, 5).map((v) => (
-                          <li key={v.id} className="text-xs text-gray-600">
-                            {formatStamp(v.checkedInAt)}
-                            {v.projectName ? ` · ${v.projectName}` : ""}
-                            {v.visitingCpName ? ` · ${v.visitingCpName}` : ""}
-                            {v.salesUserName ? ` · ${v.salesUserName}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-                </div>
-                <SalesAssignRow
-                  value={assignSalesId}
-                  onChange={setAssignSalesId}
-                  sales={sales}
-                  onConfirm={() => void confirmAndAssign()}
-                  confirmLabel="Check in visitor"
-                  otp={siteVisitOtp}
-                  onOtpChange={setSiteVisitOtp}
-                  otpSending={otpSending}
-                  onSendOtp={() => {
-                    const leadId = selectedLeadId || leads[0]?.id || "";
-                    void sendLeadOtp(leadId);
-                  }}
-                />
-              </div>
-            )}
-
-            {searched && scenario === "found_goyal_eoi" && (
-              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <StepLabel step={1} title="CRM lead found — assign to sales" />
-                <p className="mb-4 text-sm text-gray-500">
-                  Matched in Goyal CRM from your search. Assign a salesperson to continue.
-                </p>
-                <ul className="space-y-3">
                   {goyalEoiHits.map((l) => {
+                    const crmKey = String(l.id || l.leadCode);
+                    const selected =
+                      selectedKind === "crm" && selectedCrmId === crmKey;
                     const cpHint =
                       (typeof l.sourceOfEnquiry === "string" && l.sourceOfEnquiry) ||
                       (typeof (l as EoiLead & { channelPartner?: string }).channelPartner ===
@@ -1517,34 +1545,91 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                         (l as EoiLead & { channelPartner?: string }).channelPartner) ||
                       null;
                     return (
-                      <li
-                        key={String(l.id || l.leadCode)}
-                        className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-200 p-4"
+                      <label
+                        key={`crm-${crmKey}`}
+                        className={`block cursor-pointer rounded-xl border p-4 transition ${
+                          selected
+                            ? "border-gray-900 bg-gray-50 ring-1 ring-gray-900"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
                       >
-                        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
-                          <FieldRow label="Name" value={l.fullName || "—"} />
-                          <FieldRow label="Mobile" value={l.phone || "—"} />
-                          <FieldRow label="Lead" value={l.leadCode || l.id} />
-                          <FieldRow label="Project" value={l.projectName || "—"} />
-                          <FieldRow label="Partner / source" value={cpHint || "Not on CRM lead"} />
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          {l.booked ? <StatusChip tone="ok">Already booked</StatusChip> : null}
-                          <Button
-                            size="sm"
-                            onClick={() => {
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="radio"
+                            className="mt-1"
+                            name="visit-match"
+                            checked={selected}
+                            onChange={() => {
+                              setSelectedKind("crm");
+                              setSelectedCrmId(crmKey);
+                              setSelectedPartnerKey("");
+                              setSelectedLeadId("");
                               setAssignLead(l);
-                              setEoiAssignSalesId("");
-                              setAssignOpen(true);
                             }}
-                          >
-                            Assign to sales
-                          </Button>
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <StatusChip>Goyal CRM</StatusChip>
+                              <p className="text-base font-semibold text-gray-900">
+                                {l.fullName || "CRM lead"}
+                              </p>
+                              {l.booked ? <StatusChip tone="ok">Already booked</StatusChip> : null}
+                            </div>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              <FieldRow label="Lead" value={l.leadCode || l.id} />
+                              <FieldRow label="Project" value={l.projectName || "—"} />
+                              <FieldRow label="Mobile" value={l.phone || "—"} />
+                              <FieldRow label="Email" value={l.email || "—"} />
+                              <FieldRow label="Partner / source" value={cpHint || "Not on CRM lead"} />
+                            </div>
+                          </div>
                         </div>
-                      </li>
+                      </label>
                     );
                   })}
-                </ul>
+                </div>
+
+                {leads.length > 0 && leads[0]?.visitHistory && leads[0].visitHistory.length > 0 ? (
+                  <details className="mt-3 rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                    <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                      Previous site visits ({leads[0].visitHistory.length})
+                    </summary>
+                    <ul className="mt-2 space-y-1.5">
+                      {leads[0].visitHistory.slice(0, 5).map((v) => (
+                        <li key={v.id} className="text-xs text-gray-600">
+                          {formatStamp(v.checkedInAt)}
+                          {v.projectName ? ` · ${v.projectName}` : ""}
+                          {v.visitingCpName ? ` · ${v.visitingCpName}` : ""}
+                          {v.salesUserName ? ` · ${v.salesUserName}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+
+                <SalesAssignRow
+                  value={assignSalesId}
+                  onChange={setAssignSalesId}
+                  sales={sales}
+                  onConfirm={() => void confirmAndAssign()}
+                  confirmLabel={
+                    selectedKind === "crm" ? "Assign CRM lead" : "Check in visitor"
+                  }
+                  disabled={
+                    selectedKind === "partner"
+                      ? !(selectedPartnerKey || partnerOptions.length === 1 || leads[0])
+                      : !selectedCrmId
+                  }
+                  otp={siteVisitOtp}
+                  onOtpChange={setSiteVisitOtp}
+                  otpSending={otpSending}
+                  otpHint={
+                    selectedKind === "crm"
+                      ? "OTP goes to the CRM lead email."
+                      : "OTP goes to the Partner Portal / local lead email."
+                  }
+                  onSendOtp={() => void sendOtpForSelection()}
+                />
               </div>
             )}
 
