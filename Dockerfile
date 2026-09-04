@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1.7
-# Production image for AWS ECS / EC2 / Compose.
-# Build from Booking_Inventory root:
-#   docker build --build-arg APP=sales -t goyal-booking-sales .
-#   docker build --build-arg APP=admin -t goyal-booking-admin .
-#   docker build --build-arg APP=customer -t goyal-booking-customer .
-#   docker build --build-arg APP=reception -t goyal-booking-reception .
-#   docker run --env-file .env.production -p 3000:3000 -e APP=sales goyal-booking-sales
+# Single Dockerfile for all Booking_Inventory services.
+# Build from repo root:
+#   docker build --target app --build-arg APP=sales -t goyal-booking-sales .
+#   docker build --target app --build-arg APP=admin -t goyal-booking-admin .
+#   docker build --target app --build-arg APP=customer -t goyal-booking-customer .
+#   docker build --target app --build-arg APP=reception -t goyal-booking-reception .
+#   docker build --target ws -t goyal-booking-ws .
 #
-# Runtime env (DATABASE_URL, S3_*/BLOB_*, NEXTAUTH_*, …) is injected at run time.
-# Do not COPY .env.production into the image.
+# Prefer: docker compose up --build -d  (see compose.yml)
+# Runtime secrets come from `.env` — never COPY them into the image.
 
 ARG NODE_VERSION=20
 ARG APP=sales
@@ -43,26 +43,54 @@ COPY packages/config-tailwind/package.json packages/config-tailwind/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
-# --- build Next standalone ---
-FROM base AS builder
+# --- full workspace + prisma generate ---
+FROM base AS workspace
+COPY --from=deps /app/ ./
+COPY . .
+RUN pnpm install --frozen-lockfile \
+  && pnpm --filter @booking/database db:generate
+
+# --- Next.js standalone build ---
+FROM workspace AS next-builder
 ARG APP=sales
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NODE_OPTIONS=--max-old-space-size=4096 \
     APP=${APP}
-COPY --from=deps /app/ ./
-COPY . .
-RUN pnpm install --frozen-lockfile \
-  && pnpm --filter @booking/database db:generate \
-  && pnpm --filter ${APP} build \
+RUN pnpm --filter ${APP} build \
   && test -f "apps/${APP}/.next/standalone/apps/${APP}/server.js"
 
-# Prisma CLI for migrate deploy at boot
+# Prisma CLI for migrate / bootstrap at boot (Next apps)
 FROM base AS prisma-boot
 WORKDIR /prisma-cli
 RUN npm install prisma@6.1.0 bcryptjs@2.4.3 --ignore-scripts --no-audit --no-fund
 
-# --- runtime ---
-FROM base AS runner
+# =============================================================================
+# target: ws  — realtime + expiry worker
+# =============================================================================
+FROM base AS ws
+ENV NODE_ENV=production \
+    PORT=3002 \
+    WS_PORT=3002 \
+    HOSTNAME=0.0.0.0
+RUN apk add --no-cache tini wget ca-certificates \
+  && addgroup -S nodejs \
+  && adduser -S nodejs -G nodejs
+COPY --from=workspace --chown=nodejs:nodejs /app ./
+COPY certs/ap-south-1-bundle.pem /ap-south-1-bundle.pem
+RUN chmod 644 /ap-south-1-bundle.pem
+USER nodejs
+WORKDIR /app
+EXPOSE 3002
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:3002/health?live=1" || exit 1
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["pnpm", "--filter", "ws-server", "start"]
+
+# =============================================================================
+# target: app  — sales | admin | customer | reception (default)
+# =============================================================================
+FROM base AS app
 ARG APP=sales
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -74,20 +102,19 @@ RUN apk add --no-cache tini wget ca-certificates \
   && adduser -S nextjs -G nodejs \
   && mkdir -p /app/storage \
   && chown nextjs:nodejs /app/storage
-COPY --from=builder --chown=nextjs:nodejs /app/apps/${APP}/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/apps/${APP}/.next/static ./apps/${APP}/.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/apps/${APP}/public ./apps/${APP}/public
+COPY --from=next-builder --chown=nextjs:nodejs /app/apps/${APP}/.next/standalone ./
+COPY --from=next-builder --chown=nextjs:nodejs /app/apps/${APP}/.next/static ./apps/${APP}/.next/static
+COPY --from=next-builder --chown=nextjs:nodejs /app/apps/${APP}/public ./apps/${APP}/public
 COPY --chown=nextjs:nodejs scripts/docker-start.cjs ./docker-start.cjs
 COPY --chown=nextjs:nodejs scripts/docker-bootstrap.cjs ./docker-bootstrap.cjs
 COPY certs/ap-south-1-bundle.pem /ap-south-1-bundle.pem
 COPY --from=prisma-boot --chown=nextjs:nodejs /prisma-cli/node_modules/ ./node_modules/
-COPY --from=builder --chown=nextjs:nodejs /app/packages/database/prisma ./packages/database/prisma
+COPY --from=next-builder --chown=nextjs:nodejs /app/packages/database/prisma ./packages/database/prisma
 RUN chmod 644 /ap-south-1-bundle.pem \
   && chmod -R a+rX /app/node_modules/prisma /app/node_modules/@prisma /app/node_modules/bcryptjs /app/packages/database
 USER nextjs
 EXPOSE 3000
 STOPSIGNAL SIGTERM
-# Liveness only. Full GET /health checks database + blob/S3.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD wget -qO- "http://127.0.0.1:3000/health?live=1" || exit 1
 ENTRYPOINT ["/sbin/tini", "--"]

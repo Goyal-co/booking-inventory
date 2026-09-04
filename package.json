@@ -24,12 +24,8 @@
     "dev:reception": "turbo dev --filter=reception",
     "dev:ws:clean": "node scripts/kill-port.js 3002 --wait && turbo dev --filter=ws-server",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
-    "docker:build:sales": "docker build --build-arg APP=sales -t goyal-booking-sales .",
-    "docker:build:admin": "docker build --build-arg APP=admin -t goyal-booking-admin .",
-    "docker:build:customer": "docker build --build-arg APP=customer -t goyal-booking-customer .",
-    "docker:build:reception": "docker build --build-arg APP=reception -t goyal-booking-reception .",
-    "docker:build:ws": "docker build -f Dockerfile.ws -t goyal-booking-ws .",
-    "docker:up": "docker compose -f docker-compose.production.yml --env-file .env.production up --build -d"
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down"
   },
   "devDependencies": {
     "prettier": "^3.4.2",

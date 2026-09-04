@@ -1,6 +1,6 @@
 export type StorageMode = "blob" | "s3" | "local";
 
-/** Same priority as EOI: Vercel Blob → S3/MinIO → local disk (dev). */
+/** Same priority as EOI: Vercel Blob → AWS S3 → local disk (dev). */
 export function getStorageMode(): StorageMode {
   if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) return "blob";
   if (

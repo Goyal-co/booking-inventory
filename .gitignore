@@ -7,8 +7,6 @@ dist
 .env
 .env.*
 !.env.example
-!.env.production.example
-!.env.cloud.example
 .env.local
 .env*.local
 apps/*/.env

@@ -19,13 +19,13 @@ node_modules
 .env.*
 **/.env
 **/.env.*
-!**/.env.production.example
 !**/.env.example
 
 # Deploy sidecars / noise
 **/*.md
 **/*.test.ts
 **/*.test.tsx
+compose.yml
 docker-compose*.yml
 infra
 e2e
