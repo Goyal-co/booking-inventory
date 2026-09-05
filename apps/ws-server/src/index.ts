@@ -7,7 +7,10 @@ import { getProjectRoom, REALTIME_EVENTS } from "@booking/realtime";
 import "./expiry-worker";
 
 const WS_INTERNAL_SECRET = process.env.WS_INTERNAL_SECRET?.trim();
-const corsOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,http://localhost:3001")
+const corsOrigins = (
+  process.env.CORS_ORIGINS ??
+  "https://sales.goyalhariyana.com,https://admin.goyalhariyana.com,https://booking.goyalhariyana.com,https://reception.goyalhariyana.com"
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);

@@ -4,24 +4,37 @@ const MUTED = "#64748B";
 const LIGHT_BG = "#F8F9FB";
 const BORDER = "#E8ECF1";
 
+function stripEnvUrl(raw: string | undefined): string {
+  if (!raw) return "";
+  let v = raw.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v.replace(/\/$/, "");
+}
+
+/**
+ * Public customer-app origin for email assets (logo).
+ * Prefer CUSTOMER_URL only — never SALES_URL (wrong host in booking emails).
+ */
 export function getEmailBaseUrl(): string {
   const fromCustomer =
-    process.env.CUSTOMER_URL?.replace(/\/$/, "") ||
-    process.env.NEXT_PUBLIC_CUSTOMER_URL?.replace(/\/$/, "") ||
-    "";
+    stripEnvUrl(process.env.CUSTOMER_URL) ||
+    stripEnvUrl(process.env.NEXT_PUBLIC_CUSTOMER_URL);
   if (fromCustomer) return fromCustomer;
-  return (
-    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    process.env.SALES_URL?.replace(/\/$/, "") ||
-    "http://localhost:3003"
-  );
+  if (process.env.NODE_ENV === "production") {
+    return "https://booking.goyalhariyana.com";
+  }
+  return "http://localhost:3003";
 }
 
 export function getEmailLogoUrl(): string {
-  return (
-    process.env.EMAIL_LOGO_URL?.trim() ||
-    `${getEmailBaseUrl()}/new_logo.jpeg`
-  );
+  const explicit = stripEnvUrl(process.env.EMAIL_LOGO_URL);
+  if (explicit) return explicit;
+  return `${getEmailBaseUrl()}/new_logo.jpeg`;
 }
 
 export function emailShell(body: string): string {

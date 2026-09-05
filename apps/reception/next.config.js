@@ -15,4 +15,10 @@ module.exports = {
     "@goyal/storage",
   ],
   serverExternalPackages: ["@prisma/client", "bcryptjs"],
+  outputFileTracingIncludes: {
+    "/**": [
+      "../../node_modules/.pnpm/@prisma+client@*/node_modules/.prisma/client/**",
+      "../../node_modules/.pnpm/@prisma+client@*/node_modules/@prisma/client/**",
+    ],
+  },
 };

@@ -39,6 +39,7 @@ import {
   sendBlockNotificationEmail,
   getCustomerBookingUrl,
   getCustomerDashboardUrl,
+  getCustomerBaseUrl,
   listAssignedDirectLeads,
   markDirectLeadBooked,
   generateCustomerOtp,
@@ -890,6 +891,15 @@ export async function POST_block_resendBookingEmail(
     const customerUrl = getCustomerBookingUrl(block.bookingToken);
     const dashboardUrl = getCustomerDashboardUrl(block.bookingToken);
     const project = block.unit.floor.tower.project;
+    const brochureRaw = (project.brochureUrl ?? "").trim();
+    const brochureUrl = !brochureRaw
+      ? undefined
+      : /^https?:\/\//i.test(brochureRaw)
+        ? brochureRaw
+        : new URL(
+            brochureRaw.startsWith("/") ? brochureRaw : `/${brochureRaw}`,
+            `${getCustomerBaseUrl()}/`,
+          ).toString();
 
     let costSheetHtml: string | undefined;
     let costSheetFileName: string | undefined;
@@ -914,7 +924,7 @@ export async function POST_block_resendBookingEmail(
       towerName: block.unit.floor.tower.name,
       bookingUrl: customerUrl,
       dashboardUrl,
-      brochureUrl: project.brochureUrl ?? undefined,
+      brochureUrl,
       costSheetHtml,
       costSheetFileName,
     });

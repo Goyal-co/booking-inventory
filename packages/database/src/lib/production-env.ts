@@ -8,6 +8,8 @@ export const WEAK_SECRETS = new Set([
   "password123",
 ]);
 
+const PROD_CUSTOMER_EXAMPLE = "https://booking.goyalhariyana.com";
+
 /**
  * Next.js Edge middleware often reports NODE_ENV=production even during `next dev`.
  * Treat localhost auth URLs as non-production so local secrets don't break middleware.
@@ -63,13 +65,13 @@ function assertCustomerUrlDistinctFromSales(customerBase: string) {
   if (customerHost && salesHost && customerHost === salesHost) {
     throw new Error(
       `CUSTOMER_URL must point at the customer booking app, not the sales app (${salesBase}). ` +
-        `Set CUSTOMER_URL to your customer service URL (e.g. http://localhost:3003 locally or https://booking-inventory-customer.onrender.com in production).`
+        `Set CUSTOMER_URL to ${PROD_CUSTOMER_EXAMPLE} (or http://localhost:3003 locally).`
     );
   }
 }
 
 /** Strip whitespace and accidental wrapping quotes from Render/dashboard env values. */
-function readEnvUrl(...keys: string[]): string {
+export function readEnvUrl(...keys: string[]): string {
   for (const key of keys) {
     const raw = process.env[key];
     if (raw == null) continue;
@@ -87,7 +89,8 @@ function readEnvUrl(...keys: string[]): string {
 
 /**
  * Public base URL for the customer booking app (no trailing slash).
- * Must be set on the **sales** Render service (emails are sent from sales).
+ * Used in booking-form / dashboard links inside emails (sent from sales).
+ * Must be CUSTOMER_URL — never SALES_URL / ADMIN_URL.
  */
 export function getCustomerBaseUrl(): string {
   const base = readEnvUrl("CUSTOMER_URL", "NEXT_PUBLIC_CUSTOMER_URL");
@@ -98,7 +101,7 @@ export function getCustomerBaseUrl(): string {
       ? `got "${base}"`
       : "CUSTOMER_URL is empty/missing on this service";
     throw new Error(
-      `CUSTOMER_URL must be set on the sales service to your deployed customer app URL (e.g. https://booking-inventory-customer.onrender.com). ${seen}. After saving in Render → Environment, click Manual Deploy (or Restart) on sales.`
+      `CUSTOMER_URL must be set on the sales service to the public customer app URL (${PROD_CUSTOMER_EXAMPLE}). ${seen}.`
     );
   }
 
@@ -124,10 +127,12 @@ export function getCustomerUrlStatus() {
   };
 }
 
+/** Absolute booking-form link for emails / redirects. */
 export function getCustomerBookingUrl(bookingToken: string): string {
   return `${getCustomerBaseUrl()}/booking/${bookingToken}`;
 }
 
+/** Absolute customer dashboard link for emails / redirects. */
 export function getCustomerDashboardUrl(bookingToken: string): string {
-  return `${getCustomerBaseUrl()}/dashboard?token=${bookingToken}`;
+  return `${getCustomerBaseUrl()}/dashboard?token=${encodeURIComponent(bookingToken)}`;
 }

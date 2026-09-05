@@ -20,7 +20,7 @@ export function useRealtime(projectId: string | null): UseRealtimeReturn {
   useEffect(() => {
     if (!projectId) return;
 
-    const url = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3002";
+    const url = process.env.NEXT_PUBLIC_WS_URL || "https://ws.goyalhariyana.com";
     const socket = io(url, {
       transports: ["websocket", "polling"],
       reconnection: true,

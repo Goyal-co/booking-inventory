@@ -27,6 +27,13 @@ const nextConfig = {
     "@goyal/storage",
   ],
   serverExternalPackages: ["@prisma/client", "bcryptjs"],
+  // Ensure musl Prisma query engine is copied into Next standalone output.
+  outputFileTracingIncludes: {
+    "/**": [
+      "../../node_modules/.pnpm/@prisma+client@*/node_modules/.prisma/client/**",
+      "../../node_modules/.pnpm/@prisma+client@*/node_modules/@prisma/client/**",
+    ],
+  },
   devIndicators: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

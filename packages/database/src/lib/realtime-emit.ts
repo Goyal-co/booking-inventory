@@ -8,7 +8,7 @@ export type RealtimeEventType =
   | "booking:rejected"
   | "activity:new";
 
-const WS_URL = process.env.WS_EMIT_URL || "http://localhost:3002";
+const WS_URL = process.env.WS_EMIT_URL || "http://ws:3002";
 const WS_INTERNAL_SECRET = process.env.WS_INTERNAL_SECRET?.trim();
 
 export async function emitRealtimeEvent(

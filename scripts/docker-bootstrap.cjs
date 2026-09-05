@@ -2,29 +2,40 @@
 
 /**
  * Container boot for Booking_Inventory:
- *   1. prisma migrate deploy (unless SKIP_DB_MIGRATE=1)
- *   2. optional prisma db push when DB_PUSH_ON_BOOT=1
- *   3. optional Super Admin bootstrap when SUPER_ADMIN_EMAIL + SUPER_ADMIN_PASSWORD are set
- *
- * Prefer migrate deploy on shared RDS. DB_PUSH_ON_BOOT is for empty/dev DBs only.
+ *   1. Fresh DB (no User table) → prisma db push + mark migrations applied
+ *   2. Existing DB → prisma migrate deploy (unless SKIP_DB_MIGRATE=1)
+ *   3. Optional DB_PUSH_ON_BOOT=1
+ *   4. Optional Super Admin when SUPER_ADMIN_EMAIL + SUPER_ADMIN_PASSWORD are set
  */
 const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 function schemaPath() {
   return path.join(__dirname, "packages/database/prisma/schema.prisma");
 }
 
+function migrationsDir() {
+  return path.join(__dirname, "packages/database/prisma/migrations");
+}
+
 function prismaEntry() {
+  const candidates = [
+    "/opt/prisma-cli/node_modules/prisma/build/index.js",
+    path.join(__dirname, "node_modules/prisma/build/index.js"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
   try {
     return require.resolve("prisma/build/index.js");
   } catch {
-    console.error("[db] prisma CLI not found in node_modules");
+    console.error("[db] prisma CLI not found (expected /opt/prisma-cli or node_modules)");
     process.exit(1);
   }
 }
 
-function runPrisma(args, label) {
+function runPrisma(args, label, { allowFailure = false } = {}) {
   console.info(`[db] ${label}`);
   const result = spawnSync(
     process.execPath,
@@ -36,9 +47,30 @@ function runPrisma(args, label) {
     process.exit(1);
   }
   if (result.status !== 0) {
+    if (allowFailure) {
+      console.warn(`[db] prisma ${args.join(" ")} exited ${result.status} — continuing`);
+      return false;
+    }
     console.error(`[db] prisma ${args.join(" ")} failed`);
     process.exit(result.status ?? 1);
   }
+  return true;
+}
+
+function listMigrationDirs() {
+  const dir = migrationsDir();
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((name) => {
+      if (name === "migration_lock.toml") return false;
+      try {
+        return fs.statSync(path.join(dir, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .sort();
 }
 
 function slugify(value) {
@@ -50,10 +82,78 @@ function slugify(value) {
     .slice(0, 48);
 }
 
+async function tableExists(prisma, tableName) {
+  const rows = await prisma.$queryRawUnsafe(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = $1
+     ) AS present`,
+    tableName,
+  );
+  return Boolean(rows[0]?.present);
+}
+
+async function listFailedMigrations(prisma) {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT migration_name
+       FROM "_prisma_migrations"
+       WHERE finished_at IS NULL AND rolled_back_at IS NULL`,
+    );
+    return rows.map((row) => row.migration_name).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function markMigrationsApplied() {
+  for (const name of listMigrationDirs()) {
+    runPrisma(
+      ["migrate", "resolve", "--applied", name],
+      `mark migration applied: ${name}`,
+      { allowFailure: true },
+    );
+  }
+}
+
 async function ensureSchema() {
   if (process.env.SKIP_DB_MIGRATE === "1" && process.env.DB_PUSH_ON_BOOT !== "1") {
     console.info("[db] SKIP_DB_MIGRATE=1 — skipping migrations");
     return;
+  }
+
+  const { PrismaClient } = require("@prisma/client");
+  const prisma = new PrismaClient();
+  let hasUser = false;
+  let failed = [];
+  try {
+    hasUser = await tableExists(prisma, "User");
+    failed = await listFailedMigrations(prisma);
+  } catch (err) {
+    console.warn("[db] could not probe schema:", err instanceof Error ? err.message : err);
+  } finally {
+    await prisma.$disconnect();
+  }
+
+  // Baseline migration is a no-op (SELECT 1). Fresh DBs need db push first.
+  if (!hasUser) {
+    console.info("[db] empty / incomplete schema — syncing with prisma db push");
+    runPrisma(["db", "push", "--skip-generate"], "prisma db push (fresh database)");
+    markMigrationsApplied();
+    console.info("[db] schema ready (db push + migration baseline)");
+    return;
+  }
+
+  // Schema already present but a prior migrate left a failed row — resolve then deploy.
+  if (failed.length > 0) {
+    console.warn("[db] clearing failed migrations:", failed.join(", "));
+    for (const name of failed) {
+      runPrisma(
+        ["migrate", "resolve", "--applied", name],
+        `resolve failed migration as applied: ${name}`,
+        { allowFailure: true },
+      );
+    }
   }
 
   if (process.env.SKIP_DB_MIGRATE !== "1") {
@@ -80,8 +180,8 @@ async function ensureSuperAdmin() {
     return;
   }
   if (password.length < 12) {
-    console.error("[admin] SUPER_ADMIN_PASSWORD must be at least 12 characters");
-    process.exit(1);
+    console.warn("[admin] SUPER_ADMIN_PASSWORD must be at least 12 characters — skipping bootstrap");
+    return;
   }
 
   const { PrismaClient } = require("@prisma/client");

@@ -10,10 +10,13 @@ import {
   emailSupportBlock,
   emailStatsBlock,
   emailFooter,
+  getEmailBaseUrl,
+  getEmailLogoUrl,
   GOLD,
   NAVY,
   MUTED,
 } from "./layout";
+export { getEmailBaseUrl, getEmailLogoUrl };
 import { logger, redactEmail } from "@booking/logger";
 
 export interface EmailAttachment {

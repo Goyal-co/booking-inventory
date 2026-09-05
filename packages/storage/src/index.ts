@@ -5,6 +5,7 @@ import {
   getS3Config,
   getStorageMode,
   isBlobUrl,
+  withStoragePrefix,
   type StorageMode,
 } from "./provider";
 import {
@@ -100,7 +101,8 @@ export function validateBookingDocument(
 
 export function buildObjectKey(folder: string, fileName: string): string {
   const safe = sanitizeFileName(fileName);
-  return `${folder}/${Date.now()}-${randomUUID().slice(0, 8)}-${safe}`;
+  // EOI uses prefix `eoi`; Booking defaults to `booking` via S3_PREFIX / BLOB_PREFIX.
+  return withStoragePrefix(`${folder}/${Date.now()}-${randomUUID().slice(0, 8)}-${safe}`);
 }
 
 function permanentS3FileUrl(key: string): string {
@@ -228,11 +230,9 @@ export function isPrivateStorageUrl(fileUrl: string): boolean {
 
 export async function objectExists(fileUrl: string): Promise<boolean> {
   if (isBlobUrl(fileUrl)) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      if (process.env.NODE_ENV === "production") {
-        throw new Error("BLOB_READ_WRITE_TOKEN is required in production");
-      }
-      return true;
+    if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
+      // Legacy Vercel Blob URLs without token — cannot verify; treat as missing in prod.
+      return process.env.NODE_ENV !== "production";
     }
     return blobObjectExists(fileUrl);
   }

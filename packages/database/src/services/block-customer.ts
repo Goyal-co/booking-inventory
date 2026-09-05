@@ -3,7 +3,7 @@ import { prisma } from "../index";
 import { calculateCostSheet, buildPage1Snapshot } from "./cost-sheet-engine";
 import { createBlock as createBlockBase, BlockError } from "./blocks";
 import { sendBlockNotificationEmail } from "./integration";
-import { getCustomerBookingUrl, getCustomerDashboardUrl } from "../lib/production-env";
+import { getCustomerBookingUrl, getCustomerDashboardUrl, getCustomerBaseUrl } from "../lib/production-env";
 
 const DIGITAL_BOOKING_WINDOW_MS = 48 * 60 * 60 * 1000;
 
@@ -39,6 +39,19 @@ function customerLinks(bookingToken: string) {
       e instanceof Error ? e.message : "CUSTOMER_URL is not configured",
       "CONFIG"
     );
+  }
+}
+
+/** Make brochure / media links absolute for email clients (relative paths break in inbox). */
+function absolutizeEmailUrl(url: string | null | undefined): string | undefined {
+  const raw = (url ?? "").trim();
+  if (!raw) return undefined;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("mailto:")) return raw;
+  try {
+    const base = getCustomerBaseUrl();
+    return new URL(raw.startsWith("/") ? raw : `/${raw}`, `${base}/`).toString();
+  } catch {
+    return raw;
   }
 }
 
@@ -154,7 +167,7 @@ export async function createBlockWithCustomer(input: CreateBlockWithCustomerInpu
     towerName: ctx.towerName,
     bookingUrl: customerUrl,
     dashboardUrl,
-    brochureUrl: project?.brochureUrl ?? undefined,
+    brochureUrl: absolutizeEmailUrl(project?.brochureUrl),
     leadId: input.leadId,
     ...costSheetAttach,
   });
@@ -237,7 +250,7 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
       towerName: ctx.towerName,
       bookingUrl: customerUrl,
       dashboardUrl,
-      brochureUrl: project?.brochureUrl ?? undefined,
+      brochureUrl: absolutizeEmailUrl(project?.brochureUrl),
       leadId: input.leadId,
       ...costSheetAttach,
     });
@@ -335,7 +348,7 @@ export async function attachCustomerToBlock(input: AttachCustomerInput) {
     towerName: ctx.towerName,
     bookingUrl: customerUrl,
     dashboardUrl,
-    brochureUrl: project?.brochureUrl ?? undefined,
+    brochureUrl: absolutizeEmailUrl(project?.brochureUrl),
     leadId: input.leadId,
     ...costSheetAttach,
   });
