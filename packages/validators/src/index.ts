@@ -196,8 +196,8 @@ export const createUnitSchema = z.object({
   towerId: z.string().cuid(),
   floorNumber: z.number().int().min(0),
   unitNumber: z.string().min(1).max(20),
-  floorPlanTypeId: z.string().cuid(),
-  costSheetTemplateId: z.string().cuid(),
+  floorPlanTypeId: z.string().cuid().optional(),
+  costSheetTemplateId: z.string().cuid().optional(),
   facing: z.string().max(50).optional(),
   remarks: z.string().max(500).optional(),
   priceOverride: z.number().positive().optional(),
@@ -208,6 +208,8 @@ export const updateUnitSchema = createUnitSchema
   .omit({ towerId: true, floorNumber: true })
   .extend({
     status: z.enum(["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"]).optional(),
+    floorPlanTypeId: z.union([z.string().cuid(), z.literal("")]).optional().nullable(),
+    costSheetTemplateId: z.union([z.string().cuid(), z.literal("")]).optional().nullable(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field is required",

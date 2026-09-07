@@ -172,7 +172,15 @@ export async function GET_leadsSearch(req: NextRequest) {
     eoiPromise,
   ]);
 
-  const goyalEoiLeads = goyalResult.leads;
+  const goyalEoiLeads = goyalResult.leads.filter((lead) => {
+    // Partner Portal punches land in CRM as partner_leads — keep them out of the
+    // CRM/Presales match list so reception only shows them under Partner Portal.
+    const source = String(lead.source ?? "").toLowerCase();
+    if (source === "partner_leads") return false;
+    const enquiry = String(lead.sourceOfEnquiry ?? "");
+    if (/^partner portal/i.test(enquiry)) return false;
+    return true;
+  });
   let goyalEoiError = goyalResult.error;
 
   const partnerIds = new Set(

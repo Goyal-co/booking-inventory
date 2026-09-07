@@ -90,11 +90,17 @@ export function UnitCard({
           <p className="text-xs font-medium text-amber-800">
             {unit.pendingApproval
               ? "Awaiting admin approval"
-              : isBlockedByMe
-                ? "Blocked by You"
-                : `Blocked by ${unit.block.userName}`}
+              : unit.block.isAdmin
+                ? "Admin block"
+                : isBlockedByMe
+                  ? "Blocked by You"
+                  : `Blocked by ${unit.block.userName}`}
           </p>
-          <BlockTimer expiresAt={unit.block.expiresAt} className="mt-1" />
+          {unit.block.isAdmin ? (
+            <p className="mt-1 text-xs text-amber-700">Until marked available</p>
+          ) : (
+            <BlockTimer expiresAt={unit.block.expiresAt} className="mt-1" />
+          )}
         </div>
       )}
 

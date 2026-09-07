@@ -73,6 +73,93 @@ function partnerOptionKey(p: PartnerOption) {
   );
 }
 
+/** Selectable CRM / Presales rows (Titan + Goyal), separate from Partner Portal punches. */
+type CrmMatchOption = {
+  key: string;
+  source: "titan" | "goyal";
+  title: string;
+  leadCode: string;
+  fullName?: string;
+  phone?: string;
+  email?: string | null;
+  projectName?: string | null;
+  sourceHint?: string;
+  goyal?: EoiLead;
+};
+
+function buildCrmMatchOptions(
+  titan: {
+    found?: boolean;
+    leadId?: string;
+    customerName?: string;
+    phone?: string;
+    [key: string]: unknown;
+  } | null,
+  goyalHits: EoiLead[]
+): CrmMatchOption[] {
+  const opts: CrmMatchOption[] = [];
+  const titanId =
+    titan?.found && titan.leadId ? String(titan.leadId).trim() : "";
+  if (titanId) {
+    const tags = Array.isArray(titan!.tags)
+      ? (titan!.tags as unknown[]).map(String).filter(Boolean)
+      : [];
+    const sourceHint =
+      (typeof titan!.leadSource === "string" && titan!.leadSource) ||
+      (typeof titan!.source === "string" && titan!.source) ||
+      tags[0] ||
+      "Presales";
+    opts.push({
+      key: `titan:${titanId}`,
+      source: "titan",
+      title: String(titan!.customerName || "Titan CRM lead"),
+      leadCode: titanId,
+      fullName: titan!.customerName ? String(titan!.customerName) : undefined,
+      phone: titan!.phone ? String(titan!.phone) : undefined,
+      projectName:
+        typeof titan!.projectName === "string" ? titan!.projectName : undefined,
+      sourceHint: `CRM (Presales) · ${sourceHint}`,
+    });
+  }
+
+  for (const l of goyalHits) {
+    const source = String(l.source || "").toLowerCase();
+    const enquiry = String(l.sourceOfEnquiry || "");
+    // Partner punches synced to CRM must not appear as CRM/Presales rows
+    if (source === "partner_leads" || /^partner portal/i.test(enquiry)) {
+      continue;
+    }
+    const code = String(l.leadCode || "").trim();
+    const id = String(l.id || "").trim();
+    if (
+      titanId &&
+      (code.toLowerCase() === titanId.toLowerCase() ||
+        id.toLowerCase() === titanId.toLowerCase())
+    ) {
+      continue;
+    }
+    const crmKey = id || code;
+    if (!crmKey) continue;
+    opts.push({
+      key: `goyal:${crmKey}`,
+      source: "goyal",
+      title: l.fullName || "CRM lead",
+      leadCode: code || id,
+      fullName: l.fullName,
+      phone: l.phone,
+      email: l.email,
+      projectName: l.projectName,
+      sourceHint: l.sourceOfEnquiry || l.source || "Goyal CRM",
+      goyal: l,
+    });
+  }
+  return opts;
+}
+
+function defaultCrmKey(opts: CrmMatchOption[]): string {
+  return opts.find((o) => o.source === "titan")?.key ?? opts[0]?.key ?? "";
+}
+
 type SearchScenario =
   | "found_single"
   | "found_multi_partner"
@@ -314,7 +401,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [partnerOptions, setPartnerOptions] = useState<PartnerOption[]>([]);
   const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
-  /** Which match the receptionist is acting on — partner portal row or CRM row. */
+  /** Which match drives check-in: partner (may have linked CRM) or CRM-only. */
   const [selectedKind, setSelectedKind] = useState<"partner" | "crm">("partner");
   const [selectedCrmId, setSelectedCrmId] = useState("");
   const [assignSalesId, setAssignSalesId] = useState("");
@@ -401,10 +488,12 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     const nextPartners: PartnerOption[] = d.partnerOptions ?? [];
     const nextScenario = (d.scenario ?? "not_found") as SearchScenario;
     const nextGoyal: EoiLead[] = Array.isArray(d.goyalEoiLeads) ? d.goyalEoiLeads : [];
+    const nextTitan = (d.titanResult as typeof titanResult) ?? null;
+    const nextCrmOpts = buildCrmMatchOptions(nextTitan, nextGoyal);
     setLeads(nextLeads);
     setPartnerOptions(nextPartners);
     setScenario(nextScenario);
-    setTitanResult((d.titanResult as typeof titanResult) ?? null);
+    setTitanResult(nextTitan);
     setEoiIdentityHint(
       d.eoiIdentity && typeof d.eoiIdentity === "object"
         ? (d.eoiIdentity as {
@@ -418,18 +507,20 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     setGoyalEoiHits(nextGoyal);
     setGoyalEoiSearchError(typeof d.goyalEoiError === "string" ? d.goyalEoiError : "");
     setSearched(true);
-    setSelectedPartnerKey(
-      nextPartners[0] ? partnerOptionKey(nextPartners[0]) : nextLeads[0]?.cpId ?? ""
-    );
     setSelectedLeadId(nextLeads[0]?.id ?? nextPartners[0]?.leadId ?? "");
     if (nextPartners.length > 0) {
+      // CP selected → auto-link CRM (Presales / Titan preferred)
       setSelectedKind("partner");
-      setSelectedCrmId("");
-    } else if (nextGoyal.length > 0) {
+      setSelectedPartnerKey(partnerOptionKey(nextPartners[0]));
+      setSelectedCrmId(defaultCrmKey(nextCrmOpts));
+    } else if (nextCrmOpts.length > 0) {
+      // CRM alone — do not auto-select any CP
       setSelectedKind("crm");
-      setSelectedCrmId(String(nextGoyal[0].id || nextGoyal[0].leadCode || ""));
+      setSelectedPartnerKey("");
+      setSelectedCrmId(defaultCrmKey(nextCrmOpts));
     } else {
       setSelectedKind("partner");
+      setSelectedPartnerKey(nextLeads[0]?.cpId ?? "");
       setSelectedCrmId("");
     }
     setAssignSalesId("");
@@ -736,14 +827,37 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   /** Materialize selected EOI/Titan row if needed, then send OTP — never block on "resolve first". */
   const sendOtpForSelection = async () => {
     if (selectedKind === "crm") {
-      const crm =
-        goyalEoiHits.find((l) => String(l.id || l.leadCode) === selectedCrmId) ||
-        goyalEoiHits[0];
-      if (!crm) {
+      const crmOpts = buildCrmMatchOptions(titanResult, goyalEoiHits);
+      const crmOpt =
+        crmOpts.find((o) => o.key === selectedCrmId) || crmOpts[0];
+      if (!crmOpt) {
         toast.error("Select a CRM lead first");
         return;
       }
-      await sendCrmLeadOtp(crm);
+      if (crmOpt.source === "goyal" && crmOpt.goyal) {
+        await sendCrmLeadOtp(crmOpt.goyal);
+        return;
+      }
+      // Titan CRM (Presales) alone — materialize locally then OTP
+      let leadId =
+        selectedLeadId ||
+        leads.find((l) => l.titanCrmId && String(l.titanCrmId) === crmOpt.leadCode)
+          ?.id ||
+        leads[0]?.id ||
+        "";
+      if (!leadId && titanResult?.found) {
+        const created = await materializeFromTitan({
+          publicLeadId: crmOpt.leadCode || String(titanResult.leadId ?? ""),
+        });
+        if (!created) return;
+        leadId = created.id;
+        setSelectedLeadId(leadId);
+      }
+      if (!leadId) {
+        toast.error("Could not resolve Titan CRM lead");
+        return;
+      }
+      await sendLeadOtp(leadId);
       return;
     }
 
@@ -791,10 +905,10 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
 
   const confirmAndAssign = async () => {
     if (selectedKind === "crm") {
-      const crm =
-        goyalEoiHits.find((l) => String(l.id || l.leadCode) === selectedCrmId) ||
-        goyalEoiHits[0];
-      if (!crm) {
+      const crmOpts = buildCrmMatchOptions(titanResult, goyalEoiHits);
+      const crmOpt =
+        crmOpts.find((o) => o.key === selectedCrmId) || crmOpts[0];
+      if (!crmOpt) {
         toast.error("Select a CRM lead first");
         return;
       }
@@ -806,45 +920,70 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         toast.error("Enter the 6-digit OTP sent to the customer");
         return;
       }
-      setAssignLead(crm);
-      setEoiAssignSalesId(assignSalesId);
-      setEoiAssignOtp(siteVisitOtp);
-      // Reuse CRM assign API directly
-      setAssignBusy(true);
-      try {
-        const res = await fetch(`/api/eoi/leads/${crm.id}/assign`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            salesUserId: assignSalesId,
-            otp: siteVisitOtp,
-            fullName: crm.fullName || undefined,
-            phone: crm.phone || undefined,
-            email: crm.email || undefined,
-            projectName: crm.projectName || undefined,
-            leadCode: crm.leadCode || undefined,
-          }),
-        });
-        const d = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          toast.error(typeof d.error === "string" ? d.error : "Assign failed");
-          return;
+
+      if (crmOpt.source === "goyal" && crmOpt.goyal) {
+        const crm = crmOpt.goyal;
+        setAssignLead(crm);
+        setEoiAssignSalesId(assignSalesId);
+        setEoiAssignOtp(siteVisitOtp);
+        setAssignBusy(true);
+        try {
+          const res = await fetch(`/api/eoi/leads/${crm.id}/assign`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              salesUserId: assignSalesId,
+              otp: siteVisitOtp,
+              fullName: crm.fullName || undefined,
+              phone: crm.phone || undefined,
+              email: crm.email || undefined,
+              projectName: crm.projectName || undefined,
+              leadCode: crm.leadCode || undefined,
+            }),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            toast.error(typeof d.error === "string" ? d.error : "Assign failed");
+            return;
+          }
+          toast.success(
+            d.crmSynced
+              ? `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
+              : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"}`
+          );
+          if (!d.crmSynced && typeof d.crmError === "string" && d.crmError) {
+            toast.warning("CRM site-visit not synced", { description: d.crmError });
+          }
+          setSiteVisitOtp("");
+          setAssignSalesId("");
+          await searchLocal();
+          await refreshVisits();
+        } finally {
+          setAssignBusy(false);
         }
-        toast.success(
-          d.crmSynced
-            ? `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
-            : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"}`
-        );
-        if (!d.crmSynced && typeof d.crmError === "string" && d.crmError) {
-          toast.warning("CRM site-visit not synced", { description: d.crmError });
-        }
-        setSiteVisitOtp("");
-        setAssignSalesId("");
-        await searchLocal();
-        await refreshVisits();
-      } finally {
-        setAssignBusy(false);
+        return;
       }
+
+      // Titan CRM (Presales) alone — no CP auto-selected
+      let leadId =
+        selectedLeadId ||
+        leads.find((l) => l.titanCrmId && String(l.titanCrmId) === crmOpt.leadCode)
+          ?.id ||
+        leads[0]?.id ||
+        "";
+      if (!leadId && titanResult?.found) {
+        const created = await materializeFromTitan({
+          publicLeadId: crmOpt.leadCode || String(titanResult.leadId ?? ""),
+        });
+        if (!created) return;
+        leadId = created.id;
+        setSelectedLeadId(leadId);
+      }
+      if (!leadId) {
+        toast.error("Could not resolve Titan CRM lead");
+        return;
+      }
+      await assign(leadId, assignSalesId, {});
       return;
     }
 
@@ -977,6 +1116,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       return iso;
     }
   };
+
+  const crmMatchOptions = buildCrmMatchOptions(titanResult, goyalEoiHits);
 
   const createEoi = async () => {
     setCreateBusy(true);
@@ -1433,6 +1574,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
             {searched &&
               (partnerOptions.length > 0 ||
                 goyalEoiHits.length > 0 ||
+                titanResult?.found === true ||
                 scenario === "found_single" ||
                 scenario === "found_multi_partner" ||
                 scenario === "found_goyal_eoi") &&
@@ -1444,8 +1586,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <StepLabel step={1} title="Select which lead to proceed with" />
                 <p className="mb-4 text-sm text-gray-500">
-                  Partner Portal and CRM matches are listed separately. Select one, then send OTP
-                  and check in.
+                  Partner Portal and CRM (Presales) matches are listed separately. Selecting a
+                  channel partner auto-links the CRM lead. Selecting CRM alone does not select a
+                  partner.
                 </p>
                 <div className="space-y-2">
                   {(partnerOptions.length > 0
@@ -1488,12 +1631,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                           <input
                             type="radio"
                             className="mt-1"
-                            name="visit-match"
+                            name="partner-match"
                             checked={selected}
                             onChange={() => {
                               setSelectedKind("partner");
                               setSelectedPartnerKey(key);
-                              setSelectedCrmId("");
+                              // CP → auto-select CRM (Presales / Titan preferred)
+                              setSelectedCrmId(defaultCrmKey(crmMatchOptions));
                               if (p.leadId) setSelectedLeadId(p.leadId);
                               else setSelectedLeadId("");
                             }}
@@ -1534,19 +1678,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                     );
                   })}
 
-                  {goyalEoiHits.map((l) => {
-                    const crmKey = String(l.id || l.leadCode);
-                    const selected =
-                      selectedKind === "crm" && selectedCrmId === crmKey;
-                    const cpHint =
-                      (typeof l.sourceOfEnquiry === "string" && l.sourceOfEnquiry) ||
-                      (typeof (l as EoiLead & { channelPartner?: string }).channelPartner ===
-                        "string" &&
-                        (l as EoiLead & { channelPartner?: string }).channelPartner) ||
-                      null;
+                  {crmMatchOptions.map((opt) => {
+                    // Linked highlight when CP is primary; exclusive when CRM-only
+                    const selected = selectedCrmId === opt.key;
+                    const linked =
+                      selectedKind === "partner" && selected && Boolean(selectedPartnerKey);
                     return (
                       <label
-                        key={`crm-${crmKey}`}
+                        key={`crm-${opt.key}`}
                         className={`block cursor-pointer rounded-xl border p-4 transition ${
                           selected
                             ? "border-gray-900 bg-gray-50 ring-1 ring-gray-900"
@@ -1557,30 +1696,41 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                           <input
                             type="radio"
                             className="mt-1"
-                            name="visit-match"
+                            name="crm-match"
                             checked={selected}
                             onChange={() => {
+                              // CRM alone — clear CP (no auto reverse-link)
                               setSelectedKind("crm");
-                              setSelectedCrmId(crmKey);
+                              setSelectedCrmId(opt.key);
                               setSelectedPartnerKey("");
                               setSelectedLeadId("");
-                              setAssignLead(l);
+                              if (opt.goyal) setAssignLead(opt.goyal);
                             }}
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <StatusChip>Goyal CRM</StatusChip>
+                              <StatusChip>
+                                {opt.source === "titan" ? "CRM (Presales)" : "Goyal CRM"}
+                              </StatusChip>
+                              {linked ? (
+                                <StatusChip tone="info">Linked to partner</StatusChip>
+                              ) : null}
                               <p className="text-base font-semibold text-gray-900">
-                                {l.fullName || "CRM lead"}
+                                {opt.title}
                               </p>
-                              {l.booked ? <StatusChip tone="ok">Already booked</StatusChip> : null}
+                              {opt.goyal?.booked ? (
+                                <StatusChip tone="ok">Already booked</StatusChip>
+                              ) : null}
                             </div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                              <FieldRow label="Lead" value={l.leadCode || l.id} />
-                              <FieldRow label="Project" value={l.projectName || "—"} />
-                              <FieldRow label="Mobile" value={l.phone || "—"} />
-                              <FieldRow label="Email" value={l.email || "—"} />
-                              <FieldRow label="Partner / source" value={cpHint || "Not on CRM lead"} />
+                              <FieldRow label="Lead" value={opt.leadCode} />
+                              <FieldRow label="Project" value={opt.projectName || "—"} />
+                              <FieldRow label="Mobile" value={opt.phone || "—"} />
+                              <FieldRow label="Email" value={opt.email || "—"} />
+                              <FieldRow
+                                label="Source"
+                                value={opt.sourceHint || "Not on CRM lead"}
+                              />
                             </div>
                           </div>
                         </div>
@@ -1625,7 +1775,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   otpSending={otpSending}
                   otpHint={
                     selectedKind === "crm"
-                      ? "OTP goes to the CRM lead email."
+                      ? "OTP goes to the CRM / Presales lead email."
                       : "OTP goes to the Partner Portal / local lead email."
                   }
                   onSendOtp={() => void sendOtpForSelection()}

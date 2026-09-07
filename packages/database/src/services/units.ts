@@ -33,6 +33,7 @@ export interface UnitWithRelations {
     id: string;
     userId: string;
     expiresAt: Date;
+    isAdmin?: boolean;
     user: { id: string; name: string };
   }>;
   bookings: Array<{ id: string; status: string }>;
@@ -82,6 +83,7 @@ export function serializeUnit(unit: UnitWithRelations, hideHold = true) {
           userId: activeBlock.userId,
           userName: activeBlock.user.name,
           expiresAt: activeBlock.expiresAt.toISOString(),
+          isAdmin: Boolean(activeBlock.isAdmin),
         }
       : null,
     floorPlanImageUrl: unit.floorPlanType?.imageUrl,

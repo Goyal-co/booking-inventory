@@ -20,6 +20,9 @@ export class BlockError extends Error {
   }
 }
 
+/** Admin inventory blocks stay until explicitly released (Mass Unblock / Available). */
+export const ADMIN_BLOCK_EXPIRES_AT = new Date("2099-12-31T23:59:59.000Z");
+
 
 export async function getActiveBlocksForUser(
   userId: string,
@@ -128,11 +131,15 @@ export async function createBlock(unitId: string, userId: string, isAdmin = fals
     }
 
     const activeBlock = unit.blocks[0];
+    if (activeBlock && activeBlock.userId === userId && !isAdmin) {
+      return { block: activeBlock, projectId: unit.floor.tower.projectId, unitNumber: unit.unitNumber };
+    }
     if (activeBlock && activeBlock.userId !== userId && !isAdmin) {
       throw new BlockError("Unit is blocked by another user", "NOT_AVAILABLE");
     }
-    if (activeBlock && activeBlock.userId === userId) {
-      return { block: activeBlock, projectId: unit.floor.tower.projectId, unitNumber: unit.unitNumber };
+    // Admin block replaces any existing timed/sales block
+    if (isAdmin && unit.blocks.length > 0) {
+      await tx.block.deleteMany({ where: { unitId } });
     }
 
     const project = unit.floor.tower.project;
@@ -158,7 +165,9 @@ export async function createBlock(unitId: string, userId: string, isAdmin = fals
       }
     }
 
-    const expiresAt = new Date(Date.now() + project.blockDurationMs);
+    const expiresAt = isAdmin
+      ? ADMIN_BLOCK_EXPIRES_AT
+      : new Date(Date.now() + project.blockDurationMs);
 
     const block = await tx.block.create({
       data: {
@@ -180,7 +189,13 @@ export async function createBlock(unitId: string, userId: string, isAdmin = fals
         entityType: "Unit",
         entityId: unitId,
         userId,
-        metadata: { blockId: block.id, expiresAt: expiresAt.toISOString(), projectId: project.id },
+        metadata: {
+          blockId: block.id,
+          expiresAt: expiresAt.toISOString(),
+          projectId: project.id,
+          isAdmin,
+          permanent: isAdmin,
+        },
       },
       tx
     );
@@ -189,7 +204,7 @@ export async function createBlock(unitId: string, userId: string, isAdmin = fals
       {
         projectId: project.id,
         userId,
-        message: `${user?.name ?? "User"} blocked ${unit.unitNumber}`,
+        message: `${user?.name ?? "User"} blocked ${unit.unitNumber}${isAdmin ? " (admin)" : ""}`,
         unitId,
       },
       tx
@@ -281,7 +296,8 @@ export async function releaseBlock(blockId: string, userId: string, force = fals
 
 export async function expireBlocks() {
   const expired = await prisma.block.findMany({
-    where: { expiresAt: { lte: new Date() } },
+    // Admin inventory blocks never auto-expire — release via Mass Unblock / Available
+    where: { expiresAt: { lte: new Date() }, isAdmin: false },
     include: {
       unit: { include: { floor: { include: { tower: true } } } },
       user: { select: { name: true } },

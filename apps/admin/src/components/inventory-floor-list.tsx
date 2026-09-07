@@ -107,21 +107,25 @@ function isUnitDeleteDisabled(status: UnitStatus): boolean {
 }
 
 function isStatusLocked(status: UnitStatus): boolean {
-  return status === "BOOKED" || status === "SOLD";
+  // Booked stays managed via Bookings; admin may freely set Sold / Blocked / Available
+  return status === "BOOKED";
 }
 
 function editModalDescription(unit: StructureUnit | null): string {
   if (!unit) return "Add a unit to a specific floor. Floor is created automatically if it does not exist.";
-  if (isStatusLocked(unit.status)) {
-    return "This unit is tied to a booking or sale. Status and unit number cannot be changed here.";
+  if (unit.status === "BOOKED") {
+    return "This unit is tied to a booking. Status and unit number cannot be changed here — use the Bookings page.";
   }
   if (unit.status === "BLOCKED") {
-    return "This unit has an active block. Use Grid → Mass Unblock to release it, or change status carefully.";
+    return "This unit is blocked until marked Available (here or via Grid → Mass Unblock). Floor plan and cost sheet are optional.";
   }
   if (unit.status === "HOLD") {
-    return "This unit is on hold. You can update metadata or change status below.";
+    return "This unit is on hold. You can update metadata or change status below. Floor plan and cost sheet are optional.";
   }
-  return "Update unit details. Status changes apply immediately.";
+  if (unit.status === "SOLD") {
+    return "Sold unit — you can change status freely. Floor plan and cost sheet are optional.";
+  }
+  return "Update unit details. Status changes apply immediately. Floor plan and cost sheet are optional.";
 }
 
 function StatusWarningBanner({ status }: { status: UnitStatus }) {
@@ -135,7 +139,7 @@ function StatusWarningBanner({ status }: { status: UnitStatus }) {
     BLOCKED: {
       className: "border-amber-200 bg-amber-50 text-amber-800",
       message:
-        "This unit has an active block. Prefer Grid → Mass Unblock to release it safely.",
+        "Admin block stays until you mark Available or use Grid → Mass Unblock.",
     },
     BOOKED: {
       className: "border-red-200 bg-red-50 text-red-800",
@@ -145,7 +149,7 @@ function StatusWarningBanner({ status }: { status: UnitStatus }) {
     SOLD: {
       className: "border-red-200 bg-red-50 text-red-800",
       message:
-        "This unit is sold. Status and unit number are locked. Only metadata fields can be updated.",
+        "This unit is sold. You can still change status or metadata without floor plan / cost sheet.",
     },
   };
 
@@ -233,15 +237,15 @@ export function InventoryFloorList({
   };
 
   const handleSubmit = async () => {
-    if (!form.unitNumber || !form.floorPlanTypeId || !form.costSheetTemplateId) {
-      toast.error("Unit number, floor plan, and cost sheet are required");
+    if (!form.unitNumber.trim()) {
+      toast.error("Unit number is required");
       return;
     }
     setSubmitting(true);
     const payload = {
-      unitNumber: form.unitNumber,
-      floorPlanTypeId: form.floorPlanTypeId,
-      costSheetTemplateId: form.costSheetTemplateId,
+      unitNumber: form.unitNumber.trim(),
+      ...(form.floorPlanTypeId ? { floorPlanTypeId: form.floorPlanTypeId } : {}),
+      ...(form.costSheetTemplateId ? { costSheetTemplateId: form.costSheetTemplateId } : {}),
       facing: form.facing || undefined,
       remarks: form.remarks || undefined,
       priceOverride: form.priceOverride ? Number(form.priceOverride) : undefined,
@@ -250,13 +254,27 @@ export function InventoryFloorList({
     const patchBody =
       editingUnitId && editingUnit && isStatusLocked(editingUnit.status)
         ? {
-            floorPlanTypeId: payload.floorPlanTypeId,
-            costSheetTemplateId: payload.costSheetTemplateId,
+            ...(form.floorPlanTypeId
+              ? { floorPlanTypeId: form.floorPlanTypeId }
+              : { floorPlanTypeId: "" }),
+            ...(form.costSheetTemplateId
+              ? { costSheetTemplateId: form.costSheetTemplateId }
+              : { costSheetTemplateId: "" }),
             facing: payload.facing,
             remarks: payload.remarks,
             priceOverride: payload.priceOverride,
           }
-        : { ...payload, status: form.status };
+        : {
+            ...payload,
+            // Allow clearing plan/cost on edit when left blank
+            ...(editingUnitId
+              ? {
+                  floorPlanTypeId: form.floorPlanTypeId || "",
+                  costSheetTemplateId: form.costSheetTemplateId || "",
+                }
+              : {}),
+            status: form.status,
+          };
 
     const res = editingUnitId
       ? await fetch(`/api/units/${editingUnitId}`, {
@@ -520,7 +538,7 @@ export function InventoryFloorList({
             </>
           )}
           <div>
-            <Label>Floor plan</Label>
+            <Label>Floor plan (optional)</Label>
             <select
               className="mt-1 w-full rounded-lg border p-2 text-sm"
               value={form.floorPlanTypeId}
@@ -532,11 +550,13 @@ export function InventoryFloorList({
                 setForm({
                   ...form,
                   floorPlanTypeId: planId,
-                  costSheetTemplateId: cost?.id ?? form.costSheetTemplateId,
+                  costSheetTemplateId: planId
+                    ? cost?.id ?? form.costSheetTemplateId
+                    : "",
                 });
               }}
             >
-              <option value="">Select plan</option>
+              <option value="">None</option>
               {structure?.floorPlanTypes.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.bhkType})
@@ -545,13 +565,13 @@ export function InventoryFloorList({
             </select>
           </div>
           <div>
-            <Label>Cost sheet</Label>
+            <Label>Cost sheet (optional)</Label>
             <select
               className="mt-1 w-full rounded-lg border p-2 text-sm"
               value={form.costSheetTemplateId}
               onChange={(e) => setForm({ ...form, costSheetTemplateId: e.target.value })}
             >
-              <option value="">Select cost sheet</option>
+              <option value="">None</option>
               {structure?.costSheetTemplates.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}

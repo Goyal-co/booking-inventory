@@ -1,4 +1,4 @@
-import { prisma, UnitStatus, AuditAction, BookingStatus } from "../index";
+import { prisma, UnitStatus, AuditAction, BookingStatus, Prisma } from "../index";
 import { createAuditLog } from "./audit";
 import { createActivity } from "./activity";
 import { createBlock, releaseBlock } from "./blocks";
@@ -129,8 +129,8 @@ export async function createUnit(
     towerId: string;
     floorNumber: number;
     unitNumber: string;
-    floorPlanTypeId: string;
-    costSheetTemplateId: string;
+    floorPlanTypeId?: string;
+    costSheetTemplateId?: string;
     facing?: string;
     remarks?: string;
     priceOverride?: number;
@@ -144,10 +144,22 @@ export async function createUnit(
   });
   if (!tower) throw new InventoryError("Tower not found", "NOT_FOUND");
 
-  const { plan, costSheet } = await resolvePlanAndCost(
-    input.floorPlanTypeId,
-    input.costSheetTemplateId
-  );
+  let plan: { bhkType: string; carpetArea: number } | null = null;
+  let basePrice: Prisma.Decimal | null = null;
+  if (input.floorPlanTypeId) {
+    const found = await prisma.floorPlanType.findUnique({
+      where: { id: input.floorPlanTypeId },
+    });
+    if (!found) throw new InventoryError("Floor plan not found", "NOT_FOUND");
+    plan = found;
+  }
+  if (input.costSheetTemplateId) {
+    const found = await prisma.costSheetTemplate.findUnique({
+      where: { id: input.costSheetTemplateId },
+    });
+    if (!found) throw new InventoryError("Cost sheet not found", "NOT_FOUND");
+    basePrice = found.totalPrice;
+  }
 
   const floor = await prisma.floor.upsert({
     where: { towerId_number: { towerId: input.towerId, number: input.floorNumber } },
@@ -170,11 +182,11 @@ export async function createUnit(
     data: {
       unitNumber: input.unitNumber,
       floorId: floor.id,
-      floorPlanTypeId: input.floorPlanTypeId,
-      costSheetTemplateId: input.costSheetTemplateId,
-      bhkType: plan.bhkType,
-      carpetArea: plan.carpetArea,
-      basePrice: costSheet.totalPrice,
+      floorPlanTypeId: input.floorPlanTypeId || null,
+      costSheetTemplateId: input.costSheetTemplateId || null,
+      bhkType: plan?.bhkType ?? null,
+      carpetArea: plan?.carpetArea ?? null,
+      basePrice,
       facing: input.facing,
       remarks: input.remarks,
       priceOverride: input.priceOverride,
@@ -204,8 +216,8 @@ export async function updateUnit(
   unitId: string,
   input: {
     unitNumber?: string;
-    floorPlanTypeId?: string;
-    costSheetTemplateId?: string;
+    floorPlanTypeId?: string | null;
+    costSheetTemplateId?: string | null;
     facing?: string;
     remarks?: string;
     priceOverride?: number | null;
@@ -245,6 +257,8 @@ export async function updateUnit(
     updateData.floorPlanTypeId = input.floorPlanTypeId;
     updateData.bhkType = plan.bhkType;
     updateData.carpetArea = plan.carpetArea;
+  } else if (input.floorPlanTypeId === null || input.floorPlanTypeId === "") {
+    updateData.floorPlanTypeId = null;
   }
 
   if (input.costSheetTemplateId) {
@@ -254,12 +268,23 @@ export async function updateUnit(
     if (!costSheet) throw new InventoryError("Cost sheet not found", "NOT_FOUND");
     updateData.costSheetTemplateId = input.costSheetTemplateId;
     if (input.priceOverride === undefined) updateData.basePrice = costSheet.totalPrice;
+  } else if (input.costSheetTemplateId === null || input.costSheetTemplateId === "") {
+    updateData.costSheetTemplateId = null;
   }
 
   const unit = await prisma.unit.update({
     where: { id: unitId },
     data: updateData,
   });
+
+  // Admin status changes: keep Block rows in sync (permanent admin block until Available)
+  if (input.status === UnitStatus.AVAILABLE || input.status === UnitStatus.SOLD) {
+    await prisma.block.deleteMany({ where: { unitId } });
+  } else if (input.status === UnitStatus.HOLD) {
+    await prisma.block.deleteMany({ where: { unitId } });
+  } else if (input.status === UnitStatus.BLOCKED) {
+    await createBlock(unitId, userId, true);
+  }
 
   await createAuditLog({
     action: AuditAction.INVENTORY_UPDATED,
@@ -356,19 +381,13 @@ export async function massBlockAction(
   unitIds: string[],
   action: "block" | "unblock" | "hold" | "release_hold",
   userId: string,
-  durationMs?: number
+  _durationMs?: number
 ) {
   const results = [];
 
   for (const unitId of unitIds) {
     if (action === "block") {
-      const project = await prisma.project.findUnique({ where: { id: projectId } });
-      if (project && durationMs) {
-        await prisma.project.update({
-          where: { id: projectId },
-          data: { blockDurationMs: durationMs },
-        });
-      }
+      // Admin Grid blocks are permanent until Mass Unblock — do not retune project.blockDurationMs
       const result = await createBlock(unitId, userId, true);
       results.push(result);
     } else if (action === "unblock") {
@@ -377,6 +396,9 @@ export async function massBlockAction(
       });
       if (block) {
         await releaseBlock(block.id, userId, true);
+      } else {
+        // Orphan BLOCKED status (Manage dropdown) — force available
+        await prisma.block.deleteMany({ where: { unitId } });
       }
       await prisma.unit.update({
         where: { id: unitId },

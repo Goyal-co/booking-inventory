@@ -65,6 +65,8 @@ export interface UnitCardData {
     userId: string;
     userName: string;
     expiresAt: string;
+    /** Admin inventory block — does not auto-expire */
+    isAdmin?: boolean;
   } | null;
   floorPlanImageUrl?: string | null;
   floorPlan?: {
