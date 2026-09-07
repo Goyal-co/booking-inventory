@@ -37,6 +37,22 @@ export {
 export { normalizeMediaUrl } from "./media-url";
 export { amountToIndianWords } from "./amount-words";
 
+/** URL-safe project slug (lowercase, hyphenated, max 50). */
+export function slugifyProjectSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+}
+
+const projectSlugSchema = z
+  .string()
+  .min(1)
+  .transform(slugifyProjectSlug)
+  .pipe(z.string().min(2).max(50).regex(/^[a-z0-9-]+$/, "Slug must use lowercase letters, numbers, and hyphens"));
+
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -83,7 +99,7 @@ export const unitFiltersSchema = z.object({
 
 export const createProjectSchema = z.object({
   name: z.string().min(2).max(100),
-  slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
+  slug: projectSlugSchema,
   description: z.string().optional(),
   launchDate: z.string().datetime().optional(),
   blockDurationMs: z.number().int().min(60000).max(604800000).default(900000),
@@ -272,7 +288,7 @@ export const updateProjectLifecycleSchema = z
     launchDate: z.string().datetime().optional().nullable(),
     isPublished: z.boolean().optional(),
     name: z.string().min(2).max(100).optional(),
-    slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/).optional(),
+    slug: projectSlugSchema.optional(),
     description: z.string().optional(),
     requiresBookingApproval: z.boolean().optional(),
   })

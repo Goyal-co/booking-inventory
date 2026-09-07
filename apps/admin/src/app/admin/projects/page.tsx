@@ -20,6 +20,7 @@ import {
 import { Building2, Layers, Clock, MoreHorizontal } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { useAdminSession } from "@/hooks/use-admin-session";
+import { slugifyProjectSlug } from "@booking/validators";
 
 interface Project {
   id: string;
@@ -34,12 +35,40 @@ interface Project {
   _count: { towers: number; floorPlanTypes: number };
 }
 
+function firstApiError(data: unknown, fallback: string): string {
+  if (!data || typeof data !== "object") return fallback;
+  const err = (data as { error?: unknown }).error;
+  if (typeof err === "string" && err.trim()) return err;
+  if (err && typeof err === "object") {
+    const flat = err as { formErrors?: string[]; fieldErrors?: Record<string, string[] | undefined> };
+    const fromForm = flat.formErrors?.find(Boolean);
+    if (fromForm) return fromForm;
+    const fromField = Object.values(flat.fieldErrors ?? {})
+      .flat()
+      .find(Boolean);
+    if (fromField) return fromField;
+  }
+  const details = (data as { details?: { fieldErrors?: Record<string, string[] | undefined>; formErrors?: string[] } })
+    .details;
+  if (details) {
+    const fromForm = details.formErrors?.find(Boolean);
+    if (fromForm) return fromForm;
+    const fromField = Object.values(details.fieldErrors ?? {})
+      .flat()
+      .find(Boolean);
+    if (fromField) return fromField;
+  }
+  return fallback;
+}
+
 export default function ProjectsPage() {
   const { isSuperAdmin } = useAdminSession();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
   const [lifecycleFilter, setLifecycleFilter] = useState("");
   const [publishedFilter, setPublishedFilter] = useState("");
@@ -62,19 +91,37 @@ export default function ProjectsPage() {
   }, [search, lifecycleFilter, publishedFilter]);
 
   const handleCreate = async () => {
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, slug: slug || name.toLowerCase().replace(/\s+/g, "-") }),
-    });
-    if (res.ok) {
-      toast.success("Project created");
-      setShowCreate(false);
-      setName("");
-      setSlug("");
-      load();
-    } else {
-      toast.error("Failed to create project");
+    const trimmedName = name.trim();
+    const finalSlug = slugifyProjectSlug(slug || trimmedName);
+    if (trimmedName.length < 2) {
+      toast.error("Project name must be at least 2 characters");
+      return;
+    }
+    if (finalSlug.length < 2) {
+      toast.error("Slug must be at least 2 characters (letters/numbers)");
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmedName, slug: finalSlug }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success("Project created");
+        setShowCreate(false);
+        setName("");
+        setSlug("");
+        setSlugTouched(false);
+        load();
+      } else {
+        toast.error(firstApiError(data, "Failed to create project"));
+      }
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -208,14 +255,30 @@ export default function ProjectsPage() {
         <div className="space-y-4">
           <div>
             <Label>Project Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Skyline Heights" />
+            <Input
+              value={name}
+              onChange={(e) => {
+                const next = e.target.value;
+                setName(next);
+                if (!slugTouched) setSlug(slugifyProjectSlug(next));
+              }}
+              placeholder="Skyline Heights"
+            />
           </div>
           <div>
             <Label>Slug</Label>
-            <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="skyline-heights" />
+            <Input
+              value={slug}
+              onChange={(e) => {
+                setSlugTouched(true);
+                setSlug(slugifyProjectSlug(e.target.value));
+              }}
+              placeholder="skyline-heights"
+            />
+            <p className="mt-1 text-xs text-gray-500">Lowercase letters, numbers, and hyphens only.</p>
           </div>
-          <Button className="w-full" onClick={handleCreate} disabled={!name}>
-            Create
+          <Button className="w-full" onClick={handleCreate} disabled={creating || name.trim().length < 2}>
+            {creating ? "Creating…" : "Create"}
           </Button>
         </div>
       </Modal>

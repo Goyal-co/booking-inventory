@@ -173,26 +173,52 @@ export async function POST_projects(req: NextRequest) {
 
   const body = await req.json();
   const parsed = createProjectSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  if (!parsed.success) {
+    const flat = parsed.error.flatten();
+    const first =
+      flat.formErrors[0] ||
+      Object.values(flat.fieldErrors).flat().find(Boolean) ||
+      "Invalid project data";
+    return NextResponse.json({ error: first, details: flat }, { status: 400 });
+  }
 
-  const project = await prisma.project.create({
-    data: {
-      ...parsed.data,
-      launchDate: parsed.data.launchDate ? new Date(parsed.data.launchDate) : null,
-      organizationId: user.organizationId,
-    },
-  });
+  if (!user.organizationId) {
+    return NextResponse.json(
+      { error: "Your account has no organization. Re-run Super Admin bootstrap." },
+      { status: 400 },
+    );
+  }
 
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.PROJECT_CREATED,
-      entityType: "Project",
-      entityId: project.id,
-      userId: user.id,
-    },
-  });
+  try {
+    const project = await prisma.project.create({
+      data: {
+        ...parsed.data,
+        launchDate: parsed.data.launchDate ? new Date(parsed.data.launchDate) : null,
+        organizationId: user.organizationId,
+      },
+    });
 
-  return NextResponse.json({ project });
+    await prisma.auditLog.create({
+      data: {
+        action: AuditAction.PROJECT_CREATED,
+        entityType: "Project",
+        entityId: project.id,
+        userId: user.id,
+      },
+    });
+
+    return NextResponse.json({ project });
+  } catch (err) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: string }).code === "P2002"
+    ) {
+      return NextResponse.json({ error: "Slug already in use" }, { status: 409 });
+    }
+    throw err;
+  }
 }
 
 export async function GET_project(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
