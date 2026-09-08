@@ -120,7 +120,11 @@ export async function createInventoryFromExcelRows(
       }
 
       const saleableSqft = resolveSaleableAreaSqft(payload) ?? 0;
-      const carpetSqft = payload.carpetAreaSqft ?? saleableSqft;
+      // Carpet stays carpet; saleable/SBA goes to superArea — never copy saleable into carpet.
+      const carpetSqft =
+        payload.carpetAreaSqft != null && Number.isFinite(Number(payload.carpetAreaSqft))
+          ? Number(payload.carpetAreaSqft)
+          : null;
       const baseRate = payload.baseRatePerSqft ?? 0;
       const basePrice =
         baseRate > 0 && saleableSqft > 0 ? Math.round(baseRate * saleableSqft) : null;
@@ -130,7 +134,8 @@ export async function createInventoryFromExcelRows(
           unitNumber: unitNo,
           floorId: floor.id,
           bhkType: payload.configuration?.trim() || null,
-          carpetArea: Math.round(carpetSqft),
+          carpetArea: carpetSqft != null ? Math.round(carpetSqft) : null,
+          superArea: saleableSqft > 0 ? Math.round(saleableSqft) : null,
           basePrice,
           status: UnitStatus.AVAILABLE,
         },

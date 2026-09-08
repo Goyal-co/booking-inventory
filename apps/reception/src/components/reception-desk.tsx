@@ -63,6 +63,7 @@ interface PartnerOption {
   projectName?: string;
   journeyStatus?: string;
   siteVisitStatus?: string;
+  siteVisitDate?: string;
 }
 
 function partnerOptionKey(p: PartnerOption) {
@@ -1651,7 +1652,30 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                               {p.journeyStatus === "BOOKED" ? (
                                 <StatusChip tone="ok">Booked</StatusChip>
                               ) : p.siteVisitStatus === "COMPLETED" ? (
-                                <StatusChip tone="info">Site visit done</StatusChip>
+                                <>
+                                  <StatusChip tone="info">Site visit done</StatusChip>
+                                  {(() => {
+                                    const raw =
+                                      (p as PartnerOption & { siteVisitDate?: string })
+                                        .siteVisitDate ||
+                                      (p as PartnerOption & { submittedAt?: string }).submittedAt;
+                                    if (!raw) return null;
+                                    const doneAt = new Date(raw).getTime();
+                                    if (!Number.isFinite(doneAt)) return null;
+                                    const left = Math.max(
+                                      0,
+                                      doneAt + 15 * 86_400_000 - Date.now()
+                                    );
+                                    const days = Math.ceil(left / 86_400_000);
+                                    return left > 0 ? (
+                                      <StatusChip tone="info">
+                                        Relevant · {days}d left
+                                      </StatusChip>
+                                    ) : (
+                                      <StatusChip>Relevance ended</StatusChip>
+                                    );
+                                  })()}
+                                </>
                               ) : (
                                 <StatusChip>Open</StatusChip>
                               )}

@@ -7,6 +7,9 @@ import {
   StatusLegend,
   FilterBar,
   PageHeader,
+  Modal,
+  Input,
+  Label,
   useBreakpoint,
   type UnitCardData,
   type FilterConfig,
@@ -40,6 +43,14 @@ function InventoryContent() {
   const [gridSearch, setGridSearch] = useState("");
   const [massActionLoading, setMassActionLoading] = useState<MassAction | null>(null);
   const [showMobileActions, setShowMobileActions] = useState(false);
+  const [bookOpen, setBookOpen] = useState(false);
+  const [bookBusy, setBookBusy] = useState(false);
+  const [bookForm, setBookForm] = useState({
+    customerName: "",
+    customerPhone: "",
+    customerEmail: "",
+    bookedWithCpName: "",
+  });
   const [filterConfigs, setFilterConfigs] = useState<FilterConfig[]>([]);
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
   const [floorPlans, setFloorPlans] = useState<FloorPlanTypeRow[]>([]);
@@ -176,6 +187,55 @@ function InventoryContent() {
     }
   };
 
+  const bookableSelected = units.filter(
+    (u) => selected.includes(u.id) && (u.status === "AVAILABLE" || u.status === "BLOCKED" || u.status === "HOLD")
+  );
+
+  const submitMassBook = async () => {
+    if (!selectedProjectId || bookableSelected.length === 0) return;
+    if (!bookForm.customerName.trim() || !bookForm.customerPhone.trim()) {
+      toast.error("Customer name and phone are required");
+      return;
+    }
+    setBookBusy(true);
+    try {
+      const res = await fetch("/api/inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "mass-book",
+          projectId: selectedProjectId,
+          unitIds: bookableSelected.map((u) => u.id),
+          customerName: bookForm.customerName.trim(),
+          customerPhone: bookForm.customerPhone.trim(),
+          customerEmail: bookForm.customerEmail.trim() || undefined,
+          bookedWithCpName: bookForm.bookedWithCpName.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(formatApiError(data.error, "Mass book failed"));
+        return;
+      }
+      const booked = Number(data.booked ?? 0);
+      const failed = Number(data.failed ?? 0);
+      if (booked > 0) {
+        toast.success(`Booked ${booked} unit${booked !== 1 ? "s" : ""}`);
+      }
+      if (failed > 0) {
+        toast.warning(`${failed} unit${failed !== 1 ? "s" : ""} could not be booked`);
+      }
+      setBookOpen(false);
+      setBookForm({ customerName: "", customerPhone: "", customerEmail: "", bookedWithCpName: "" });
+      setSelected([]);
+      refreshAll();
+    } catch {
+      toast.error("Mass book failed — check your connection and try again");
+    } finally {
+      setBookBusy(false);
+    }
+  };
+
   const toggleSelect = (unit: UnitCardData) => {
     setSelected((prev) =>
       prev.includes(unit.id) ? prev.filter((id) => id !== unit.id) : [...prev, unit.id]
@@ -216,6 +276,13 @@ function InventoryContent() {
             {tab === "grid" && selected.length > 0 && isLgUp && (
               <>
                 <span className="self-center text-sm text-gray-500">{selected.length} selected</span>
+                <Button
+                  size="sm"
+                  disabled={bookBusy || bookableSelected.length === 0}
+                  onClick={() => setBookOpen(true)}
+                >
+                  Book ({bookableSelected.length})
+                </Button>
                 {massActionButtons("block")}
                 {massActionButtons("unblock")}
                 {massActionButtons("hold")}
@@ -304,6 +371,17 @@ function InventoryContent() {
               </Button>
               {showMobileActions && (
                 <div className="absolute bottom-full right-0 mb-2 flex w-44 flex-col gap-1 rounded-lg border bg-white p-2 shadow-lg">
+                  <button
+                    type="button"
+                    className="rounded px-3 py-2 text-left text-sm font-medium text-brand-700 hover:bg-gray-50 disabled:opacity-50"
+                    disabled={bookableSelected.length === 0}
+                    onClick={() => {
+                      setShowMobileActions(false);
+                      setBookOpen(true);
+                    }}
+                  >
+                    Book ({bookableSelected.length})
+                  </button>
                   {(["block", "unblock", "hold", "release_hold"] as MassAction[]).map((action) => (
                     <button
                       key={action}
@@ -320,6 +398,66 @@ function InventoryContent() {
           </div>
         </div>
       )}
+
+      <Modal
+        open={bookOpen}
+        onOpenChange={setBookOpen}
+        title="Book selected units"
+        description={`Create confirmed bookings for ${bookableSelected.length} unit${bookableSelected.length !== 1 ? "s" : ""} with the same customer.`}
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">
+            Units:{" "}
+            {bookableSelected
+              .slice(0, 8)
+              .map((u) => u.unitNumber)
+              .join(", ")}
+            {bookableSelected.length > 8 ? ` +${bookableSelected.length - 8} more` : ""}
+          </p>
+          <div>
+            <Label>Customer name *</Label>
+            <Input
+              className="mt-1"
+              value={bookForm.customerName}
+              onChange={(e) => setBookForm({ ...bookForm, customerName: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Customer phone *</Label>
+            <Input
+              className="mt-1"
+              value={bookForm.customerPhone}
+              onChange={(e) => setBookForm({ ...bookForm, customerPhone: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Customer email</Label>
+            <Input
+              className="mt-1"
+              type="email"
+              value={bookForm.customerEmail}
+              onChange={(e) => setBookForm({ ...bookForm, customerEmail: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Channel partner (optional)</Label>
+            <Input
+              className="mt-1"
+              value={bookForm.bookedWithCpName}
+              onChange={(e) => setBookForm({ ...bookForm, bookedWithCpName: e.target.value })}
+              placeholder="CP name if applicable"
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button className="flex-1" disabled={bookBusy} onClick={() => void submitMassBook()}>
+              {bookBusy ? "Booking..." : `Confirm book (${bookableSelected.length})`}
+            </Button>
+            <Button variant="outline" disabled={bookBusy} onClick={() => setBookOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {selectedProjectId && projectMeta && (
         <UnitStackGenerator

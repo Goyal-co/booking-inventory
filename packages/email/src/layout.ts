@@ -33,8 +33,15 @@ export function getEmailBaseUrl(): string {
 
 export function getEmailLogoUrl(): string {
   const explicit = stripEnvUrl(process.env.EMAIL_LOGO_URL);
-  if (explicit) return explicit;
-  return `${getEmailBaseUrl()}/new_logo.jpeg`;
+  const dashboardLogo = `${getEmailBaseUrl()}/new_logo.jpeg`;
+  // Always use the same wordmark as dashboard (`/new_logo.jpeg`), never the old lettermark `logo.svg`.
+  if (explicit) {
+    if (/\/logo\.svg(\?|$)/i.test(explicit) || /logo\.svg$/i.test(explicit)) {
+      return dashboardLogo;
+    }
+    return explicit;
+  }
+  return dashboardLogo;
 }
 
 export function emailShell(body: string): string {

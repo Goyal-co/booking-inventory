@@ -673,3 +673,128 @@ export async function cancelBooking(
     };
   }, { maxWait: 10_000, timeout: 60_000 });
 }
+
+/**
+ * Admin inventory multi-select book: create confirmed bookings for AVAILABLE units
+ * with shared customer details (no sales block / digital form required).
+ */
+export async function adminMassBookUnits(input: {
+  projectId: string;
+  unitIds: string[];
+  userId: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  bookedWithCpName?: string;
+}) {
+  const results: Array<{
+    unitId: string;
+    unitNumber?: string;
+    bookingId?: string;
+    ok: boolean;
+    error?: string;
+  }> = [];
+
+  for (const unitId of input.unitIds) {
+    try {
+      const outcome = await prisma.$transaction(
+        async (tx) => {
+          const unit = await tx.unit.findFirst({
+            where: {
+              id: unitId,
+              floor: { tower: { projectId: input.projectId } },
+            },
+            include: {
+              costSheetTemplate: true,
+              floor: { include: { tower: true } },
+            },
+          });
+          if (!unit) throw new BookingError("Unit not found in project", "NOT_FOUND");
+          if (unit.status === UnitStatus.BOOKED || unit.status === UnitStatus.SOLD) {
+            throw new BookingError(`Unit ${unit.unitNumber} is already ${unit.status}`, "ALREADY_BOOKED");
+          }
+
+          const existingActive = await getActiveBookingForUnit(tx, unitId);
+          if (existingActive) {
+            throw new BookingError(
+              `Unit ${unit.unitNumber} already has an active booking`,
+              "ALREADY_BOOKED"
+            );
+          }
+
+          await tx.block.deleteMany({ where: { unitId } });
+
+          const costSheetSnapshot = buildCostSheetSnapshot(unit.costSheetTemplate);
+          const totalPrice =
+            unit.priceOverride ?? unit.costSheetTemplate?.totalPrice ?? unit.basePrice ?? 0;
+
+          const booking = await tx.booking.create({
+            data: {
+              unitId,
+              userId: input.userId,
+              customerName: input.customerName.trim(),
+              customerPhone: input.customerPhone.trim(),
+              customerEmail: input.customerEmail?.trim() || null,
+              costSheetSnapshot,
+              totalPrice,
+              status: BookingStatus.CONFIRMED,
+              bookedWithCpName: input.bookedWithCpName?.trim() || null,
+              adminComment: "Booked via Admin inventory multi-select",
+              reviewedById: input.userId,
+              reviewedAt: new Date(),
+            },
+          });
+
+          await tx.unit.update({
+            where: { id: unitId },
+            data: { status: UnitStatus.BOOKED },
+          });
+
+          await createAuditLog(
+            {
+              action: AuditAction.UNIT_BOOKED,
+              entityType: "Booking",
+              entityId: booking.id,
+              userId: input.userId,
+              metadata: {
+                unitId,
+                unitNumber: unit.unitNumber,
+                source: "admin_mass_book",
+                customerName: input.customerName,
+                customerPhone: input.customerPhone,
+              },
+            },
+            tx
+          );
+
+          await createActivity(
+            {
+              projectId: input.projectId,
+              userId: input.userId,
+              message: `Admin booked ${unit.unitNumber} for ${input.customerName}`,
+              unitId,
+            },
+            tx
+          );
+
+          return { unitId, unitNumber: unit.unitNumber, bookingId: booking.id };
+        },
+        { maxWait: 10_000, timeout: 30_000 }
+      );
+
+      results.push({ ...outcome, ok: true });
+    } catch (err) {
+      results.push({
+        unitId,
+        ok: false,
+        error: err instanceof Error ? err.message : "Book failed",
+      });
+    }
+  }
+
+  return {
+    booked: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  };
+}

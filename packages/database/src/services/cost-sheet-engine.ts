@@ -375,10 +375,10 @@ async function loadUnitContext(unitId: string): Promise<UnitPricingContext | nul
 
   const saleableAreaSqft = master?.saleableAreaSqft
     ? Number(master.saleableAreaSqft)
-    : unit.floorPlanType?.superArea ?? unit.carpetArea ?? 0;
+    : unit.superArea ?? unit.floorPlanType?.superArea ?? 0;
   const carpetAreaSqft = master?.carpetAreaSqft
     ? Number(master.carpetAreaSqft)
-    : unit.floorPlanType?.carpetArea ?? unit.carpetArea ?? saleableAreaSqft;
+    : unit.floorPlanType?.carpetArea ?? unit.carpetArea ?? 0;
   const balconyAreaSqft = master?.balconyAreaSqft
     ? Number(master.balconyAreaSqft)
     : unit.floorPlanType?.balconyArea

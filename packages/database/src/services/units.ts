@@ -5,6 +5,7 @@ export interface UnitWithRelations {
   unitNumber: string;
   status: UnitStatus;
   carpetArea: number | null;
+  superArea?: number | null;
   bhkType: string | null;
   facing: string | null;
   basePrice: Prisma.Decimal | null;
@@ -70,7 +71,7 @@ export function serializeUnit(unit: UnitWithRelations, hideHold = true) {
     towerId: unit.floor.tower.id,
     floorNumber: unit.floor.number,
     carpetArea: unit.carpetArea,
-    superArea: unit.floorPlanType?.superArea ?? null,
+    superArea: unit.superArea ?? unit.floorPlanType?.superArea ?? null,
     bhkType: unit.bhkType,
     facing: unit.facing,
     price: price ? Number(price) : null,

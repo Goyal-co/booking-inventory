@@ -226,6 +226,15 @@ export const massBlockSchema = z.object({
   durationMs: z.number().int().optional(),
 });
 
+export const adminMassBookSchema = z.object({
+  projectId: z.string().cuid(),
+  unitIds: z.array(z.string().cuid()).min(1).max(50),
+  customerName: z.string().min(2).max(120),
+  customerPhone: z.string().min(8).max(20),
+  customerEmail: z.string().email().optional().or(z.literal("")),
+  bookedWithCpName: z.string().max(120).optional().or(z.literal("")),
+});
+
 export const createUserSchema = z.object({
   email: z.string().email().transform(normalizeEmail),
   name: z.string().min(2),

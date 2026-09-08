@@ -382,6 +382,8 @@ model Unit {
   unitNumber          String
   status              UnitStatus         @default(AVAILABLE)
   carpetArea          Int?
+  /// Super built-up / saleable area (sqft). Do not store saleable in carpetArea.
+  superArea           Int?
   bhkType             String?
   facing              String?
   basePrice           Decimal?           @db.Decimal(14, 2)

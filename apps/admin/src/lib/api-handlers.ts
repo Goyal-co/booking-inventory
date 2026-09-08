@@ -22,6 +22,7 @@ import {
   getInventoryStructure,
   InventoryError,
   BlockError,
+  adminMassBookUnits,
   AuditAction,
   UserRole,
   BookingStatus,
@@ -56,6 +57,7 @@ import {
   unitStackGenerateSchema,
   bulkAssignSchema,
   massBlockSchema,
+  adminMassBookSchema,
   createUserSchema,
   updateUserSchema,
   filterConfigSchema,
@@ -586,6 +588,39 @@ export async function POST_massBlock(req: NextRequest) {
   }
 
   return NextResponse.json({ results });
+}
+
+export async function POST_adminMassBook(req: NextRequest) {
+  const user = await getAdminUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json();
+  const parsed = adminMassBookSchema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+  const denied = denyUnlessProjectAccess(user, parsed.data.projectId);
+  if (denied) return denied;
+
+  const result = await adminMassBookUnits({
+    projectId: parsed.data.projectId,
+    unitIds: parsed.data.unitIds,
+    userId: user.id,
+    customerName: parsed.data.customerName,
+    customerPhone: parsed.data.customerPhone,
+    customerEmail: parsed.data.customerEmail || undefined,
+    bookedWithCpName: parsed.data.bookedWithCpName || undefined,
+  });
+
+  for (const r of result.results) {
+    if (r.ok) {
+      await emitRealtimeEvent(parsed.data.projectId, REALTIME_EVENTS.UNIT_UPDATED, {
+        unitId: r.unitId,
+        status: "BOOKED",
+      });
+    }
+  }
+
+  return NextResponse.json(result);
 }
 
 export async function GET_units(req: NextRequest) {

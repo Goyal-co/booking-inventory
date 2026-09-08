@@ -81,6 +81,18 @@ export type CreateEoiLeadInput = {
   designation?: string;
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
+  /** Partner Portal public lead id (EOI-… / LEAD-…) */
+  leadId?: string;
+  notes?: string;
+  /** Extended history for CRM (also embedded in notes when CRM ignores unknown fields). */
+  channelPartnerId?: string;
+  channelPartnerName?: string;
+  channelPartnerMobile?: string;
+  intentType?: string;
+  fosName?: string;
+  projectHistory?: Array<Record<string, unknown>>;
+  siteVisitHistory?: Array<Record<string, unknown>>;
+  bookingHistory?: Array<Record<string, unknown>>;
 };
 
 export type BookEoiLeadInput = {
@@ -99,7 +111,24 @@ export type BookEoiLeadInput = {
   /** CP with whom customer booked / came today */
   channelPartnerId?: string;
   channelPartnerName?: string;
+  channelPartnerMobile?: string;
   notes?: string;
+  leadId?: string;
+  projectId?: string;
+  projectName?: string;
+  unitNumber?: string;
+  towerName?: string;
+  floorNumber?: number | string;
+  carpetArea?: number;
+  superBuiltUpArea?: number;
+  saleableArea?: number;
+  totalPrice?: number;
+  salespersonId?: string;
+  salespersonName?: string;
+  bookingId?: string;
+  projectHistory?: Array<Record<string, unknown>>;
+  siteVisitHistory?: Array<Record<string, unknown>>;
+  bookingHistory?: Array<Record<string, unknown>>;
 };
 
 export type UpdateGoyalLeadInput = {
@@ -126,6 +155,9 @@ export type UpdateGoyalLeadInput = {
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
   notes?: string;
+  leadId?: string;
+  channelPartnerId?: string;
+  channelPartnerName?: string;
 };
 
 export type MarkSiteVisitInput = {
@@ -137,5 +169,12 @@ export type MarkSiteVisitInput = {
   /** Channel partner who brought the customer (sent in notes / optional CRM fields). */
   visitingCpId?: string;
   visitingCpName?: string;
+  visitingCpMobile?: string;
   salespersonName?: string;
+  salespersonId?: string;
+  leadId?: string;
+  projectId?: string;
+  projectName?: string;
+  projectHistory?: Array<Record<string, unknown>>;
+  siteVisitHistory?: Array<Record<string, unknown>>;
 };

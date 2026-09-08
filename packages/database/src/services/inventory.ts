@@ -71,6 +71,7 @@ export async function getInventoryStructure(projectId: string, organizationId: s
                   floorPlanTypeId: true,
                   costSheetTemplateId: true,
                   carpetArea: true,
+                  superArea: true,
                 },
               },
             },
@@ -116,7 +117,7 @@ export async function getInventoryStructure(projectId: string, organizationId: s
           return {
             ...u,
             priceOverride: u.priceOverride ? Number(u.priceOverride) : null,
-            superArea: plan?.superArea ?? null,
+            superArea: u.superArea ?? plan?.superArea ?? null,
           };
         }),
       })),
@@ -144,7 +145,7 @@ export async function createUnit(
   });
   if (!tower) throw new InventoryError("Tower not found", "NOT_FOUND");
 
-  let plan: { bhkType: string; carpetArea: number } | null = null;
+  let plan: { bhkType: string; carpetArea: number; superArea: number | null } | null = null;
   let basePrice: Prisma.Decimal | null = null;
   if (input.floorPlanTypeId) {
     const found = await prisma.floorPlanType.findUnique({
@@ -186,6 +187,7 @@ export async function createUnit(
       costSheetTemplateId: input.costSheetTemplateId || null,
       bhkType: plan?.bhkType ?? null,
       carpetArea: plan?.carpetArea ?? null,
+      superArea: plan?.superArea ?? null,
       basePrice,
       facing: input.facing,
       remarks: input.remarks,
@@ -257,6 +259,7 @@ export async function updateUnit(
     updateData.floorPlanTypeId = input.floorPlanTypeId;
     updateData.bhkType = plan.bhkType;
     updateData.carpetArea = plan.carpetArea;
+    updateData.superArea = plan.superArea;
   } else if (input.floorPlanTypeId === null || input.floorPlanTypeId === "") {
     updateData.floorPlanTypeId = null;
   }
