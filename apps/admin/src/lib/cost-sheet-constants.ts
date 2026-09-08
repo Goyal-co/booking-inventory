@@ -24,8 +24,8 @@ export const COST_SHEET_SYSTEM_FIELD_LABELS: Record<CostSheetSystemField, string
   floor: "Floor",
   configuration: "Accommodation / BHK",
   status: "Status",
-  saleableAreaSqft: "Saleable Area (sq.ft.)",
-  saleableAreaSqm: "Saleable Area (sq.m.)",
+  saleableAreaSqft: "Super built-up Area (SBA) (sq.ft.)",
+  saleableAreaSqm: "Super built-up Area (SBA) (sq.m.)",
   carpetAreaSqft: "Carpet Area (sq.ft.)",
   carpetAreaSqm: "Carpet Area (sq.m.)",
   balconyAreaSqft: "Balcony Area (sq.ft.)",
@@ -59,7 +59,7 @@ export const LINE_CALC_MODE_OPTIONS = [
 ] as const;
 
 export const AREA_FIELD_OPTIONS = [
-  { value: "saleable", label: "Saleable area" },
+  { value: "saleable", label: "Super built-up Area (SBA)" },
   { value: "carpet", label: "Carpet area" },
   { value: "balcony", label: "Balcony area" },
 ] as const;

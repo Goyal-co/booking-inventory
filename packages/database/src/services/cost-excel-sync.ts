@@ -7,6 +7,7 @@ import {
   clearProjectInventory,
   createInventoryFromExcelRows,
   linkMasterRowsToInventoryUnits,
+  updateInventoryFromExcelRows,
 } from "./cost-excel-inventory";
 import { extractRowsFromXlsxBuffer, listSheetNames, getSheetUsedColumnCount, expandHeaderCells } from "./cost-excel-parse";
 import { clearLiveExcelCache, fetchWorkbookBufferForSync } from "./cost-excel-live";
@@ -90,6 +91,7 @@ export interface ExcelSyncResult {
     towersCreated: number;
     inventorySkipped: number;
     masterRowsLinked: number;
+    unitsUpdated?: number;
   };
   preview?: ExcelSyncPreview;
   columnMapping?: ExcelColumnMappingPreview;
@@ -646,6 +648,18 @@ export async function syncProjectExcelWorkbook(params: {
       towersCreated: created.towersCreated,
       inventorySkipped: created.skipped,
       masterRowsLinked: 0,
+      unitsUpdated: 0,
+    };
+  } else {
+    const updated = await updateInventoryFromExcelRows(projectId, payloads);
+    inventoryStats = {
+      deletedUnits: 0,
+      deletedTowers: 0,
+      createdUnits: 0,
+      towersCreated: 0,
+      inventorySkipped: updated.skipped,
+      masterRowsLinked: 0,
+      unitsUpdated: updated.updated,
     };
   }
 
@@ -669,10 +683,8 @@ export async function syncProjectExcelWorkbook(params: {
 
   const allWarnings = [...syncWarnings, ...importResult.warnings];
 
-  if (effectiveReplaceInventory) {
-    const linked = await linkMasterRowsToInventoryUnits(projectId);
-    if (inventoryStats) inventoryStats.masterRowsLinked = linked.linked;
-  }
+  const linked = await linkMasterRowsToInventoryUnits(projectId);
+  if (inventoryStats) inventoryStats.masterRowsLinked = linked.linked;
 
   const preview = await buildExcelSyncPreview(projectId, payloads, lineDefinitions, columnMap);
 

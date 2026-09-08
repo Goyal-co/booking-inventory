@@ -185,7 +185,12 @@ export async function getUnits(filters: {
   if (filters.superArea) {
     const area = parseInt(filters.superArea, 10);
     if (!Number.isNaN(area)) {
-      where.floorPlanType = { superArea: area };
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        {
+          OR: [{ superArea: area }, { floorPlanType: { superArea: area } }],
+        },
+      ];
     }
   }
 

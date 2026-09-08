@@ -101,7 +101,7 @@ function CostSheetPreviewBody({
       />
     ) : (
       <p className="text-sm text-amber-700">
-        Cost sheet unavailable for this unit. Check saleable area, base rate in Excel, and payment
+        Cost sheet unavailable for this unit. Check SBA, base rate in Excel, and payment
         schedule / other charges for this project.
       </p>
     )}
@@ -245,7 +245,7 @@ export function ProjectCostExcelInventoryPreview({
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2 text-right">Floor</th>
-                    <th className="px-3 py-2 text-right">Saleable sq.ft.</th>
+                    <th className="px-3 py-2 text-right">SBA sq.ft.</th>
                     <th className="px-3 py-2 text-right">Base ₹/sq.ft</th>
                     <th className="px-3 py-2">Excel row</th>
                   </tr>

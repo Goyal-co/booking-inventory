@@ -168,8 +168,8 @@ export const COST_SHEET_SYSTEM_FIELD_LABELS: Record<CostSheetSystemField, string
   floor: "Floor",
   configuration: "Accommodation / BHK",
   status: "Status",
-  saleableAreaSqft: "Saleable Area (sq.ft.)",
-  saleableAreaSqm: "Saleable Area (sq.m.)",
+  saleableAreaSqft: "Super built-up Area (SBA) (sq.ft.)",
+  saleableAreaSqm: "Super built-up Area (SBA) (sq.m.)",
   carpetAreaSqft: "Carpet Area (sq.ft.)",
   carpetAreaSqm: "Carpet Area (sq.m.)",
   balconyAreaSqft: "Balcony Area (sq.ft.)",
@@ -328,6 +328,64 @@ export function resolveSaleableAreaSqft(payload: MappedUnitRowPayload): number |
   if (payload.saleableAreaSqm != null && payload.saleableAreaSqm > 0) {
     return round2(payload.saleableAreaSqm * 10.7639);
   }
+  return null;
+}
+
+/**
+ * Normalize Excel / free-text unit status into UnitStatus.
+ * Returns null when the cell is empty or unrecognized (caller should leave status unchanged).
+ *
+ * Canonical values and accepted aliases (case / spacing / punctuation insensitive):
+ * - AVAILABLE: Available, avail, AVL, avl, Avail, AVBL, Open, Vacant, Free, Unsold
+ * - BLOCKED: Blocked, Block, Blk, BLKD
+ * - BOOKED: Booked, Book, Bkd, Reserved, Reserve
+ * - SOLD: Sold, Sale, Closed
+ * - HOLD: Hold, On Hold, OnHold, HLD
+ */
+export function normalizeUnitStatus(
+  raw: string | null | undefined
+): "AVAILABLE" | "BLOCKED" | "BOOKED" | "SOLD" | "HOLD" | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+
+  const upper = trimmed.toUpperCase().replace(/[_./\\-]+/g, " ").replace(/\s+/g, " ").trim();
+  const compact = upper.replace(/\s+/g, "");
+
+  if (
+    (
+      [
+        "AVAILABLE",
+        "AVAIL",
+        "AVL",
+        "AVBL",
+        "AV",
+        "OPEN",
+        "VACANT",
+        "FREE",
+        "UNSOLD",
+        "READY",
+      ] as string[]
+    ).includes(compact) ||
+    compact.startsWith("AVAIL")
+  ) {
+    return "AVAILABLE";
+  }
+  if ((["HOLD", "ONHOLD", "HLD", "TEMPHOLD"] as string[]).includes(compact)) {
+    return "HOLD";
+  }
+  if ((["BLOCKED", "BLOCK", "BLK", "BLKD"] as string[]).includes(compact)) {
+    return "BLOCKED";
+  }
+  if (
+    (["BOOKED", "BOOK", "BKD", "RESERVED", "RESERVE", "RESVD", "RSVD"] as string[]).includes(compact)
+  ) {
+    return "BOOKED";
+  }
+  if ((["SOLD", "SALE", "CLOSED"] as string[]).includes(compact)) {
+    return "SOLD";
+  }
+
   return null;
 }
 
@@ -494,8 +552,8 @@ export const RIVIERA_DEFAULT_LINE_DEFINITIONS = [
   { key: "unit_no", label: "Villa No.", role: "IDENTITY", systemField: "unitNo", sortOrder: 0, isRequired: true },
   { key: "wing", label: "Wing", role: "IDENTITY", systemField: "tower", sortOrder: 1, isRequired: true },
   { key: "villa_type", label: "VILLA TYPE", role: "IDENTITY", systemField: "configuration", sortOrder: 2 },
-  { key: "saleable_sqft", label: "Salable Area (Sq.ft.)", role: "AREA", systemField: "saleableAreaSqft", sortOrder: 3 },
-  { key: "saleable_sqm", label: "Salable Area (Sq.Mt.)", role: "AREA", systemField: "saleableAreaSqm", sortOrder: 4 },
+  { key: "saleable_sqft", label: "Super built-up Area (SBA) (Sq.ft.)", role: "AREA", systemField: "saleableAreaSqft", sortOrder: 3 },
+  { key: "saleable_sqm", label: "Super built-up Area (SBA) (Sq.Mt.)", role: "AREA", systemField: "saleableAreaSqm", sortOrder: 4 },
   { key: "carpet_sqft", label: "Carpet Area (Sq.ft.)", role: "AREA", systemField: "carpetAreaSqft", sortOrder: 5 },
   { key: "carpet_sqm", label: "Carpet Area (Sq.Mt.)", role: "AREA", systemField: "carpetAreaSqm", sortOrder: 6 },
   { key: "balcony_sqft", label: "Balcony Area (Sq.ft.)", role: "AREA", systemField: "balconyAreaSqft", sortOrder: 7 },

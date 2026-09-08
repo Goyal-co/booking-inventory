@@ -34,7 +34,6 @@ function buildUnitMasterData(
 ): Prisma.UnitMasterRowCreateInput | null {
   if (!payload.tower?.trim() || !payload.unitNo?.trim()) return null;
   const saleableSqft = resolveSaleableAreaSqft(payload);
-  if (!saleableSqft || saleableSqft <= 0) return null;
 
   const mergedImported = {
     ...(existingImported && typeof existingImported === "object" ? existingImported : {}),
@@ -47,7 +46,8 @@ function buildUnitMasterData(
     unitNo: payload.unitNo.trim(),
     floor: payload.floor ?? 0,
     configuration: payload.configuration?.trim() ?? "",
-    saleableAreaSqft: saleableSqft,
+    // Saleable / SBA is optional on sync; store 0 when missing (column remains required in DB).
+    saleableAreaSqft: saleableSqft ?? 0,
     saleableAreaSqm: payload.saleableAreaSqm ?? null,
     carpetAreaSqft: payload.carpetAreaSqft ?? null,
     carpetAreaSqm: payload.carpetAreaSqm ?? null,
@@ -138,18 +138,6 @@ export async function executeCostExcelImport(params: {
       errors.push({
         rowIndex: headerRowIndex + i + 1,
         message: "Missing tower or unit number after mapping",
-        tower: payload.tower,
-        unitNo: payload.unitNo,
-      });
-      continue;
-    }
-
-    const saleableSqft = resolveSaleableAreaSqft(payload);
-    if (!saleableSqft || saleableSqft <= 0) {
-      skipped++;
-      errors.push({
-        rowIndex: headerRowIndex + i + 1,
-        message: "Missing or invalid saleable area",
         tower: payload.tower,
         unitNo: payload.unitNo,
       });

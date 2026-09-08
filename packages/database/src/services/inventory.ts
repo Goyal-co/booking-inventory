@@ -466,6 +466,7 @@ export async function bulkAssignInventory(
     if (plan) {
       updateData.bhkType = plan.bhkType;
       updateData.carpetArea = plan.carpetArea;
+      updateData.superArea = plan.superArea;
     }
   }
 
@@ -556,6 +557,7 @@ export async function generateInventory(input: {
         costSheetTemplateId: stack.costSheetTemplateId,
         bhkType: plan.bhkType,
         carpetArea: plan.carpetArea,
+        superArea: plan.superArea,
         basePrice: costSheet.totalPrice,
       };
 

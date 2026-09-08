@@ -229,8 +229,8 @@ export const massBlockSchema = z.object({
 export const adminMassBookSchema = z.object({
   projectId: z.string().cuid(),
   unitIds: z.array(z.string().cuid()).min(1).max(50),
-  customerName: z.string().min(2).max(120),
-  customerPhone: z.string().min(8).max(20),
+  customerName: z.string().max(120).optional().or(z.literal("")),
+  customerPhone: z.string().max(20).optional().or(z.literal("")),
   customerEmail: z.string().email().optional().or(z.literal("")),
   bookedWithCpName: z.string().max(120).optional().or(z.literal("")),
 });
@@ -433,7 +433,7 @@ export const unitMasterRowSchema = z.object({
   unitNo: z.string().min(1),
   floor: z.number().int(),
   configuration: z.string().optional().default(""),
-  saleableAreaSqft: z.number().positive(),
+  saleableAreaSqft: z.number().positive().optional().nullable(),
   saleableAreaSqm: z.number().positive().optional().nullable(),
   carpetAreaSqft: z.number().positive().optional().nullable(),
   carpetAreaSqm: z.number().positive().optional().nullable(),

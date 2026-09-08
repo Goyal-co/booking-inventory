@@ -193,10 +193,6 @@ function InventoryContent() {
 
   const submitMassBook = async () => {
     if (!selectedProjectId || bookableSelected.length === 0) return;
-    if (!bookForm.customerName.trim() || !bookForm.customerPhone.trim()) {
-      toast.error("Customer name and phone are required");
-      return;
-    }
     setBookBusy(true);
     try {
       const res = await fetch("/api/inventory", {
@@ -206,8 +202,8 @@ function InventoryContent() {
           type: "mass-book",
           projectId: selectedProjectId,
           unitIds: bookableSelected.map((u) => u.id),
-          customerName: bookForm.customerName.trim(),
-          customerPhone: bookForm.customerPhone.trim(),
+          customerName: bookForm.customerName.trim() || undefined,
+          customerPhone: bookForm.customerPhone.trim() || undefined,
           customerEmail: bookForm.customerEmail.trim() || undefined,
           bookedWithCpName: bookForm.bookedWithCpName.trim() || undefined,
         }),
@@ -415,7 +411,7 @@ function InventoryContent() {
             {bookableSelected.length > 8 ? ` +${bookableSelected.length - 8} more` : ""}
           </p>
           <div>
-            <Label>Customer name *</Label>
+            <Label>Customer name (optional)</Label>
             <Input
               className="mt-1"
               value={bookForm.customerName}
@@ -423,7 +419,7 @@ function InventoryContent() {
             />
           </div>
           <div>
-            <Label>Customer phone *</Label>
+            <Label>Customer phone (optional)</Label>
             <Input
               className="mt-1"
               value={bookForm.customerPhone}
@@ -431,7 +427,7 @@ function InventoryContent() {
             />
           </div>
           <div>
-            <Label>Customer email</Label>
+            <Label>Customer email (optional)</Label>
             <Input
               className="mt-1"
               type="email"

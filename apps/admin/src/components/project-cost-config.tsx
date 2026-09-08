@@ -216,8 +216,8 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
   };
 
   const saveUnitRow = async () => {
-    if (!unitDraft.tower || !unitDraft.unitNo || unitDraft.floor === "" || !unitDraft.saleableAreaSqft) {
-      toast.error("Tower, Unit No, Floor and Saleable Area are required");
+    if (!unitDraft.tower || !unitDraft.unitNo || unitDraft.floor === "") {
+      toast.error("Tower, Unit No and Floor are required");
       return;
     }
     setSaving(true);
@@ -229,7 +229,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
         unitNo: String(unitDraft.unitNo),
         floor: Number(unitDraft.floor),
         configuration: String(unitDraft.configuration || ""),
-        saleableAreaSqft: Number(unitDraft.saleableAreaSqft),
+        saleableAreaSqft: unitDraft.saleableAreaSqft ? Number(unitDraft.saleableAreaSqft) : null,
         saleableAreaSqm: unitDraft.saleableAreaSqm ? Number(unitDraft.saleableAreaSqm) : null,
         carpetAreaSqft: unitDraft.carpetAreaSqft ? Number(unitDraft.carpetAreaSqft) : null,
         carpetAreaSqm: unitDraft.carpetAreaSqm ? Number(unitDraft.carpetAreaSqm) : null,
@@ -590,7 +590,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
                         setCharges(next);
                       }}
                     >
-                      <option value="saleable">Saleable area</option>
+                      <option value="saleable">Super built-up Area (SBA)</option>
                       <option value="carpet">Carpet area</option>
                       <option value="balcony">Balcony area</option>
                     </select>
@@ -644,7 +644,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
         <CardHeader>
           <CardTitle>8. Unit Master Inventory ({unitMaster.length} flats)</CardTitle>
           <p className="mt-1 text-xs text-gray-500">
-            Wing/Tower, Apartment No., Floor, Accommodation, Saleable/Carpet/Balcony areas (sq.ft + sq.m).
+            Wing/Tower, Apartment No., Floor, Accommodation, SBA/Carpet/Balcony areas (sq.ft + sq.m).
             These feed the cost sheet inventory section for each flat.
           </p>
         </CardHeader>
@@ -656,8 +656,8 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
                 ["unitNo", "Apartment No."],
                 ["floor", "Floor"],
                 ["configuration", "Accommodation Type"],
-                ["saleableAreaSqft", "Saleable Sq.ft"],
-                ["saleableAreaSqm", "Saleable Sq.m"],
+                ["saleableAreaSqft", "SBA Sq.ft"],
+                ["saleableAreaSqm", "SBA Sq.m"],
                 ["carpetAreaSqft", "Carpet Sq.ft"],
                 ["carpetAreaSqm", "Carpet Sq.m"],
                 ["balconyAreaSqft", "Balcony Sq.ft"],
@@ -704,7 +704,7 @@ export function ProjectCostConfigPanel({ projectId }: { projectId: string }) {
                   <th className="px-3 py-2">Apt No.</th>
                   <th className="px-3 py-2">Floor</th>
                   <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Saleable</th>
+                  <th className="px-3 py-2">SBA</th>
                   <th className="px-3 py-2">Base ₹/sqft</th>
                   <th className="px-3 py-2">Carpet</th>
                   <th className="px-3 py-2">Balcony</th>

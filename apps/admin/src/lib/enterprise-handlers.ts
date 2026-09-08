@@ -185,6 +185,10 @@ export async function POST_unitMasterRow(req: NextRequest, { params }: { params:
   const body = await req.json();
   const parsed = unitMasterRowSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  const masterData = {
+    ...parsed.data,
+    saleableAreaSqft: parsed.data.saleableAreaSqft ?? 0,
+  };
   const row = await prisma.unitMasterRow.upsert({
     where: {
       projectId_tower_unitNo: {
@@ -193,8 +197,8 @@ export async function POST_unitMasterRow(req: NextRequest, { params }: { params:
         unitNo: parsed.data.unitNo,
       },
     },
-    create: { projectId: id, ...parsed.data },
-    update: parsed.data,
+    create: { projectId: id, ...masterData },
+    update: masterData,
   });
   return NextResponse.json({ row });
 }
@@ -228,7 +232,9 @@ export async function POST_unitMasterImport(req: NextRequest, { params }: { para
         unitNo: String(r.unitNo),
         floor: Number(r.floor),
         configuration: String(r.configuration ?? ""),
-        saleableAreaSqft: Number(r.saleableAreaSqft),
+        saleableAreaSqft: r.saleableAreaSqft != null && r.saleableAreaSqft !== ""
+          ? Number(r.saleableAreaSqft)
+          : 0,
         saleableAreaSqm: r.saleableAreaSqm ? Number(r.saleableAreaSqm) : null,
         carpetAreaSqft: r.carpetAreaSqft ? Number(r.carpetAreaSqft) : null,
         carpetAreaSqm: r.carpetAreaSqm ? Number(r.carpetAreaSqm) : null,

@@ -605,8 +605,8 @@ export async function POST_adminMassBook(req: NextRequest) {
     projectId: parsed.data.projectId,
     unitIds: parsed.data.unitIds,
     userId: user.id,
-    customerName: parsed.data.customerName,
-    customerPhone: parsed.data.customerPhone,
+    customerName: parsed.data.customerName || undefined,
+    customerPhone: parsed.data.customerPhone || undefined,
     customerEmail: parsed.data.customerEmail || undefined,
     bookedWithCpName: parsed.data.bookedWithCpName || undefined,
   });
@@ -638,13 +638,30 @@ export async function GET_units(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
   const { projectId: _pid, status, ...rest } = parsed.data;
-  const units = await getUnits({
-    ...rest,
-    projectId,
-    hideHold: false,
-    status: status as import("@booking/database").UnitStatus | undefined,
-  });
-  return NextResponse.json({ units });
+  try {
+    const units = await getUnits({
+      ...rest,
+      projectId,
+      hideHold: false,
+      status: status as import("@booking/database").UnitStatus | undefined,
+    });
+    return NextResponse.json({ units });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load units";
+    // Prisma P2022 = column does not exist (schema drift) — surface clearly instead of opaque 500
+    if (typeof message === "string" && (message.includes("P2022") || message.includes("does not exist"))) {
+      return NextResponse.json(
+        {
+          error:
+            "Inventory database schema is out of date (missing column). Run prisma db push against production, then retry.",
+          detail: message,
+        },
+        { status: 503 }
+      );
+    }
+    console.error("[GET_units]", error);
+    return NextResponse.json({ error: "Failed to load units" }, { status: 500 });
+  }
 }
 
 export async function GET_inventoryStructure(
@@ -665,7 +682,19 @@ export async function GET_inventoryStructure(
     if (error instanceof InventoryError) {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
-    throw error;
+    const message = error instanceof Error ? error.message : "Failed to load inventory structure";
+    if (typeof message === "string" && (message.includes("P2022") || message.includes("does not exist"))) {
+      return NextResponse.json(
+        {
+          error:
+            "Inventory database schema is out of date (missing column). Run prisma db push against production, then retry.",
+          detail: message,
+        },
+        { status: 503 }
+      );
+    }
+    console.error("[GET_inventoryStructure]", error);
+    return NextResponse.json({ error: "Failed to load inventory structure" }, { status: 500 });
   }
 }
 

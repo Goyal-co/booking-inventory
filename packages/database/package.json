@@ -10,6 +10,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:push:schema": "prisma db push --skip-generate",
+    "db:verify-inventory": "node scripts/_verify-inventory-schema.cjs",
     "db:seed": "pnpm exec tsx prisma/seed.ts",
     "db:bootstrap": "pnpm exec tsx prisma/bootstrap.ts",
     "db:reset": "prisma db push --force-reset && pnpm exec tsx prisma/seed.ts",

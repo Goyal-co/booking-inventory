@@ -682,8 +682,8 @@ export async function adminMassBookUnits(input: {
   projectId: string;
   unitIds: string[];
   userId: string;
-  customerName: string;
-  customerPhone: string;
+  customerName?: string;
+  customerPhone?: string;
   customerEmail?: string;
   bookedWithCpName?: string;
 }) {
@@ -728,12 +728,15 @@ export async function adminMassBookUnits(input: {
           const totalPrice =
             unit.priceOverride ?? unit.costSheetTemplate?.totalPrice ?? unit.basePrice ?? 0;
 
+          const customerName = input.customerName?.trim() || "";
+          const customerPhone = input.customerPhone?.trim() || "";
+
           const booking = await tx.booking.create({
             data: {
               unitId,
               userId: input.userId,
-              customerName: input.customerName.trim(),
-              customerPhone: input.customerPhone.trim(),
+              customerName,
+              customerPhone,
               customerEmail: input.customerEmail?.trim() || null,
               costSheetSnapshot,
               totalPrice,
@@ -760,8 +763,8 @@ export async function adminMassBookUnits(input: {
                 unitId,
                 unitNumber: unit.unitNumber,
                 source: "admin_mass_book",
-                customerName: input.customerName,
-                customerPhone: input.customerPhone,
+                customerName: customerName || null,
+                customerPhone: customerPhone || null,
               },
             },
             tx
@@ -771,7 +774,9 @@ export async function adminMassBookUnits(input: {
             {
               projectId: input.projectId,
               userId: input.userId,
-              message: `Admin booked ${unit.unitNumber} for ${input.customerName}`,
+              message: customerName
+                ? `Admin booked ${unit.unitNumber} for ${customerName}`
+                : `Admin booked ${unit.unitNumber}`,
               unitId,
             },
             tx
