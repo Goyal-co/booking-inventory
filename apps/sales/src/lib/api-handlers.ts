@@ -974,11 +974,17 @@ export async function POST_directLeadSiteVisit(
   );
 }
 
-const directBookSchema = z.object({
-  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit OTP sent to the customer"),
-  bookedDate: z.string().optional(),
-  sourceOfEnquiry: z.string().optional(),
-});
+const directBookSchema = z
+  .object({
+    otp: z.string().optional(),
+    skipOtp: z.boolean().optional(),
+    bookedDate: z.string().optional(),
+    sourceOfEnquiry: z.string().optional(),
+  })
+  .refine((d) => d.skipOtp === true || /^\d{6}$/.test((d.otp ?? "").trim()), {
+    message: "Enter the 6-digit OTP or choose Proceed without OTP",
+    path: ["otp"],
+  });
 
 export async function POST_directLeadBookOtpSend(
   _req: NextRequest,
@@ -1057,17 +1063,19 @@ export async function POST_directLeadBook(
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const otpOk =
-    verifyCustomerOtp("DIRECT_BOOKING", id, parsed.data.otp)
-    || (isCustomerOtpVerified("DIRECT_BOOKING", id)
-      && consumeCustomerOtpVerified("DIRECT_BOOKING", id));
-  if (!otpOk) {
-    return NextResponse.json(
-      { error: "Invalid or expired OTP. Send a new code to the customer email." },
-      { status: 400 },
-    );
+  if (!parsed.data.skipOtp) {
+    const otpOk =
+      verifyCustomerOtp("DIRECT_BOOKING", id, parsed.data.otp ?? "")
+      || (isCustomerOtpVerified("DIRECT_BOOKING", id)
+        && consumeCustomerOtpVerified("DIRECT_BOOKING", id));
+    if (!otpOk) {
+      return NextResponse.json(
+        { error: "Invalid or expired OTP. Send a new code to the customer email." },
+        { status: 400 },
+      );
+    }
+    consumeCustomerOtpVerified("DIRECT_BOOKING", id);
   }
-  consumeCustomerOtpVerified("DIRECT_BOOKING", id);
 
   try {
     const result = await markDirectLeadBooked({

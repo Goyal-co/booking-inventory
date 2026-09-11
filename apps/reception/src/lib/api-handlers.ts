@@ -473,23 +473,25 @@ export async function POST_assignLead(req: NextRequest, { params }: { params: Pr
     select: { id: true, customerEmail: true },
   });
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
-  if (!lead.customerEmail) {
+  if (!parsed.data.skipOtp && !lead.customerEmail) {
     return NextResponse.json(
       { error: "Customer email is required to send OTP and complete site visit" },
       { status: 400 },
     );
   }
 
-  const otpOk =
-    verifyCustomerOtp("SITE_VISIT", id, parsed.data.otp)
-    || (isCustomerOtpVerified("SITE_VISIT", id) && consumeCustomerOtpVerified("SITE_VISIT", id));
-  if (!otpOk) {
-    return NextResponse.json(
-      { error: "Invalid or expired OTP. Send a new code to the customer email." },
-      { status: 400 },
-    );
+  if (!parsed.data.skipOtp) {
+    const otpOk =
+      verifyCustomerOtp("SITE_VISIT", id, parsed.data.otp ?? "")
+      || (isCustomerOtpVerified("SITE_VISIT", id) && consumeCustomerOtpVerified("SITE_VISIT", id));
+    if (!otpOk) {
+      return NextResponse.json(
+        { error: "Invalid or expired OTP. Send a new code to the customer email." },
+        { status: 400 },
+      );
+    }
+    consumeCustomerOtpVerified("SITE_VISIT", id);
   }
-  consumeCustomerOtpVerified("SITE_VISIT", id);
 
   const sales = await prisma.user.findFirst({
     where: {
@@ -1116,16 +1118,22 @@ export async function POST_eoiBook(req: NextRequest, { params }: { params: Promi
   }
 }
 
-const assignEoiLeadSchema = z.object({
-  salesUserId: z.string().min(1),
-  fullName: z.string().min(1).optional(),
-  phone: z.string().min(5).optional(),
-  email: z.string().email().optional().or(z.literal("")),
-  projectName: z.string().optional(),
-  leadCode: z.string().optional(),
-  notes: z.string().optional(),
-  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit OTP sent to the customer"),
-});
+const assignEoiLeadSchema = z
+  .object({
+    salesUserId: z.string().min(1),
+    fullName: z.string().min(1).optional(),
+    phone: z.string().min(5).optional(),
+    email: z.string().email().optional().or(z.literal("")),
+    projectName: z.string().optional(),
+    leadCode: z.string().optional(),
+    notes: z.string().optional(),
+    otp: z.string().optional(),
+    skipOtp: z.boolean().optional(),
+  })
+  .refine((d) => d.skipOtp === true || /^\d{6}$/.test((d.otp ?? "").trim()), {
+    message: "Enter the 6-digit OTP or choose Proceed without OTP",
+    path: ["otp"],
+  });
 
 export async function POST_eoiSiteVisitOtpSend(
   req: NextRequest,
@@ -1206,17 +1214,19 @@ export async function POST_eoiAssign(
   }
 
   const eoiOtpSubject = `eoi:${id}`;
-  const otpOk =
-    verifyCustomerOtp("SITE_VISIT", eoiOtpSubject, parsed.data.otp)
-    || (isCustomerOtpVerified("SITE_VISIT", eoiOtpSubject)
-      && consumeCustomerOtpVerified("SITE_VISIT", eoiOtpSubject));
-  if (!otpOk) {
-    return NextResponse.json(
-      { error: "Invalid or expired OTP. Send a new code to the customer email." },
-      { status: 400 },
-    );
+  if (!parsed.data.skipOtp) {
+    const otpOk =
+      verifyCustomerOtp("SITE_VISIT", eoiOtpSubject, parsed.data.otp ?? "")
+      || (isCustomerOtpVerified("SITE_VISIT", eoiOtpSubject)
+        && consumeCustomerOtpVerified("SITE_VISIT", eoiOtpSubject));
+    if (!otpOk) {
+      return NextResponse.json(
+        { error: "Invalid or expired OTP. Send a new code to the customer email." },
+        { status: 400 },
+      );
+    }
+    consumeCustomerOtpVerified("SITE_VISIT", eoiOtpSubject);
   }
-  consumeCustomerOtpVerified("SITE_VISIT", eoiOtpSubject);
 
   let crmLead: Awaited<ReturnType<typeof getGoyalLead>> | null = null;
   try {

@@ -43,19 +43,26 @@ export const walkInLeadSchema = z.object({
   projectId: z.string().cuid().optional(),
 });
 
-export const leadAssignSchema = z.object({
-  salesUserId: z.string().cuid(),
-  notes: z.string().optional(),
-  /** Channel partner the visitor is with today (when multiple CPs registered the same phone). */
-  visitingPartnerCpId: z.string().min(1).max(120).optional(),
-  visitingPartnerName: z.string().min(1).max(200).optional(),
-  /** EOI association id for the selected CP (scopes Partner Portal notify). */
-  eoiCpLeadId: z.string().min(1).max(120).optional(),
-  projectId: z.string().min(1).max(120).optional(),
-  projectName: z.string().min(1).max(200).optional(),
-  /** Customer email OTP confirming site visit (required). */
-  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit OTP sent to the customer"),
-});
+export const leadAssignSchema = z
+  .object({
+    salesUserId: z.string().cuid(),
+    notes: z.string().optional(),
+    /** Channel partner the visitor is with today (when multiple CPs registered the same phone). */
+    visitingPartnerCpId: z.string().min(1).max(120).optional(),
+    visitingPartnerName: z.string().min(1).max(200).optional(),
+    /** EOI association id for the selected CP (scopes Partner Portal notify). */
+    eoiCpLeadId: z.string().min(1).max(120).optional(),
+    projectId: z.string().min(1).max(120).optional(),
+    projectName: z.string().min(1).max(200).optional(),
+    /** Customer email OTP confirming site visit (required unless skipOtp). */
+    otp: z.string().optional(),
+    /** Reception / sales may bypass email OTP when customer cannot receive mail. */
+    skipOtp: z.boolean().optional(),
+  })
+  .refine((d) => d.skipOtp === true || /^\d{6}$/.test((d.otp ?? "").trim()), {
+    message: "Enter the 6-digit OTP or choose Proceed without OTP",
+    path: ["otp"],
+  });
 
 export const integrationEventSchema = z.object({
   type: z.enum([

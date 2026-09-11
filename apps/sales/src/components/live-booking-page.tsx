@@ -344,7 +344,7 @@ function LiveBookingContent() {
     setLeadResults([]);
   };
 
-  const markLeadBooked = async () => {
+  const markLeadBooked = async (opts?: { skipOtp?: boolean }) => {
     if (!selectedLead?.id) {
       toast.error("Select a lead first");
       return;
@@ -353,7 +353,8 @@ function LiveBookingContent() {
       toast.message("Lead is already marked booked");
       return;
     }
-    if (!/^\d{6}$/.test(bookOtp)) {
+    const skipOtp = !!opts?.skipOtp;
+    if (!skipOtp && !/^\d{6}$/.test(bookOtp)) {
       toast.error("Enter the 6-digit OTP sent to the customer");
       return;
     }
@@ -363,7 +364,8 @@ function LiveBookingContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          otp: bookOtp,
+          otp: skipOtp ? undefined : bookOtp,
+          skipOtp: skipOtp || undefined,
           bookedDate: new Date().toISOString().slice(0, 10),
           sourceOfEnquiry: "Live Booking",
         }),
@@ -383,11 +385,15 @@ function LiveBookingContent() {
           : prev
       );
       setBookOtp("");
-      if (data.crmSynced) toast.success("Lead marked booked — CRM updated");
-      else
-        toast.success("Lead marked booked", {
+      if (data.crmSynced) {
+        toast.success(
+          skipOtp ? "Lead marked booked without OTP — CRM updated" : "Lead marked booked — CRM updated"
+        );
+      } else {
+        toast.success(skipOtp ? "Lead marked booked without OTP" : "Lead marked booked", {
           description: data.crmError || "Saved locally (CRM optional)",
         });
+      }
     } finally {
       setLeadBookBusy(false);
     }
@@ -1006,9 +1012,18 @@ function LiveBookingContent() {
                         >
                           {leadBookBusy ? "Marking…" : "Mark as Booked"}
                         </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={leadBookBusy}
+                          onClick={() => void markLeadBooked({ skipOtp: true })}
+                        >
+                          Proceed without OTP
+                        </Button>
                       </div>
                       <p className="text-xs text-gray-500">
-                        Direct booking — no digital form. Customer confirms via email OTP.
+                        Direct booking — no digital form. Confirm with email OTP, or proceed without OTP.
                       </p>
                     </div>
                   )}

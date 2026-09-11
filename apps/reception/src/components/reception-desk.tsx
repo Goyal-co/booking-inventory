@@ -303,6 +303,7 @@ function SalesAssignRow({
   onChange,
   sales,
   onConfirm,
+  onConfirmWithoutOtp,
   confirmLabel,
   disabled,
   requireSales = true,
@@ -316,6 +317,7 @@ function SalesAssignRow({
   onChange: (id: string) => void;
   sales: Array<{ id: string; name: string }>;
   onConfirm: () => void;
+  onConfirmWithoutOtp: () => void;
   confirmLabel: string;
   disabled?: boolean;
   requireSales?: boolean;
@@ -348,7 +350,7 @@ function SalesAssignRow({
       <div className="mt-3 space-y-2">
         <StepLabel step={3} title="Customer OTP (site visit)" />
         <p className="text-xs text-gray-500">
-          Send a code to the customer email, then enter it to confirm the site visit.
+          Send a code to the customer email, then enter it to confirm the site visit — or proceed without OTP.
           {otpHint ? ` ${otpHint}` : ""}
         </p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -367,12 +369,28 @@ function SalesAssignRow({
           </Button>
           <Button
             className="shrink-0"
-            disabled={disabled || (requireSales && !value) || otp.length !== 6}
+            disabled={
+              disabled ||
+              (requireSales && !value) ||
+              // OTP only required when assigning a salesperson via the primary confirm action
+              (!!value && otp.length !== 6)
+            }
             onClick={onConfirm}
           >
             {confirmLabel}
           </Button>
         </div>
+        {value || requireSales ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={disabled || (requireSales && !value)}
+            onClick={onConfirmWithoutOtp}
+          >
+            Proceed without OTP
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -620,7 +638,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     if (tab === "eoi") void loadEoi(1);
   }, [tab, loadEoi]);
 
-  const registerWalkIn = async (alsoAssign = false) => {
+  const registerWalkIn = async (alsoAssign = false, opts?: { skipOtp?: boolean }) => {
     const res = await fetch("/api/leads/walkin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -633,7 +651,13 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     }
     toast.success(`Direct walk-in registered: ${d.lead.leadId}`);
     if (alsoAssign && walkInSalesId && d.lead?.id) {
-      await assign(d.lead.id, walkInSalesId);
+      const assigned = await assign(d.lead.id, walkInSalesId, undefined, opts);
+      if (!assigned) {
+        // Keep form so reception can retry OTP / assign on the new lead
+        setSelectedLeadId(d.lead.id);
+        void refreshVisits();
+        return;
+      }
     }
     setWalkIn({ customerName: "", customerPhone: "", customerEmail: "" });
     setWalkInSalesId("");
@@ -649,18 +673,21 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       eoiCpLeadId?: string;
       projectId?: string;
       projectName?: string;
-    }
-  ) => {
-    if (!/^\d{6}$/.test(siteVisitOtp)) {
+    },
+    opts?: { skipOtp?: boolean }
+  ): Promise<boolean> => {
+    const skipOtp = !!opts?.skipOtp;
+    if (!skipOtp && !/^\d{6}$/.test(siteVisitOtp)) {
       toast.error("Enter the 6-digit OTP sent to the customer");
-      return;
+      return false;
     }
     const res = await fetch(`/api/leads/${leadId}/assign`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         salesUserId,
-        otp: siteVisitOtp,
+        otp: skipOtp ? undefined : siteVisitOtp,
+        skipOtp: skipOtp || undefined,
         visitingPartnerCpId: partner?.visitingPartnerCpId,
         visitingPartnerName: partner?.visitingPartnerName,
         eoiCpLeadId: partner?.eoiCpLeadId,
@@ -671,9 +698,17 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     if (res.ok) {
       const d = await res.json().catch(() => ({}));
       if (d.crmSynced) {
-        toast.success("Assigned — site visit checked in (CRM synced)");
+        toast.success(
+          skipOtp
+            ? "Assigned without OTP — site visit checked in (CRM synced)"
+            : "Assigned — site visit checked in (CRM synced)"
+        );
       } else {
-        toast.success("Assigned to salesperson — site visit checked in locally");
+        toast.success(
+          skipOtp
+            ? "Assigned without OTP — site visit checked in locally"
+            : "Assigned to salesperson — site visit checked in locally"
+        );
         if (typeof d.crmError === "string" && d.crmError) {
           toast.warning("CRM site-visit not synced", { description: d.crmError });
         }
@@ -682,10 +717,11 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       await refreshVisits();
       setAssignSalesId("");
       setSiteVisitOtp("");
-    } else {
-      const d = await res.json().catch(() => ({}));
-      toast.error(typeof d.error === "string" ? d.error : "Assign failed");
+      return true;
     }
+    const err = await res.json().catch(() => ({}));
+    toast.error(typeof err.error === "string" ? err.error : "Assign failed");
+    return false;
   };
 
   const sendLeadOtp = async (leadId: string) => {
@@ -904,7 +940,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     await sendLeadOtp(leadId);
   };
 
-  const confirmAndAssign = async () => {
+  const confirmAndAssign = async (opts?: { skipOtp?: boolean }) => {
+    const skipOtp = !!opts?.skipOtp;
     if (selectedKind === "crm") {
       const crmOpts = buildCrmMatchOptions(titanResult, goyalEoiHits);
       const crmOpt =
@@ -917,7 +954,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         toast.error("Select a salesperson");
         return;
       }
-      if (!/^\d{6}$/.test(siteVisitOtp)) {
+      if (!skipOtp && !/^\d{6}$/.test(siteVisitOtp)) {
         toast.error("Enter the 6-digit OTP sent to the customer");
         return;
       }
@@ -934,7 +971,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               salesUserId: assignSalesId,
-              otp: siteVisitOtp,
+              otp: skipOtp ? undefined : siteVisitOtp,
+              skipOtp: skipOtp || undefined,
               fullName: crm.fullName || undefined,
               phone: crm.phone || undefined,
               email: crm.email || undefined,
@@ -984,7 +1022,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         toast.error("Could not resolve Titan CRM lead");
         return;
       }
-      await assign(leadId, assignSalesId, {});
+      await assign(leadId, assignSalesId, {}, { skipOtp });
       return;
     }
 
@@ -1029,13 +1067,18 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
           leadId = created.id;
         }
       }
-      await assign(leadId, assignSalesId, {
-        visitingPartnerCpId: opt.cpId,
-        visitingPartnerName: opt.partnerName,
-        eoiCpLeadId: opt.eoiCpLeadId,
-        projectId: opt.projectId,
-        projectName: opt.projectName,
-      });
+      await assign(
+        leadId,
+        assignSalesId,
+        {
+          visitingPartnerCpId: opt.cpId,
+          visitingPartnerName: opt.partnerName,
+          eoiCpLeadId: opt.eoiCpLeadId,
+          projectId: opt.projectId,
+          projectName: opt.projectName,
+        },
+        { skipOtp }
+      );
       return;
     }
 
@@ -1057,13 +1100,18 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       });
       if (!created) return;
       leadId = created.id;
-      await assign(leadId, assignSalesId, {
-        visitingPartnerCpId: opt.cpId,
-        visitingPartnerName: opt.partnerName,
-        eoiCpLeadId: opt.eoiCpLeadId,
-        projectId: opt.projectId,
-        projectName: opt.projectName,
-      });
+      await assign(
+        leadId,
+        assignSalesId,
+        {
+          visitingPartnerCpId: opt.cpId,
+          visitingPartnerName: opt.partnerName,
+          eoiCpLeadId: opt.eoiCpLeadId,
+          projectId: opt.projectId,
+          projectName: opt.projectName,
+        },
+        { skipOtp }
+      );
       return;
     }
 
@@ -1080,13 +1128,18 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       });
       if (!created) return;
       leadId = created.id;
-      await assign(leadId, assignSalesId, {
-        visitingPartnerCpId: opt?.cpId,
-        visitingPartnerName: opt?.partnerName,
-        eoiCpLeadId: opt?.eoiCpLeadId,
-        projectId: opt?.projectId,
-        projectName: opt?.projectName,
-      });
+      await assign(
+        leadId,
+        assignSalesId,
+        {
+          visitingPartnerCpId: opt?.cpId,
+          visitingPartnerName: opt?.partnerName,
+          eoiCpLeadId: opt?.eoiCpLeadId,
+          projectId: opt?.projectId,
+          projectName: opt?.projectName,
+        },
+        { skipOtp }
+      );
       return;
     }
 
@@ -1099,14 +1152,19 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       partnerOptions.find((p) => partnerOptionKey(p) === selectedPartnerKey) ||
       partnerOptions.find((p) => p.cpId === lead?.cpId) ||
       partnerOptions[0];
-    await assign(leadId, assignSalesId, {
-      visitingPartnerCpId: opt?.cpId ?? lead?.cpId ?? undefined,
-      visitingPartnerName:
-        opt?.partnerName ?? lead?.visitingCp?.partnerName ?? undefined,
-      eoiCpLeadId: opt?.eoiCpLeadId,
-      projectId: opt?.projectId,
-      projectName: opt?.projectName ?? lead?.project?.name,
-    });
+    await assign(
+      leadId,
+      assignSalesId,
+      {
+        visitingPartnerCpId: opt?.cpId ?? lead?.cpId ?? undefined,
+        visitingPartnerName:
+          opt?.partnerName ?? lead?.visitingCp?.partnerName ?? undefined,
+        eoiCpLeadId: opt?.eoiCpLeadId,
+        projectId: opt?.projectId,
+        projectName: opt?.projectName ?? lead?.project?.name,
+      },
+      { skipOtp }
+    );
   };
 
   const formatStamp = (iso?: string) => {
@@ -1205,15 +1263,17 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const openAssignEoi = (lead: EoiLead) => {
     setAssignLead(lead);
     setEoiAssignSalesId("");
+    setEoiAssignOtp("");
     setAssignOpen(true);
   };
 
-  const submitAssignEoi = async () => {
+  const submitAssignEoi = async (opts?: { skipOtp?: boolean }) => {
     if (!assignLead || !eoiAssignSalesId) {
       toast.error("Select a salesperson");
       return;
     }
-    if (!/^\d{6}$/.test(eoiAssignOtp)) {
+    const skipOtp = !!opts?.skipOtp;
+    if (!skipOtp && !/^\d{6}$/.test(eoiAssignOtp)) {
       toast.error("Enter the 6-digit OTP sent to the customer");
       return;
     }
@@ -1224,7 +1284,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           salesUserId: eoiAssignSalesId,
-          otp: eoiAssignOtp,
+          otp: skipOtp ? undefined : eoiAssignOtp,
+          skipOtp: skipOtp || undefined,
           fullName: assignLead.fullName,
           phone: assignLead.phone,
           email: assignLead.email || undefined,
@@ -1239,15 +1300,22 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       }
       toast.success(
         d.crmSynced
-          ? `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
-          : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — local site visit checked in`
+          ? skipOtp
+            ? `Assigned without OTP to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
+            : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — site visit synced to CRM`
+          : skipOtp
+            ? `Assigned without OTP to ${d.lead?.assignedSales?.name ?? "sales"} — local site visit checked in`
+            : `Assigned to ${d.lead?.assignedSales?.name ?? "sales"} — local site visit checked in`
       );
       if (!d.crmSynced && typeof d.crmError === "string" && d.crmError) {
         toast.warning("CRM site-visit not synced", { description: d.crmError });
       }
       setAssignOpen(false);
       setAssignLead(null);
+      setEoiAssignSalesId("");
       setEoiAssignOtp("");
+      void loadEoi(1);
+      void refreshVisits();
     } finally {
       setAssignBusy(false);
     }
@@ -1786,6 +1854,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   onChange={setAssignSalesId}
                   sales={sales}
                   onConfirm={() => void confirmAndAssign()}
+                  onConfirmWithoutOtp={() => void confirmAndAssign({ skipOtp: true })}
                   confirmLabel={
                     selectedKind === "crm" ? "Assign CRM lead" : "Check in visitor"
                   }
@@ -1850,6 +1919,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   onChange={setWalkInSalesId}
                   sales={sales}
                   onConfirm={() => void registerWalkIn(Boolean(walkInSalesId))}
+                  onConfirmWithoutOtp={() =>
+                    void registerWalkIn(Boolean(walkInSalesId), { skipOtp: true })
+                  }
                   confirmLabel={walkInSalesId ? "Register & check in" : "Register walk-in"}
                   disabled={!walkIn.customerName || !walkIn.customerPhone}
                   requireSales={false}
@@ -2264,6 +2336,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
           </div>
           <div>
             <Label>Customer OTP</Label>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Optional — send a code, or assign without OTP below.
+            </p>
             <div className="mt-1 flex gap-2">
               <Input
                 value={eoiAssignOtp}
@@ -2304,9 +2379,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               </Button>
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => setAssignOpen(false)}>
               Cancel
+            </Button>
+            <Button
+              variant="outline"
+              disabled={assignBusy || !eoiAssignSalesId}
+              onClick={() => void submitAssignEoi({ skipOtp: true })}
+            >
+              {assignBusy ? "Assigning…" : "Proceed without OTP"}
             </Button>
             <Button
               disabled={assignBusy || !eoiAssignSalesId || eoiAssignOtp.length !== 6}
