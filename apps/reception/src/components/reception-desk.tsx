@@ -688,15 +688,22 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     fetch("/api/salespersons/available")
       .then((r) => r.json())
       .then((d) => setSales(d.sales ?? []));
-    fetch("/api/me")
+    fetch("/api/projects")
       .then((r) => r.json())
       .then((d) => {
-        const list = Array.isArray(d.user?.projects) ? d.user.projects : [];
-        setProjects(
-          list
-            .filter((p: { id?: string; name?: string }) => p?.id && p?.name)
-            .map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))
-        );
+        const list = Array.isArray(d.projects) ? d.projects : [];
+        const next = list
+          .filter((p: { id?: string; name?: string }) => p?.id && p?.name)
+          .map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }));
+        setProjects(next);
+        // Auto-select sole project so walk-in always has a project.
+        if (next.length === 1) {
+          setWalkIn((w) =>
+            w.projectId
+              ? w
+              : { ...w, projectId: next[0].id, projectName: next[0].name }
+          );
+        }
       })
       .catch(() => setProjects([]));
     void refreshVisits();
@@ -706,32 +713,50 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     if (tab === "eoi") void loadEoi(1);
   }, [tab, loadEoi]);
 
+  const formatWalkInError = (d: unknown) => {
+    if (!d || typeof d !== "object") return "Registration failed";
+    const err = (d as { error?: unknown }).error;
+    if (typeof err === "string" && err.trim()) return err;
+    if (err && typeof err === "object") {
+      const flat = err as { formErrors?: string[]; fieldErrors?: Record<string, string[]> };
+      const first =
+        flat.formErrors?.[0] ||
+        Object.values(flat.fieldErrors || {}).flat()[0];
+      if (first) return first;
+    }
+    return "Registration failed";
+  };
+
   const registerWalkIn = async (alsoAssign = false, opts?: { skipOtp?: boolean }) => {
-    if (!walkIn.projectId && !walkIn.projectName) {
+    const payload = {
+      customerName: walkIn.customerName,
+      customerPhone: walkIn.customerPhone,
+      customerEmail: walkIn.customerEmail || undefined,
+      projectId: walkIn.projectId || undefined,
+      projectName: walkIn.projectName || undefined,
+    };
+    if (!payload.projectId && !payload.projectName && projects.length > 1) {
       toast.error("Select a project for this walk-in");
       return;
     }
     const res = await fetch("/api/leads/walkin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customerName: walkIn.customerName,
-        customerPhone: walkIn.customerPhone,
-        customerEmail: walkIn.customerEmail || undefined,
-        projectId: walkIn.projectId || undefined,
-        projectName: walkIn.projectName || undefined,
-      }),
+      body: JSON.stringify(payload),
     });
-    const d = await res.json();
+    const d = await res.json().catch(() => ({}));
     if (!res.ok) {
-      toast.error(typeof d.error === "string" ? d.error : "Registration failed");
+      toast.error(formatWalkInError(d));
       return;
     }
-    toast.success(
-      d.lead?.goyalCrmId || d.lead?.goyalLeadCode
-        ? `Walk-in registered & sent to CRM: ${d.lead.leadId}`
-        : `Direct walk-in registered: ${d.lead.leadId}`
-    );
+    if (d.crmSynced) {
+      toast.success(`Walk-in sent to CRM: ${d.lead.leadId}`);
+    } else {
+      toast.success(`Walk-in registered: ${d.lead.leadId}`);
+      if (typeof d.crmError === "string" && d.crmError) {
+        toast.warning("CRM sync pending", { description: d.crmError });
+      }
+    }
     if (alsoAssign && walkInSalesId && d.lead?.id) {
       const assigned = await assign(
         d.lead.id,
@@ -743,7 +768,6 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         opts
       );
       if (!assigned) {
-        // Keep form so reception can retry OTP / assign on the new lead
         setSelectedLeadId(d.lead.id);
         void refreshVisits();
         return;
@@ -753,8 +777,8 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       customerName: "",
       customerPhone: "",
       customerEmail: "",
-      projectId: "",
-      projectName: "",
+      projectId: projects.length === 1 ? projects[0].id : "",
+      projectName: projects.length === 1 ? projects[0].name : "",
     });
     setWalkInSalesId("");
     void refreshVisits();
@@ -2011,6 +2035,36 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   No partner or CRM lead found. Register the visitor and assign a salesperson.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <Label>Project *</Label>
+                    {projects.length > 0 ? (
+                      <select
+                        className="mt-1 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm"
+                        value={walkIn.projectId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          const name = projects.find((p) => p.id === id)?.name || "";
+                          setWalkIn({ ...walkIn, projectId: id, projectName: name });
+                        }}
+                      >
+                        <option value="">Select project…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        className="mt-1"
+                        placeholder="e.g. Orchid Life"
+                        value={walkIn.projectName}
+                        onChange={(e) =>
+                          setWalkIn({ ...walkIn, projectId: "", projectName: e.target.value })
+                        }
+                      />
+                    )}
+                  </div>
                   <div>
                     <Label>Full name *</Label>
                     <Input
@@ -2024,30 +2078,6 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       value={walkIn.customerPhone}
                       onChange={(e) => setWalkIn({ ...walkIn, customerPhone: e.target.value })}
                     />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <Label>Project *</Label>
-                    <select
-                      className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                      value={walkIn.projectId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        const name = projects.find((p) => p.id === id)?.name || "";
-                        setWalkIn({ ...walkIn, projectId: id, projectName: name });
-                      }}
-                    >
-                      <option value="">Select project…</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                    {projects.length === 0 && (
-                      <p className="mt-1 text-xs text-amber-700">
-                        No projects on your reception account — ask admin to assign projects.
-                      </p>
-                    )}
                   </div>
                   <div className="sm:col-span-2">
                     <Label>Email (optional)</Label>
@@ -2066,11 +2096,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                     void registerWalkIn(Boolean(walkInSalesId), { skipOtp: true })
                   }
                   confirmLabel={walkInSalesId ? "Register & check in" : "Register walk-in"}
-                  disabled={
-                    !walkIn.customerName ||
-                    !walkIn.customerPhone ||
-                    !(walkIn.projectId || walkIn.projectName)
-                  }
+                  disabled={!walkIn.customerName || !walkIn.customerPhone}
                   requireSales={false}
                   otp={siteVisitOtp}
                   onOtpChange={setSiteVisitOtp}
@@ -2081,11 +2107,6 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                       toast.error("Enter customer email to send OTP");
                       return;
                     }
-                    if (!walkIn.projectId && !walkIn.projectName) {
-                      toast.error("Select a project first");
-                      return;
-                    }
-                    // Ensure lead exists so OTP can be keyed to it
                     const res = await fetch("/api/leads/walkin", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
@@ -2099,7 +2120,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                     });
                     const d = await res.json().catch(() => ({}));
                     if (!res.ok) {
-                      toast.error(typeof d.error === "string" ? d.error : "Could not register walk-in");
+                      toast.error(formatWalkInError(d));
                       return;
                     }
                     if (d.lead?.id) {
@@ -2118,6 +2139,36 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                   Use only when the visitor has no Lead ID / phone on file.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <Label>Project *</Label>
+                    {projects.length > 0 ? (
+                      <select
+                        className="mt-1 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm"
+                        value={walkIn.projectId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          const name = projects.find((p) => p.id === id)?.name || "";
+                          setWalkIn({ ...walkIn, projectId: id, projectName: name });
+                        }}
+                      >
+                        <option value="">Select project…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        className="mt-1"
+                        placeholder="e.g. Orchid Life"
+                        value={walkIn.projectName}
+                        onChange={(e) =>
+                          setWalkIn({ ...walkIn, projectId: "", projectName: e.target.value })
+                        }
+                      />
+                    )}
+                  </div>
                   <div>
                     <Label>Full name *</Label>
                     <Input
@@ -2133,25 +2184,6 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <Label>Project *</Label>
-                    <select
-                      className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                      value={walkIn.projectId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        const name = projects.find((p) => p.id === id)?.name || "";
-                        setWalkIn({ ...walkIn, projectId: id, projectName: name });
-                      }}
-                    >
-                      <option value="">Select project…</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="sm:col-span-2">
                     <Label>Email (optional)</Label>
                     <Input
                       value={walkIn.customerEmail}
@@ -2161,11 +2193,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                 </div>
                 <div className="mt-4">
                   <Button
-                    disabled={
-                      !walkIn.customerName ||
-                      !walkIn.customerPhone ||
-                      !(walkIn.projectId || walkIn.projectName)
-                    }
+                    disabled={!walkIn.customerName || !walkIn.customerPhone}
                     onClick={() => void registerWalkIn(false)}
                   >
                     Register walk-in

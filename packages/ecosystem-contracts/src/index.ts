@@ -36,18 +36,14 @@ export const digitalFormStepSchema = z.object({
   data: z.record(z.unknown()),
 });
 
-export const walkInLeadSchema = z
-  .object({
-    customerName: z.string().min(2),
-    customerPhone: z.string().min(10),
-    customerEmail: z.string().email().optional().or(z.literal("")),
-    projectId: z.string().cuid().optional(),
-    projectName: z.string().min(1).max(200).optional(),
-  })
-  .refine((d) => Boolean(d.projectId?.trim() || d.projectName?.trim()), {
-    message: "Select a project for this walk-in",
-    path: ["projectId"],
-  });
+export const walkInLeadSchema = z.object({
+  customerName: z.string().min(2),
+  customerPhone: z.string().min(10),
+  customerEmail: z.string().email().optional().or(z.literal("")),
+  projectId: z.string().cuid().optional().or(z.literal("")),
+  projectName: z.string().min(1).max(200).optional().or(z.literal("")),
+});
+// Project is preferred but server auto-picks the sole published project when omitted.
 
 export const leadAssignSchema = z
   .object({

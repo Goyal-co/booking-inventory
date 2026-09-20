@@ -30,6 +30,7 @@ export const GET_availableSalespersons = withLoggedHandler(
   H.GET_availableSalespersons,
 );
 export const GET_visitsToday = withLoggedHandler("reception.visits.today", H.GET_visitsToday);
+export const GET_projects = withLoggedHandler("reception.projects.list", H.GET_projects);
 export const GET_eoiCapabilities = withLoggedHandler(
   "reception.eoi.capabilities",
   H.GET_eoiCapabilities,

@@ -451,16 +451,48 @@ export async function POST_walkInLead(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json();
   const parsed = walkInLeadSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  const { customerEmail, projectName, ...rest } = parsed.data;
-  const lead = await registerWalkInLead({
-    organizationId: user.organizationId,
-    registeredById: user.id,
-    ...rest,
-    ...(customerEmail ? { customerEmail } : {}),
-    ...(projectName ? { projectName } : {}),
-  });
-  return NextResponse.json({ lead }, { status: 201 });
+  if (!parsed.success) {
+    const flat = parsed.error.flatten();
+    const msg =
+      flat.formErrors[0] ||
+      Object.values(flat.fieldErrors).flat()[0] ||
+      "Invalid walk-in details";
+    return NextResponse.json({ error: msg, details: flat }, { status: 400 });
+  }
+  const { customerEmail, projectId, projectName, ...rest } = parsed.data;
+  try {
+    const result = await registerWalkInLead({
+      organizationId: user.organizationId,
+      registeredById: user.id,
+      ...rest,
+      ...(customerEmail ? { customerEmail } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(projectName ? { projectName } : {}),
+    });
+    return NextResponse.json(
+      {
+        lead: result.lead,
+        crmSynced: result.crmSynced,
+        crmError: result.crmError,
+      },
+      { status: 201 }
+    );
+  } catch (err) {
+    if (err instanceof Error && err.message === "PROJECT_REQUIRED") {
+      return NextResponse.json(
+        {
+          error:
+            "Select a project for this walk-in (or assign a published project to your organization)",
+        },
+        { status: 400 }
+      );
+    }
+    console.error("[POST_walkInLead]", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Registration failed" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST_assignLead(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -798,6 +830,8 @@ export async function GET_visitsToday() {
           customerEmail: true,
           source: true,
           goyalLeadCode: true,
+          intentType: true,
+          project: { select: { id: true, name: true } },
         },
       },
       salesUser: { select: { name: true } },
@@ -805,22 +839,65 @@ export async function GET_visitsToday() {
     orderBy: { checkedInAt: "desc" },
   });
   return NextResponse.json({
-    visits: visits.map((v) => ({
-      id: v.id,
-      checkedInAt: v.checkedInAt,
-      visitingCpId: v.visitingCpId,
-      visitingCpName: v.visitingCpName,
-      projectName: v.projectName,
-      publicLeadId: v.publicLeadId,
-      lead: v.lead
-        ? {
-            ...v.lead,
-            isPresales: v.lead.source === "PRESALES",
-          }
-        : null,
-      salesUser: v.salesUser,
-    })),
+    visits: visits.map((v) => {
+      const intentProject =
+        typeof v.lead?.intentType === "string" && v.lead.intentType.startsWith("eoi:")
+          ? v.lead.intentType.slice(4).replace(/\|booked$/i, "").trim()
+          : "";
+      const projectName =
+        v.projectName ||
+        v.lead?.project?.name ||
+        intentProject ||
+        null;
+      return {
+        id: v.id,
+        checkedInAt: v.checkedInAt,
+        visitingCpId: v.visitingCpId,
+        visitingCpName: v.visitingCpName,
+        projectName,
+        publicLeadId: v.publicLeadId,
+        lead: v.lead
+          ? {
+              leadId: v.lead.leadId,
+              customerName: v.lead.customerName,
+              customerPhone: v.lead.customerPhone,
+              customerEmail: v.lead.customerEmail,
+              source: v.lead.source,
+              goyalLeadCode: v.lead.goyalLeadCode,
+              isPresales: v.lead.source === "PRESALES",
+            }
+          : null,
+        salesUser: v.salesUser,
+      };
+    }),
   });
+}
+
+export async function GET_projects() {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const access = await prisma.userProjectAccess.findMany({
+    where: { userId: user.id },
+    select: { project: { select: { id: true, name: true, isPublished: true } } },
+    orderBy: { project: { name: "asc" } },
+  });
+  let projects = access
+    .map((row) => row.project)
+    .filter((p) => p && p.isPublished !== false)
+    .map((p) => ({ id: p.id, name: p.name }));
+
+  // Fallback: all published org projects so walk-in always has a picker.
+  if (projects.length === 0) {
+    const all = await prisma.project.findMany({
+      where: { organizationId: user.organizationId, isPublished: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    projects = all;
+  }
+
+  return NextResponse.json({ projects });
 }
 
 function crmAuthHint(err: unknown, context: "list" | "staff" = "staff") {

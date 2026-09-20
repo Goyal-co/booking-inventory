@@ -353,19 +353,33 @@ export async function registerWalkInLead(input: {
   const count = await prisma.leadRegistry.count({ where: { organizationId: input.organizationId } });
   const leadId = generateLeadId("WALKIN", count + 1);
 
-  const localProjectId = await resolveLocalBookingProjectId(input.organizationId, {
+  let localProjectId = await resolveLocalBookingProjectId(input.organizationId, {
     projectId: input.projectId,
     projectName: input.projectName,
   });
-  const project =
-    localProjectId
-      ? await prisma.project.findFirst({
-          where: { id: localProjectId, organizationId: input.organizationId },
-          select: { id: true, name: true },
-        })
-      : null;
+
+  // Reception often has a single live project (e.g. Orchid Life) — use it when none sent.
+  if (!localProjectId) {
+    const sole = await prisma.project.findMany({
+      where: { organizationId: input.organizationId, isPublished: true },
+      select: { id: true, name: true },
+      take: 2,
+    });
+    if (sole.length === 1) localProjectId = sole[0].id;
+  }
+
+  const project = localProjectId
+    ? await prisma.project.findFirst({
+        where: { id: localProjectId, organizationId: input.organizationId },
+        select: { id: true, name: true },
+      })
+    : null;
   const projectName = project?.name || input.projectName?.trim() || undefined;
   const email = input.customerEmail?.trim() || undefined;
+
+  if (!localProjectId && !projectName) {
+    throw new Error("PROJECT_REQUIRED");
+  }
 
   const lead = await prisma.leadRegistry.create({
     data: {
@@ -402,17 +416,22 @@ export async function registerWalkInLead(input: {
     /* Titan optional — Goyal CRM is the platform of record */
   }
 
-  // Punch into Goyal Hariyana CRM Platform Leads (Walk-ins tab via source=walk_in).
+  let crmSynced = false;
+  let crmError: string | undefined;
+
+  // Punch into Goyal Hariyana CRM. Use the same minimal shape as working EOI creates:
+  // projectName + leadId + sourceOfEnquiry. Do NOT send local cuid as projectId (CRM expects UUID).
   try {
     const caps = getGoyalCrmCapabilities();
-    if (caps.canCreate) {
+    if (!caps.canCreate) {
+      crmError = "EOI_API_KEY not configured — walk-in saved locally only";
+    } else {
       const punchedAt = new Date().toISOString();
-      const basePayload = {
-        fullName: input.customerName,
-        phone: input.customerPhone,
-        email,
-        projectId: localProjectId,
-        projectName,
+      const minimalPayload = {
+        fullName: input.customerName.trim(),
+        phone: input.customerPhone.replace(/\D/g, "").slice(-10) || input.customerPhone,
+        ...(email ? { email } : {}),
+        ...(projectName ? { projectName } : {}),
         leadId,
         sourceOfEnquiry: `Direct Walk-in [${leadId}]`,
         notes: [
@@ -422,34 +441,20 @@ export async function registerWalkInLead(input: {
         ]
           .filter(Boolean)
           .join(" | "),
-        intentType: "WALK_IN",
-        projectHistory: projectName
-          ? [
-              {
-                projectId: localProjectId,
-                projectName,
-                punchedAt,
-                intentType: "WALK_IN",
-                publicLeadId: leadId,
-                journeyStatus: "ACTIVE",
-                source: "walk_in",
-              },
-            ]
-          : undefined,
       };
+
       let crmLead;
       try {
         ({ lead: crmLead } = await createEoiLeadBestEffort({
-          ...basePayload,
+          ...minimalPayload,
           source: "walk_in",
         }));
       } catch (firstErr) {
-        // Older CRM builds may reject source=walk_in — still store the lead with walk-in markers.
         console.warn(
-          "[registerWalkInLead] CRM rejected source=walk_in, retrying without source",
+          "[registerWalkInLead] CRM punch with source=walk_in failed, retrying minimal",
           firstErr
         );
-        ({ lead: crmLead } = await createEoiLeadBestEffort(basePayload));
+        ({ lead: crmLead } = await createEoiLeadBestEffort(minimalPayload));
       }
 
       const crmRef = crmLead?.id?.trim() || undefined;
@@ -465,23 +470,30 @@ export async function registerWalkInLead(input: {
         data: {
           ...(looksUuid ? { goyalCrmId: crmRef } : {}),
           ...(leadCode ? { goyalLeadCode: leadCode } : {}),
-          ...(!looksUuid && crmRef && /^EOI-/i.test(crmRef)
+          ...(!looksUuid && crmRef && /^(EOI-|WALKIN-|AGENT-)/i.test(crmRef)
             ? { goyalLeadCode: crmRef }
             : {}),
         },
       });
+      crmSynced = Boolean(looksUuid || leadCode || crmRef);
+      if (!crmSynced) {
+        crmError = "CRM accepted punch but returned no lead id";
+      }
     }
   } catch (err) {
+    crmError = err instanceof Error ? err.message : "Goyal CRM punch failed";
     console.error("[registerWalkInLead] Goyal CRM punch failed", err);
   }
 
-  return prisma.leadRegistry.findUniqueOrThrow({
+  const full = await prisma.leadRegistry.findUniqueOrThrow({
     where: { id: lead.id },
     include: {
       project: { select: { id: true, name: true } },
       assignedSales: { select: { id: true, name: true } },
     },
   });
+
+  return { lead: full, crmSynced, crmError };
 }
 
 export async function searchLeads(organizationId: string, query: string) {
