@@ -350,22 +350,26 @@ export async function registerWalkInLead(input: {
   projectName?: string;
   registeredById: string;
 }) {
-  const count = await prisma.leadRegistry.count({ where: { organizationId: input.organizationId } });
-  const leadId = generateLeadId("WALKIN", count + 1);
-
   let localProjectId = await resolveLocalBookingProjectId(input.organizationId, {
     projectId: input.projectId,
     projectName: input.projectName,
   });
 
-  // Reception often has a single live project (e.g. Orchid Life) — use it when none sent.
+  // Auto-pick a project when reception omits one (common on quick walk-in).
+  // Prefer published; fall back to any org project — isPublished defaults to false in schema.
   if (!localProjectId) {
-    const sole = await prisma.project.findMany({
-      where: { organizationId: input.organizationId, isPublished: true },
-      select: { id: true, name: true },
-      take: 2,
+    const candidates = await prisma.project.findMany({
+      where: { organizationId: input.organizationId },
+      select: { id: true, name: true, isPublished: true },
+      orderBy: [{ isPublished: "desc" }, { name: "asc" }],
+      take: 20,
     });
-    if (sole.length === 1) localProjectId = sole[0].id;
+    const preferred =
+      candidates.find((p) => p.isPublished && /orchid/i.test(p.name)) ||
+      candidates.find((p) => p.isPublished) ||
+      candidates.find((p) => /orchid/i.test(p.name)) ||
+      candidates[0];
+    if (preferred) localProjectId = preferred.id;
   }
 
   const project = localProjectId
@@ -377,23 +381,42 @@ export async function registerWalkInLead(input: {
   const projectName = project?.name || input.projectName?.trim() || undefined;
   const email = input.customerEmail?.trim() || undefined;
 
-  if (!localProjectId && !projectName) {
-    throw new Error("PROJECT_REQUIRED");
+  // Retry leadId allocation on rare concurrent collisions.
+  let lead: { id: string; leadId: string } | null = null;
+  let leadId = "";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const count = await prisma.leadRegistry.count({
+      where: { organizationId: input.organizationId },
+    });
+    leadId = generateLeadId("WALKIN", count + 1 + attempt);
+    try {
+      lead = await prisma.leadRegistry.create({
+        data: {
+          leadId,
+          organizationId: input.organizationId,
+          ...(localProjectId ? { projectId: localProjectId } : {}),
+          customerName: input.customerName,
+          customerPhone: input.customerPhone,
+          customerEmail: email,
+          source: LeadSource.DIRECT_WALKIN,
+          registeredById: input.registeredById,
+          ...(projectName ? { intentType: `eoi:${projectName}` } : {}),
+        },
+        select: { id: true, leadId: true },
+      });
+      break;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002" &&
+        attempt < 4
+      ) {
+        continue;
+      }
+      throw err;
+    }
   }
-
-  const lead = await prisma.leadRegistry.create({
-    data: {
-      leadId,
-      organizationId: input.organizationId,
-      ...(localProjectId ? { projectId: localProjectId } : {}),
-      customerName: input.customerName,
-      customerPhone: input.customerPhone,
-      customerEmail: email,
-      source: LeadSource.DIRECT_WALKIN,
-      registeredById: input.registeredById,
-      ...(projectName ? { intentType: `eoi:${projectName}` } : {}),
-    },
-  });
+  if (!lead) throw new Error("Could not allocate walk-in lead id");
 
   const { getTitanCRMProvider, createEoiLeadBestEffort, getGoyalCrmCapabilities } =
     await import("@booking/integrations");
@@ -454,7 +477,22 @@ export async function registerWalkInLead(input: {
           "[registerWalkInLead] CRM punch with source=walk_in failed, retrying minimal",
           firstErr
         );
-        ({ lead: crmLead } = await createEoiLeadBestEffort(minimalPayload));
+        try {
+          ({ lead: crmLead } = await createEoiLeadBestEffort(minimalPayload));
+        } catch (secondErr) {
+          // Last resort: bare create like reception EOI form (name + phone + projectName).
+          console.warn(
+            "[registerWalkInLead] CRM minimal punch failed, retrying bare fields",
+            secondErr
+          );
+          ({ lead: crmLead } = await createEoiLeadBestEffort({
+            fullName: minimalPayload.fullName,
+            phone: minimalPayload.phone,
+            ...(email ? { email } : {}),
+            ...(projectName ? { projectName } : {}),
+            sourceOfEnquiry: minimalPayload.sourceOfEnquiry,
+          }));
+        }
       }
 
       const crmRef = crmLead?.id?.trim() || undefined;

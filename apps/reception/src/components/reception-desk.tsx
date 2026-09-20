@@ -696,13 +696,14 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
           .filter((p: { id?: string; name?: string }) => p?.id && p?.name)
           .map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }));
         setProjects(next);
-        // Auto-select sole project so walk-in always has a project.
-        if (next.length === 1) {
-          setWalkIn((w) =>
-            w.projectId
-              ? w
-              : { ...w, projectId: next[0].id, projectName: next[0].name }
-          );
+        // Auto-select a project so quick walk-in works even if user skips the picker.
+        if (next.length > 0) {
+          setWalkIn((w) => {
+            if (w.projectId) return w;
+            const preferred =
+              next.find((p: { name: string }) => /orchid/i.test(p.name)) || next[0];
+            return { ...w, projectId: preferred.id, projectName: preferred.name };
+          });
         }
       })
       .catch(() => setProjects([]));
@@ -735,10 +736,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
       projectId: walkIn.projectId || undefined,
       projectName: walkIn.projectName || undefined,
     };
-    if (!payload.projectId && !payload.projectName && projects.length > 1) {
-      toast.error("Select a project for this walk-in");
-      return;
-    }
+    // Server auto-picks a project when omitted — never block the button path.
     const res = await fetch("/api/leads/walkin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

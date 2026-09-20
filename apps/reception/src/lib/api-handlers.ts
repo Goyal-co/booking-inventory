@@ -478,15 +478,6 @@ export async function POST_walkInLead(req: NextRequest) {
       { status: 201 }
     );
   } catch (err) {
-    if (err instanceof Error && err.message === "PROJECT_REQUIRED") {
-      return NextResponse.json(
-        {
-          error:
-            "Select a project for this walk-in (or assign a published project to your organization)",
-        },
-        { status: 400 }
-      );
-    }
     console.error("[POST_walkInLead]", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Registration failed" },
@@ -884,15 +875,16 @@ export async function GET_projects() {
   });
   let projects = access
     .map((row) => row.project)
-    .filter((p) => p && p.isPublished !== false)
+    .filter(Boolean)
     .map((p) => ({ id: p.id, name: p.name }));
 
-  // Fallback: all published org projects so walk-in always has a picker.
+  // Always fall back to every org project so walk-in picker is never empty
+  // (isPublished defaults to false — do not require it for reception desk).
   if (projects.length === 0) {
     const all = await prisma.project.findMany({
-      where: { organizationId: user.organizationId, isPublished: true },
+      where: { organizationId: user.organizationId },
       select: { id: true, name: true },
-      orderBy: { name: "asc" },
+      orderBy: [{ isPublished: "desc" }, { name: "asc" }],
     });
     projects = all;
   }
