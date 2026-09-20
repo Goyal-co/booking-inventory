@@ -36,12 +36,18 @@ export const digitalFormStepSchema = z.object({
   data: z.record(z.unknown()),
 });
 
-export const walkInLeadSchema = z.object({
-  customerName: z.string().min(2),
-  customerPhone: z.string().min(10),
-  customerEmail: z.string().email().optional(),
-  projectId: z.string().cuid().optional(),
-});
+export const walkInLeadSchema = z
+  .object({
+    customerName: z.string().min(2),
+    customerPhone: z.string().min(10),
+    customerEmail: z.string().email().optional().or(z.literal("")),
+    projectId: z.string().cuid().optional(),
+    projectName: z.string().min(1).max(200).optional(),
+  })
+  .refine((d) => Boolean(d.projectId?.trim() || d.projectName?.trim()), {
+    message: "Select a project for this walk-in",
+    path: ["projectId"],
+  });
 
 export const leadAssignSchema = z
   .object({

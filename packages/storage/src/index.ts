@@ -61,6 +61,14 @@ function s3Client() {
   const cfg = getS3Config();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { S3Client } = require("@aws-sdk/client-s3") as typeof import("@aws-sdk/client-s3");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { NodeHttpHandler } = require("@smithy/node-http-handler") as typeof import("@smithy/node-http-handler");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Agent: HttpAgent } = require("http") as typeof import("http");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Agent: HttpsAgent } = require("https") as typeof import("https");
+  const maxSocketsRaw = Number(process.env.S3_MAX_SOCKETS || "1500");
+  const maxSockets = Number.isFinite(maxSocketsRaw) && maxSocketsRaw >= 100 ? Math.floor(maxSocketsRaw) : 1500;
   return new S3Client({
     endpoint: cfg.endpoint,
     region: cfg.region,
@@ -69,6 +77,12 @@ function s3Client() {
       secretAccessKey: cfg.secretAccessKey,
     },
     forcePathStyle: cfg.forcePathStyle,
+    requestHandler: new NodeHttpHandler({
+      httpAgent: new HttpAgent({ keepAlive: true, maxSockets }),
+      httpsAgent: new HttpsAgent({ keepAlive: true, maxSockets }),
+      connectionTimeout: 10_000,
+      requestTimeout: 120_000,
+    }),
   });
 }
 

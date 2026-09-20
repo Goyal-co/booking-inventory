@@ -81,7 +81,13 @@ export type CreateEoiLeadInput = {
   designation?: string;
   sourceOfFund?: string;
   sourceOfEnquiry?: string;
-  /** Partner Portal public lead id (EOI-… / LEAD-…) */
+  /**
+   * Preferred CRM platform source tab.
+   * Walk-ins should send `walk_in` so Platform Leads can filter them.
+   * Partner punches typically land as `partner_leads` (server may override).
+   */
+  source?: string;
+  /** Partner Portal / walk-in public lead id (EOI-… / LEAD-… / WALKIN-…) */
   leadId?: string;
   notes?: string;
   /** Extended history for CRM (also embedded in notes when CRM ignores unknown fields). */

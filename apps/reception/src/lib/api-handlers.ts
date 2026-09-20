@@ -452,10 +452,13 @@ export async function POST_walkInLead(req: NextRequest) {
   const body = await req.json();
   const parsed = walkInLeadSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  const { customerEmail, projectName, ...rest } = parsed.data;
   const lead = await registerWalkInLead({
     organizationId: user.organizationId,
     registeredById: user.id,
-    ...parsed.data,
+    ...rest,
+    ...(customerEmail ? { customerEmail } : {}),
+    ...(projectName ? { projectName } : {}),
   });
   return NextResponse.json({ lead }, { status: 201 });
 }

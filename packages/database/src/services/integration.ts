@@ -347,39 +347,141 @@ export async function registerWalkInLead(input: {
   customerPhone: string;
   customerEmail?: string;
   projectId?: string;
+  projectName?: string;
   registeredById: string;
 }) {
   const count = await prisma.leadRegistry.count({ where: { organizationId: input.organizationId } });
   const leadId = generateLeadId("WALKIN", count + 1);
 
+  const localProjectId = await resolveLocalBookingProjectId(input.organizationId, {
+    projectId: input.projectId,
+    projectName: input.projectName,
+  });
+  const project =
+    localProjectId
+      ? await prisma.project.findFirst({
+          where: { id: localProjectId, organizationId: input.organizationId },
+          select: { id: true, name: true },
+        })
+      : null;
+  const projectName = project?.name || input.projectName?.trim() || undefined;
+  const email = input.customerEmail?.trim() || undefined;
+
   const lead = await prisma.leadRegistry.create({
     data: {
       leadId,
       organizationId: input.organizationId,
-      projectId: input.projectId,
+      ...(localProjectId ? { projectId: localProjectId } : {}),
       customerName: input.customerName,
       customerPhone: input.customerPhone,
-      customerEmail: input.customerEmail,
+      customerEmail: email,
       source: LeadSource.DIRECT_WALKIN,
       registeredById: input.registeredById,
+      ...(projectName ? { intentType: `eoi:${projectName}` } : {}),
     },
   });
 
-  const { getTitanCRMProvider } = await import("@booking/integrations");
+  const { getTitanCRMProvider, createEoiLeadBestEffort, getGoyalCrmCapabilities } =
+    await import("@booking/integrations");
+
   try {
     const res = await getTitanCRMProvider().syncLead({
       leadId,
       customerName: input.customerName,
       customerPhone: input.customerPhone,
-      customerEmail: input.customerEmail,
+      customerEmail: email,
       source: "DIRECT_WALKIN",
     });
-    await prisma.leadRegistry.update({ where: { id: lead.id }, data: { titanCrmId: res.crmId } });
+    if (res?.crmId) {
+      await prisma.leadRegistry.update({
+        where: { id: lead.id },
+        data: { titanCrmId: res.crmId },
+      });
+    }
   } catch {
-    /* logged on next sync */
+    /* Titan optional — Goyal CRM is the platform of record */
   }
 
-  return lead;
+  // Punch into Goyal Hariyana CRM Platform Leads (Walk-ins tab via source=walk_in).
+  try {
+    const caps = getGoyalCrmCapabilities();
+    if (caps.canCreate) {
+      const punchedAt = new Date().toISOString();
+      const basePayload = {
+        fullName: input.customerName,
+        phone: input.customerPhone,
+        email,
+        projectId: localProjectId,
+        projectName,
+        leadId,
+        sourceOfEnquiry: `Direct Walk-in [${leadId}]`,
+        notes: [
+          `Direct Walk-in Lead ID: ${leadId}`,
+          projectName ? `Project: ${projectName}` : null,
+          `Registered at reception ${punchedAt}`,
+        ]
+          .filter(Boolean)
+          .join(" | "),
+        intentType: "WALK_IN",
+        projectHistory: projectName
+          ? [
+              {
+                projectId: localProjectId,
+                projectName,
+                punchedAt,
+                intentType: "WALK_IN",
+                publicLeadId: leadId,
+                journeyStatus: "ACTIVE",
+                source: "walk_in",
+              },
+            ]
+          : undefined,
+      };
+      let crmLead;
+      try {
+        ({ lead: crmLead } = await createEoiLeadBestEffort({
+          ...basePayload,
+          source: "walk_in",
+        }));
+      } catch (firstErr) {
+        // Older CRM builds may reject source=walk_in — still store the lead with walk-in markers.
+        console.warn(
+          "[registerWalkInLead] CRM rejected source=walk_in, retrying without source",
+          firstErr
+        );
+        ({ lead: crmLead } = await createEoiLeadBestEffort(basePayload));
+      }
+
+      const crmRef = crmLead?.id?.trim() || undefined;
+      const leadCode = crmLead?.leadCode?.trim() || undefined;
+      const looksUuid = Boolean(
+        crmRef &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            crmRef
+          )
+      );
+      await prisma.leadRegistry.update({
+        where: { id: lead.id },
+        data: {
+          ...(looksUuid ? { goyalCrmId: crmRef } : {}),
+          ...(leadCode ? { goyalLeadCode: leadCode } : {}),
+          ...(!looksUuid && crmRef && /^EOI-/i.test(crmRef)
+            ? { goyalLeadCode: crmRef }
+            : {}),
+        },
+      });
+    }
+  } catch (err) {
+    console.error("[registerWalkInLead] Goyal CRM punch failed", err);
+  }
+
+  return prisma.leadRegistry.findUniqueOrThrow({
+    where: { id: lead.id },
+    include: {
+      project: { select: { id: true, name: true } },
+      assignedSales: { select: { id: true, name: true } },
+    },
+  });
 }
 
 export async function searchLeads(organizationId: string, query: string) {
@@ -735,10 +837,11 @@ export async function assignLeadToSales(
     throw new Error("Lead not found");
   }
 
-  const localProjectId = await resolveLocalBookingProjectId(existing.organizationId, {
-    projectId: visiting?.projectId,
-    projectName: visiting?.projectName,
-  });
+  const localProjectId =
+    (await resolveLocalBookingProjectId(existing.organizationId, {
+      projectId: visiting?.projectId,
+      projectName: visiting?.projectName,
+    })) || existing.projectId || undefined;
 
   const baseIntent = stripBookedIntent(existing?.intentType);
   const nextIntent = visiting?.projectName
@@ -815,15 +918,49 @@ export async function assignLeadToSales(
       }
     }
     if (crmId && caps.canBook) {
+      const visitHistory = await prisma.siteVisit.findMany({
+        where: { leadId },
+        orderBy: { checkedInAt: "asc" },
+        take: 50,
+      });
       await markGoyalSiteVisit(crmId, {
         siteVisit: true,
         siteVisitDone: true,
+        siteVisitDate: new Date().toISOString().slice(0, 10),
+        siteVisitDoneDate: new Date().toISOString().slice(0, 10),
         notes: combinedNotes,
+        leadId: lead.leadId,
+        projectId,
+        projectName,
         visitingCpId: visiting?.visitingPartnerCpId,
         visitingCpName: visiting?.visitingPartnerName,
+        salespersonId: salesUserId,
         salespersonName: salesUser?.name ?? undefined,
+        projectHistory: [
+          {
+            projectId,
+            projectName,
+            cpId: visiting?.visitingPartnerCpId || lead.cpId,
+            cpName: visiting?.visitingPartnerName,
+            publicLeadId: lead.leadId,
+            punchedAt: lead.createdAt?.toISOString?.() ?? undefined,
+          },
+        ].filter((p) => p.projectId || p.projectName),
+        siteVisitHistory: visitHistory.map((v) => ({
+          projectId: v.projectId,
+          projectName: v.projectName,
+          cpId: v.visitingCpId,
+          cpName: v.visitingCpName,
+          salespersonName: salesUser?.name,
+          completedAt: v.checkedInAt?.toISOString?.() ?? v.createdAt?.toISOString?.(),
+          source: "reception",
+        })),
       });
       crmSynced = true;
+    } else if (!crmId) {
+      crmError =
+        "CRM site-visit skipped — no Goyal CRM lead id (phone lookup failed). Ensure partner punch synced to CRM first.";
+      console.warn(`[assignLeadToSales] ${crmError}`);
     } else if (crmId) {
       crmError =
         "CRM site-visit skipped — set BEARER_AUTHORIZATION (permanent Partner token)";
@@ -1268,10 +1405,27 @@ export async function markDirectLeadSiteVisitDone(input: {
       crmLead = await markGoyalSiteVisit(crmId, {
         siteVisit: true,
         siteVisitDone: true,
+        siteVisitDate: new Date().toISOString().slice(0, 10),
+        siteVisitDoneDate: new Date().toISOString().slice(0, 10),
         notes: input.notes,
+        leadId: lead.leadId,
+        projectId: openVisit?.projectId || lead.projectId || undefined,
+        projectName: openVisit?.projectName || undefined,
         visitingCpId: cpId ?? undefined,
         visitingCpName: cpName ?? undefined,
+        salespersonId: input.salesUserId,
         salespersonName: salesUser?.name ?? undefined,
+        siteVisitHistory: [
+          {
+            projectId: openVisit?.projectId || lead.projectId,
+            projectName: openVisit?.projectName,
+            cpId: cpId,
+            cpName: cpName,
+            salespersonName: salesUser?.name,
+            completedAt: new Date().toISOString(),
+            source: "sales",
+          },
+        ],
       });
       crmSynced = true;
     }
@@ -1472,9 +1626,15 @@ export async function markDirectLeadBooked(input: {
           await markGoyalSiteVisit(lead.goyalCrmId, {
             siteVisit: true,
             siteVisitDone: true,
+            siteVisitDate: new Date().toISOString().slice(0, 10),
+            siteVisitDoneDate: new Date().toISOString().slice(0, 10),
             notes: "Site visit completed with direct booking",
+            leadId: lead.leadId,
+            projectId: openVisit?.projectId || lead.projectId || undefined,
+            projectName: openVisit?.projectName || undefined,
             visitingCpId: lead.cpId ?? undefined,
             visitingCpName: resolvedCpName ?? undefined,
+            salespersonId: input.salesUserId,
           });
         }
       } catch {
