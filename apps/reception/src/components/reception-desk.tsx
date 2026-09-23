@@ -937,6 +937,7 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
     projectId?: string;
     projectName?: string;
     tag?: string;
+    titanCrmId?: string;
   }) => {
     const name =
       eoiIdentityHint?.customerName ||
@@ -969,12 +970,16 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         projectId: opts.projectId,
         projectName: opts.projectName,
         intentType: opts.tag,
+        titanCrmId: opts.titanCrmId,
       }),
     });
     const d = await res.json();
     if (!res.ok) {
       toast.error(typeof d.error === "string" ? d.error : "Could not save EOI lead locally");
       return null;
+    }
+    if (d.crmSynced === false && typeof d.crmError === "string" && d.crmError) {
+      toast.warning("Saved locally — CRM sync pending", { description: d.crmError });
     }
     return d.lead as { id: string; leadId: string };
   };
@@ -1035,6 +1040,9 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         projectId: opt.projectId,
         projectName: opt.projectName,
         tag: opt.tag,
+        titanCrmId:
+          crmMatchOptions.find((c) => c.key === selectedCrmId)?.leadCode ||
+          undefined,
       });
       if (!created) return;
       leadId = created.id;

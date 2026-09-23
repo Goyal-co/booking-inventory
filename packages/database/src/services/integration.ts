@@ -946,27 +946,28 @@ export async function assignLeadToSales(
     /* non-blocking */
   }
 
-  // Push site visit to Goyal Hariyana CRM when linked (or discoverable by phone)
+  // Push site visit to Goyal Hariyana CRM — create the CRM lead first when missing
+  // so partner / Titan / walk-in check-ins all land in Platform Leads.
   let crmSynced = false;
   let crmError: string | undefined;
   let crmId: string | null | undefined = lead.goyalCrmId;
   try {
-    const { markGoyalSiteVisit, getGoyalCrmCapabilities, resolveGoyalLeadId } =
+    const { markGoyalSiteVisit, getGoyalCrmCapabilities } =
       await import("@booking/integrations");
     const caps = getGoyalCrmCapabilities();
+
     if (!crmId || !/^[0-9a-f-]{36}$/i.test(crmId)) {
-      const resolved = await resolveGoyalLeadId({
-        idOrCode: lead.goyalCrmId || lead.goyalLeadCode || lead.titanCrmId,
-        phone: lead.customerPhone,
+      const ensured = await ensureLeadSyncedToGoyalCrm(lead.id, {
+        projectId,
+        projectName,
       });
-      if (resolved) {
-        crmId = resolved;
-        await prisma.leadRegistry.update({
-          where: { id: lead.id },
-          data: { goyalCrmId: resolved },
-        });
+      if (ensured.crmId) {
+        crmId = ensured.crmId;
+      } else if (ensured.error) {
+        crmError = ensured.error;
       }
     }
+
     if (crmId && caps.canBook) {
       const visitHistory = await prisma.siteVisit.findMany({
         where: { leadId },
@@ -1009,7 +1010,8 @@ export async function assignLeadToSales(
       crmSynced = true;
     } else if (!crmId) {
       crmError =
-        "CRM site-visit skipped — no Goyal CRM lead id (phone lookup failed). Ensure partner punch synced to CRM first.";
+        crmError ||
+        "CRM sync skipped — could not create or resolve Goyal CRM lead";
       console.warn(`[assignLeadToSales] ${crmError}`);
     } else if (crmId) {
       crmError =
@@ -1043,6 +1045,159 @@ export async function assignLeadToSales(
   }
 
   return { lead, crmSynced, crmError };
+}
+
+/**
+ * Ensure a local LeadRegistry row exists in Goyal Hariyana CRM.
+ * Resolves by stored id / phone, otherwise creates via createEoiLeadBestEffort.
+ * Used for partner, walk-in, Titan/Presales, and any reception check-in path.
+ */
+export async function ensureLeadSyncedToGoyalCrm(
+  leadRegistryId: string,
+  opts?: { projectId?: string | null; projectName?: string | null }
+): Promise<{ crmId?: string; created: boolean; error?: string }> {
+  const lead = await prisma.leadRegistry.findUnique({
+    where: { id: leadRegistryId },
+    include: { project: { select: { id: true, name: true } } },
+  });
+  if (!lead) return { created: false, error: "Lead not found" };
+
+  const looksUuid = (id?: string | null) =>
+    Boolean(
+      id &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          id
+        )
+    );
+
+  if (looksUuid(lead.goyalCrmId)) {
+    return { crmId: lead.goyalCrmId!, created: false };
+  }
+
+  const {
+    createEoiLeadBestEffort,
+    getGoyalCrmCapabilities,
+    resolveGoyalLeadId,
+  } = await import("@booking/integrations");
+
+  try {
+    const resolved = await resolveGoyalLeadId({
+      idOrCode: lead.goyalCrmId || lead.goyalLeadCode || lead.titanCrmId,
+      phone: lead.customerPhone,
+    });
+    if (resolved) {
+      await prisma.leadRegistry.update({
+        where: { id: lead.id },
+        data: {
+          goyalCrmId: resolved,
+          ...(lead.titanCrmId ? {} : { titanCrmId: resolved }),
+        },
+      });
+      return { crmId: resolved, created: false };
+    }
+  } catch {
+    /* create below */
+  }
+
+  const caps = getGoyalCrmCapabilities();
+  if (!caps.canCreate) {
+    return {
+      created: false,
+      error: "EOI_API_KEY not configured — cannot sync lead to CRM",
+    };
+  }
+
+  const projectName =
+    opts?.projectName?.trim() ||
+    lead.project?.name ||
+    (lead.intentType?.startsWith("eoi:")
+      ? lead.intentType.slice(4).replace(/\|booked$/i, "").trim()
+      : undefined) ||
+    undefined;
+
+  const source = String(lead.source || "");
+  const isWalkIn = source === "DIRECT_WALKIN" || /^WALKIN-/i.test(lead.leadId);
+  const isPartner =
+    source === "CHANNEL_PARTNER" || Boolean(lead.cpId || lead.eoiCpLeadId);
+  const sourceOfEnquiry = isWalkIn
+    ? `Direct Walk-in [${lead.leadId}]`
+    : isPartner
+      ? `Partner Portal Lead [${lead.leadId}]`
+      : source === "PRESALES"
+        ? `Presales CRM [${lead.leadId}]`
+        : `Reception Lead [${lead.leadId}]`;
+
+  try {
+    const phone =
+      lead.customerPhone.replace(/\D/g, "").slice(-10) || lead.customerPhone;
+    const email = lead.customerEmail?.trim() || undefined;
+    const minimal = {
+      fullName: lead.customerName.trim(),
+      phone,
+      ...(email ? { email } : {}),
+      ...(projectName ? { projectName } : {}),
+      leadId: lead.leadId,
+      sourceOfEnquiry,
+      notes: [
+        `${sourceOfEnquiry}`,
+        projectName ? `Project: ${projectName}` : null,
+        lead.cpId ? `CP: ${lead.cpId}` : null,
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      ...(isWalkIn ? { source: "walk_in" as const } : {}),
+      ...(isPartner
+        ? {
+            channelPartnerId: lead.cpId || undefined,
+            intentType: lead.intentType?.includes("LEAD_ONLY")
+              ? "LEAD_ONLY"
+              : "EOI",
+          }
+        : {}),
+    };
+
+    let crmLead;
+    try {
+      ({ lead: crmLead } = await createEoiLeadBestEffort(minimal));
+    } catch (firstErr) {
+      // Retry without source / partner extras if CRM rejects unknown fields.
+      console.warn(
+        "[ensureLeadSyncedToGoyalCrm] first punch failed, retrying bare",
+        firstErr
+      );
+      ({ lead: crmLead } = await createEoiLeadBestEffort({
+        fullName: minimal.fullName,
+        phone: minimal.phone,
+        ...(email ? { email } : {}),
+        ...(projectName ? { projectName } : {}),
+        leadId: lead.leadId,
+        sourceOfEnquiry,
+      }));
+    }
+
+    const crmRef = crmLead?.id?.trim() || undefined;
+    const leadCode = crmLead?.leadCode?.trim() || undefined;
+    const uuid = looksUuid(crmRef) ? crmRef : undefined;
+    await prisma.leadRegistry.update({
+      where: { id: lead.id },
+      data: {
+        ...(uuid ? { goyalCrmId: uuid } : {}),
+        ...(leadCode ? { goyalLeadCode: leadCode } : {}),
+        ...(!uuid && crmRef ? { titanCrmId: crmRef } : {}),
+        ...(uuid && !lead.titanCrmId ? { titanCrmId: uuid } : {}),
+      },
+    });
+
+    const crmId = uuid || leadCode || crmRef;
+    if (!crmId) {
+      return { created: false, error: "CRM accepted punch but returned no lead id" };
+    }
+    return { crmId, created: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "CRM create failed";
+    console.error("[ensureLeadSyncedToGoyalCrm]", message, err);
+    return { created: false, error: message };
+  }
 }
 
 export async function upsertLeadFromEoiCp(input: {

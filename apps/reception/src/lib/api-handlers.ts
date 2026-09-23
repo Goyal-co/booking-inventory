@@ -8,6 +8,7 @@ import {
   assignLeadToSales,
   upsertLeadFromTitanSearch,
   upsertLeadFromEoiCp,
+  ensureLeadSyncedToGoyalCrm,
   assignGoyalLeadToSales,
   notifyEoiPartnerPortalResolved,
   mapLeadForBookingSearch,
@@ -675,7 +676,22 @@ export async function POST_materializeTitanLead(req: NextRequest) {
     ...rest,
     ...(customerEmail ? { customerEmail } : {}),
   });
-  return NextResponse.json({ lead }, { status: 201 });
+  const crm = await ensureLeadSyncedToGoyalCrm(lead.id, {
+    projectName: rest.intentType?.startsWith("eoi:")
+      ? rest.intentType.slice(4)
+      : undefined,
+  });
+  const refreshed = crm.crmId
+    ? await prisma.leadRegistry.findUnique({ where: { id: lead.id } })
+    : lead;
+  return NextResponse.json(
+    {
+      lead: refreshed ?? lead,
+      crmSynced: Boolean(crm.crmId),
+      crmError: crm.error,
+    },
+    { status: 201 }
+  );
 }
 
 const materializeEoiSchema = z.object({
@@ -689,6 +705,8 @@ const materializeEoiSchema = z.object({
   projectId: z.string().optional(),
   projectName: z.string().optional(),
   intentType: z.string().optional(),
+  /** Goyal CRM id from partner punch (EOI_CP stores it as titanCrmId). */
+  titanCrmId: z.string().optional(),
 });
 
 /** Upsert EOI Partner Portal identity association into local LeadRegistry. */
@@ -716,9 +734,25 @@ export async function POST_materializeEoiLead(req: NextRequest) {
     customerEmail: d.customerEmail || undefined,
     organizationId: user.organizationId,
     cpId: d.cpId,
+    titanCrmId: d.titanCrmId,
+    projectId: d.projectId,
     intentType: d.intentType || (d.projectName ? `eoi:${d.projectName}` : undefined),
   });
-  return NextResponse.json({ lead }, { status: 201 });
+  const crm = await ensureLeadSyncedToGoyalCrm(lead.id, {
+    projectId: d.projectId,
+    projectName: d.projectName,
+  });
+  const refreshed = crm.crmId
+    ? await prisma.leadRegistry.findUnique({ where: { id: lead.id } })
+    : lead;
+  return NextResponse.json(
+    {
+      lead: refreshed ?? lead,
+      crmSynced: Boolean(crm.crmId),
+      crmError: crm.error,
+    },
+    { status: 201 }
+  );
 }
 
 export async function GET_me() {
