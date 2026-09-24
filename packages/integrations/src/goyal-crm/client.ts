@@ -667,23 +667,8 @@ export async function markGoyalSiteVisit(
     })) || leadId;
 
   const today = new Date().toISOString().slice(0, 10);
-  const siteVisitPayload = compactEoiPayload({
-    siteVisit: true,
-    siteVisitDate: input.siteVisitDate ?? today,
-    siteVisitDone: input.siteVisitDone ?? true,
-    siteVisitDoneDate: input.siteVisitDoneDate ?? today,
-    leadId: input.leadId,
-    projectId: input.projectId,
-    projectName: input.projectName,
-    visitingCpId: input.visitingCpId,
-    visitingCpName: input.visitingCpName,
-    visitingCpMobile: input.visitingCpMobile,
-    salespersonId: input.salespersonId,
-    salespersonName: input.salespersonName,
-    projectHistory: input.projectHistory,
-    siteVisitHistory: input.siteVisitHistory,
-  } as Record<string, unknown>);
-
+  // Live CRM validators reject leadId / projectId / projectName / *History on site-visit.
+  // Keep that context in notes only.
   const visitNoteParts = [
     input.notes,
     input.visitingCpName || input.visitingCpId
@@ -695,17 +680,60 @@ export async function markGoyalSiteVisit(
     input.salespersonName ? `Sales: ${input.salespersonName}` : null,
     input.leadId ? `Partner Lead ID: ${input.leadId}` : null,
     input.projectName ? `Project: ${input.projectName}` : null,
+    input.projectId ? `Project ID: ${input.projectId}` : null,
     `Site visit at ${new Date().toISOString()}`,
   ].filter(Boolean);
   const notes = visitNoteParts.join(" — ") || undefined;
 
-  try {
-    const lead = normalizeStaffLead(
+  const coreFlags = {
+    siteVisit: true,
+    siteVisitDate: input.siteVisitDate ?? today,
+    siteVisitDone: input.siteVisitDone ?? true,
+    siteVisitDoneDate: input.siteVisitDoneDate ?? today,
+  };
+
+  const fullPayload = compactEoiPayload({
+    ...coreFlags,
+    visitingCpId: input.visitingCpId,
+    visitingCpName: input.visitingCpName,
+    visitingCpMobile: input.visitingCpMobile,
+    salespersonId: input.salespersonId,
+    salespersonName: input.salespersonName,
+    ...(notes ? { notes } : {}),
+  } as Record<string, unknown>);
+
+  const minimalPayload = compactEoiPayload({
+    ...coreFlags,
+    ...(notes ? { notes } : {}),
+  } as Record<string, unknown>);
+
+  const postVisit = async (payload: Record<string, unknown>) =>
+    normalizeStaffLead(
       await crmMutationFetch(`/leads/${encodeURIComponent(resolved)}/site-visit`, {
         method: "POST",
-        body: JSON.stringify(siteVisitPayload),
+        body: JSON.stringify(payload),
       })
     );
+
+  try {
+    let lead: GoyalCrmLead;
+    try {
+      lead = await postVisit(fullPayload);
+    } catch (err) {
+      const msg =
+        err instanceof GoyalCrmError
+          ? `${err.message} ${JSON.stringify(err.body ?? "")}`
+          : "";
+      if (
+        err instanceof GoyalCrmError &&
+        err.status === 400 &&
+        /should not exist/i.test(msg)
+      ) {
+        lead = await postVisit(minimalPayload);
+      } else {
+        throw err;
+      }
+    }
     if (notes) {
       try {
         return await updateGoyalLead(resolved, { notes } as UpdateGoyalLeadInput);
@@ -717,10 +745,7 @@ export async function markGoyalSiteVisit(
   } catch (err) {
     if (err instanceof GoyalCrmError && (err.status === 404 || err.status === 405)) {
       return updateGoyalLead(resolved, {
-        siteVisit: true,
-        siteVisitDate: input.siteVisitDate ?? today,
-        siteVisitDone: input.siteVisitDone ?? true,
-        siteVisitDoneDate: input.siteVisitDoneDate ?? today,
+        ...coreFlags,
         ...(notes ? { notes } : {}),
       } as UpdateGoyalLeadInput);
     }
