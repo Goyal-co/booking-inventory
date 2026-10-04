@@ -704,6 +704,9 @@ model LeadRegistry {
   registeredBy    User?          @relation("LeadRegisteredBy", fields: [registeredById], references: [id], onDelete: SetNull)
   assignedSalesId String?
   assignedSales   User?          @relation("LeadAssignee", fields: [assignedSalesId], references: [id], onDelete: SetNull)
+  /// Sales executive notes / feedback after meeting the assigned lead
+  salesFeedback   String?
+  salesFeedbackAt DateTime?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   blocks          Block[]

@@ -275,6 +275,20 @@ export async function updateUnit(
     updateData.costSheetTemplateId = null;
   }
 
+  // Releasing a booked unit from Inventory Manage: cancel active bookings first
+  if (
+    input.status === UnitStatus.AVAILABLE &&
+    existing.status === UnitStatus.BOOKED
+  ) {
+    await prisma.booking.updateMany({
+      where: {
+        unitId,
+        status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+      },
+      data: { status: BookingStatus.CANCELLED },
+    });
+  }
+
   const unit = await prisma.unit.update({
     where: { id: unitId },
     data: updateData,

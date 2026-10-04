@@ -6,6 +6,7 @@ import {
   searchLeads,
   registerWalkInLead,
   assignLeadToSales,
+  reassignSiteVisitSales,
   upsertLeadFromTitanSearch,
   upsertLeadFromEoiCp,
   ensureLeadSyncedToGoyalCrm,
@@ -836,19 +837,66 @@ export async function GET_availableSalespersons(req: NextRequest) {
   });
 }
 
-export async function GET_visitsToday() {
+function visitRangeBounds(range: string, from?: string | null, to?: string | null) {
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+
+  if (from || to) {
+    const gte = from ? new Date(from) : undefined;
+    const lte = to ? new Date(to) : undefined;
+    if (gte && Number.isNaN(gte.getTime())) return { error: "Invalid from date" as const };
+    if (lte && Number.isNaN(lte.getTime())) return { error: "Invalid to date" as const };
+    if (lte) lte.setHours(23, 59, 59, 999);
+    return {
+      range: "custom" as const,
+      checkedInAt: {
+        ...(gte ? { gte } : {}),
+        ...(lte ? { lte } : {}),
+      },
+    };
+  }
+
+  const normalized = (range || "today").toLowerCase();
+  if (normalized === "all") {
+    return { range: "all" as const, checkedInAt: undefined };
+  }
+  if (normalized === "7d" || normalized === "week") {
+    const gte = new Date(startOfToday);
+    gte.setDate(gte.getDate() - 6);
+    return { range: "7d" as const, checkedInAt: { gte } };
+  }
+  if (normalized === "30d" || normalized === "month") {
+    const gte = new Date(startOfToday);
+    gte.setDate(gte.getDate() - 29);
+    return { range: "30d" as const, checkedInAt: { gte } };
+  }
+  return { range: "today" as const, checkedInAt: { gte: startOfToday } };
+}
+
+export async function GET_visitsToday(req?: NextRequest) {
   const user = await getReceptionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+
+  const sp = req?.nextUrl?.searchParams;
+  const bounds = visitRangeBounds(
+    sp?.get("range") ?? "today",
+    sp?.get("from"),
+    sp?.get("to"),
+  );
+  if ("error" in bounds && bounds.error) {
+    return NextResponse.json({ error: bounds.error }, { status: 400 });
+  }
+
   const visits = await prisma.siteVisit.findMany({
     where: {
-      checkedInAt: { gte: start },
+      ...(bounds.checkedInAt ? { checkedInAt: bounds.checkedInAt } : {}),
       lead: { organizationId: user.organizationId },
     },
     include: {
       lead: {
         select: {
+          id: true,
           leadId: true,
           customerName: true,
           customerPhone: true,
@@ -856,14 +904,17 @@ export async function GET_visitsToday() {
           source: true,
           goyalLeadCode: true,
           intentType: true,
+          assignedSalesId: true,
           project: { select: { id: true, name: true } },
         },
       },
-      salesUser: { select: { name: true } },
+      salesUser: { select: { id: true, name: true } },
     },
     orderBy: { checkedInAt: "desc" },
+    take: 500,
   });
   return NextResponse.json({
+    range: bounds.range,
     visits: visits.map((v) => {
       const intentProject =
         typeof v.lead?.intentType === "string" && v.lead.intentType.startsWith("eoi:")
@@ -881,8 +932,10 @@ export async function GET_visitsToday() {
         visitingCpName: v.visitingCpName,
         projectName,
         publicLeadId: v.publicLeadId,
+        leadRegistryId: v.lead?.id ?? v.leadId,
         lead: v.lead
           ? {
+              id: v.lead.id,
               leadId: v.lead.leadId,
               customerName: v.lead.customerName,
               customerPhone: v.lead.customerPhone,
@@ -896,6 +949,42 @@ export async function GET_visitsToday() {
       };
     }),
   });
+}
+
+const reassignVisitSchema = z.object({
+  salesUserId: z.string().min(1),
+});
+
+/** Reception: change salesperson on an existing check-in. */
+export async function PATCH_visitReassign(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getReceptionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const parsed = reassignVisitSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  try {
+    const result = await reassignSiteVisitSales({
+      visitId: id,
+      salesUserId: parsed.data.salesUserId,
+      organizationId: user.organizationId,
+    });
+    return NextResponse.json({
+      ok: true,
+      visitId: result.visit.id,
+      salesUser: result.salesUser,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Reassign failed";
+    const status = /not found/i.test(message) ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
 
 export async function GET_projects() {

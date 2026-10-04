@@ -155,7 +155,10 @@ services:
       APP: reception
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      # Must override root .env NEXTAUTH_URL=sales — otherwise Auth.js redirects to sales portal
       NEXTAUTH_URL: ${RECEPTION_URL}
+      AUTH_URL: ${RECEPTION_URL}
+      RECEPTION_URL: ${RECEPTION_URL}
       NODE_EXTRA_CA_CERTS: /ap-south-1-bundle.pem
       SKIP_DB_MIGRATE: "1"
       SKIP_ADMIN_BOOTSTRAP: "1"

@@ -42,6 +42,7 @@ import {
   getCustomerBaseUrl,
   listAssignedDirectLeads,
   markDirectLeadBooked,
+  updateLeadSalesFeedback,
   generateCustomerOtp,
   verifyCustomerOtp,
   consumeCustomerOtpVerified,
@@ -957,6 +958,39 @@ export async function GET_directLeads(_req: NextRequest) {
     leads,
     capabilities: getGoyalCrmCapabilities(),
   });
+}
+
+const leadFeedbackSchema = z.object({
+  feedback: z.string().trim().min(1).max(4000),
+});
+
+/** Sales: add or update feedback on an assigned lead. */
+export async function PATCH_directLeadFeedback(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const parsed = leadFeedbackSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  try {
+    const lead = await updateLeadSalesFeedback({
+      leadRegistryId: id,
+      salesUserId: user.id,
+      organizationId: user.organizationId,
+      feedback: parsed.data.feedback,
+    });
+    return NextResponse.json({ ok: true, lead });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to save feedback";
+    const status = /not found|not assigned/i.test(message) ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
 
 export async function POST_directLeadSiteVisit(

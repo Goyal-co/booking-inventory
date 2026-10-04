@@ -188,15 +188,19 @@ interface Visit {
   visitingCpId?: string | null;
   visitingCpName?: string | null;
   projectName?: string | null;
+  leadRegistryId?: string;
   lead?: {
+    id?: string;
     leadId: string;
     customerName: string;
     customerPhone: string;
     customerEmail?: string | null;
     isPresales?: boolean;
   } | null;
-  salesUser?: { name: string } | null;
+  salesUser?: { id?: string; name: string } | null;
 }
+
+type VisitRange = "today" | "7d" | "30d" | "all";
 
 interface EoiLead {
   id: string;
@@ -256,6 +260,28 @@ const emptyBook = {
 function formatTime(iso: string) {
   try {
     return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return iso;
+  }
+}
+
+function formatVisitWhen(iso: string) {
+  try {
+    const d = new Date(iso);
+    const today = new Date();
+    const sameDay =
+      d.getFullYear() === today.getFullYear() &&
+      d.getMonth() === today.getMonth() &&
+      d.getDate() === today.getDate();
+    if (sameDay) {
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    return d.toLocaleString([], {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
     return iso;
   }
@@ -420,8 +446,8 @@ const TAB_META: Record<ReceptionDeskTab, { title: string; description: string }>
       "Search platform leads (Walk-ins, Partner, EOI), create, assign, or book from Goyal CRM.",
   },
   visits: {
-    title: "Today’s check-ins",
-    description: "Everyone checked in at reception today.",
+    title: "Site visit check-ins",
+    description: "Filter check-ins and reassign the salesperson when needed.",
   },
 };
 
@@ -457,6 +483,12 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const [goyalEoiSearchError, setGoyalEoiSearchError] = useState("");
   const [sales, setSales] = useState<Array<{ id: string; name: string }>>([]);
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [visitRange, setVisitRange] = useState<VisitRange>("today");
+  const [visitFrom, setVisitFrom] = useState("");
+  const [visitTo, setVisitTo] = useState("");
+  const [reassignVisitId, setReassignVisitId] = useState<string | null>(null);
+  const [reassignSalesId, setReassignSalesId] = useState("");
+  const [reassignBusy, setReassignBusy] = useState(false);
   const [walkIn, setWalkIn] = useState({
     customerName: "",
     customerPhone: "",
@@ -513,9 +545,42 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
   const canBookLead = (lead: EoiLead) =>
     canBookWithStaff && Boolean(lead.id) && looksLikeUuid(String(lead.id));
 
-  const refreshVisits = async () => {
-    const v = await fetch("/api/visits/today").then((r) => r.json());
+  const refreshVisits = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (visitFrom || visitTo) {
+      if (visitFrom) params.set("from", visitFrom);
+      if (visitTo) params.set("to", visitTo);
+    } else {
+      params.set("range", visitRange);
+    }
+    const v = await fetch(`/api/visits/today?${params.toString()}`).then((r) => r.json());
     setVisits(v.visits ?? []);
+  }, [visitRange, visitFrom, visitTo]);
+
+  const reassignVisit = async () => {
+    if (!reassignVisitId || !reassignSalesId) {
+      toast.error("Select a salesperson");
+      return;
+    }
+    setReassignBusy(true);
+    try {
+      const res = await fetch(`/api/visits/${reassignVisitId}/reassign`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ salesUserId: reassignSalesId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(d.error ?? "Failed to change salesperson");
+        return;
+      }
+      toast.success(`Assigned to ${d.salesUser?.name ?? "salesperson"}`);
+      setReassignVisitId(null);
+      setReassignSalesId("");
+      await refreshVisits();
+    } finally {
+      setReassignBusy(false);
+    }
   };
 
   const searchLocal = async () => {
@@ -707,8 +772,11 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         }
       })
       .catch(() => setProjects([]));
-    void refreshVisits();
   }, []);
+
+  useEffect(() => {
+    void refreshVisits();
+  }, [refreshVisits]);
 
   useEffect(() => {
     if (tab === "eoi") void loadEoi(1);
@@ -2141,14 +2209,80 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
         )}
 
         {tab === "visits" && (
-          <div className="mx-auto max-w-4xl rounded-xl border border-gray-200 bg-white shadow-sm">
-            <div className="border-b border-gray-100 px-5 py-4">
-              <h2 className="text-base font-semibold text-gray-900">Today&apos;s check-ins</h2>
-              <p className="mt-0.5 text-sm text-gray-500">
-                {visits.length === 0
-                  ? "No visitors checked in yet."
-                  : `${visits.length} visitor${visits.length === 1 ? "" : "s"} today`}
-              </p>
+          <div className="mx-auto max-w-5xl rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="space-y-3 border-b border-gray-100 px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">Site visit check-ins</h2>
+                  <p className="mt-0.5 text-sm text-gray-500">
+                    {visits.length === 0
+                      ? "No visitors in this range."
+                      : `${visits.length} visitor${visits.length === 1 ? "" : "s"}`}
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => void refreshVisits()}>
+                  Refresh
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["today", "Today"],
+                    ["7d", "Last 7 days"],
+                    ["30d", "Last 30 days"],
+                    ["all", "All"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      setVisitFrom("");
+                      setVisitTo("");
+                      setVisitRange(value);
+                    }}
+                    className={
+                      !visitFrom && !visitTo && visitRange === value
+                        ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-medium text-white"
+                        : "rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <Label>From</Label>
+                  <Input
+                    type="date"
+                    className="mt-1"
+                    value={visitFrom}
+                    onChange={(e) => setVisitFrom(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Input
+                    type="date"
+                    className="mt-1"
+                    value={visitTo}
+                    onChange={(e) => setVisitTo(e.target.value)}
+                  />
+                </div>
+                {(visitFrom || visitTo) && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setVisitFrom("");
+                      setVisitTo("");
+                      setVisitRange("today");
+                    }}
+                  >
+                    Clear dates
+                  </Button>
+                )}
+              </div>
             </div>
             {visits.length === 0 ? (
               <p className="px-5 py-10 text-center text-sm text-gray-500">
@@ -2156,14 +2290,15 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="border-b bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
                     <tr>
                       <th className="px-5 py-3 font-semibold">Visitor</th>
                       <th className="px-5 py-3 font-semibold">Project</th>
                       <th className="px-5 py-3 font-semibold">Partner</th>
                       <th className="px-5 py-3 font-semibold">Salesperson</th>
-                      <th className="px-5 py-3 font-semibold">Time</th>
+                      <th className="px-5 py-3 font-semibold">When</th>
+                      <th className="px-5 py-3 font-semibold">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2190,7 +2325,21 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
                         <td className="px-5 py-3 text-gray-800">
                           {v.salesUser?.name ?? "Unassigned"}
                         </td>
-                        <td className="px-5 py-3 text-gray-600">{formatTime(v.checkedInAt)}</td>
+                        <td className="px-5 py-3 text-gray-600">
+                          {formatVisitWhen(v.checkedInAt)}
+                        </td>
+                        <td className="px-5 py-3">
+                          <Button
+                            variant="outline"
+                            className="h-8 px-2 text-xs"
+                            onClick={() => {
+                              setReassignVisitId(v.id);
+                              setReassignSalesId(v.salesUser?.id ?? "");
+                            }}
+                          >
+                            Change sales
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2539,6 +2688,54 @@ export function ReceptionDesk({ tab }: { tab: ReceptionDeskTab }) {
               onClick={() => void submitAssignEoi()}
             >
               {assignBusy ? "Assigning…" : "Assign"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(reassignVisitId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReassignVisitId(null);
+            setReassignSalesId("");
+          }
+        }}
+        title="Change salesperson"
+        description="Updates this check-in and the lead’s assigned sales member."
+        className="sm:max-w-md"
+      >
+        <div className="space-y-3">
+          <div>
+            <Label>Sales team member</Label>
+            <select
+              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              value={reassignSalesId}
+              onChange={(e) => setReassignSalesId(e.target.value)}
+            >
+              <option value="">Select salesperson…</option>
+              {sales.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReassignVisitId(null);
+                setReassignSalesId("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={reassignBusy || !reassignSalesId}
+              onClick={() => void reassignVisit()}
+            >
+              {reassignBusy ? "Saving…" : "Save"}
             </Button>
           </div>
         </div>

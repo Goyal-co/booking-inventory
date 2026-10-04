@@ -837,6 +837,15 @@ export function mapLeadForBookingSearch(
     visitingCp,
     visitHistory,
     isPresales,
+    salesFeedback:
+      "salesFeedback" in lead
+        ? ((lead as { salesFeedback?: string | null }).salesFeedback ?? null)
+        : null,
+    salesFeedbackAt:
+      "salesFeedbackAt" in lead &&
+      (lead as { salesFeedbackAt?: Date | null }).salesFeedbackAt
+        ? (lead as { salesFeedbackAt: Date }).salesFeedbackAt.toISOString()
+        : null,
     todaySiteVisit: todayVisit
       ? {
           id: todayVisit.id,
@@ -849,6 +858,107 @@ export function mapLeadForBookingSearch(
         }
       : null,
   };
+}
+
+/** Reception: reassign salesperson on an existing site-visit check-in (no new visit row). */
+export async function reassignSiteVisitSales(input: {
+  visitId: string;
+  salesUserId: string;
+  organizationId: string;
+}) {
+  const visit = await prisma.siteVisit.findFirst({
+    where: {
+      id: input.visitId,
+      lead: { organizationId: input.organizationId },
+    },
+    include: {
+      lead: { select: { id: true, assignedSalesId: true } },
+      salesUser: { select: { id: true, name: true } },
+    },
+  });
+  if (!visit) throw new Error("Visit not found");
+
+  const sales = await prisma.user.findFirst({
+    where: {
+      id: input.salesUserId,
+      organizationId: input.organizationId,
+      role: { in: ["SALES_EXEC", "SALES_MANAGER"] },
+      isActive: true,
+    },
+    select: { id: true, name: true },
+  });
+  if (!sales) throw new Error("Salesperson not found");
+
+  const previousName = visit.salesUser?.name ?? "Unassigned";
+  const noteLine = `Reassigned from ${previousName} to ${sales.name} at ${new Date().toISOString()}`;
+  const nextNotes = [visit.notes, noteLine].filter(Boolean).join(" — ");
+
+  const [updatedVisit] = await prisma.$transaction([
+    prisma.siteVisit.update({
+      where: { id: visit.id },
+      data: {
+        salesUserId: sales.id,
+        notes: nextNotes,
+      },
+      include: {
+        salesUser: { select: { id: true, name: true } },
+        lead: {
+          select: {
+            id: true,
+            leadId: true,
+            customerName: true,
+            customerPhone: true,
+            customerEmail: true,
+            source: true,
+            goyalLeadCode: true,
+            intentType: true,
+            project: { select: { id: true, name: true } },
+          },
+        },
+      },
+    }),
+    prisma.leadRegistry.update({
+      where: { id: visit.leadId },
+      data: { assignedSalesId: sales.id },
+    }),
+  ]);
+
+  return { visit: updatedVisit, salesUser: sales };
+}
+
+/** Sales: save / update feedback on an assigned lead. */
+export async function updateLeadSalesFeedback(input: {
+  leadRegistryId: string;
+  salesUserId: string;
+  organizationId: string;
+  feedback: string;
+}) {
+  const lead = await prisma.leadRegistry.findFirst({
+    where: {
+      id: input.leadRegistryId,
+      organizationId: input.organizationId,
+      assignedSalesId: input.salesUserId,
+    },
+  });
+  if (!lead) throw new Error("Lead not found or not assigned to you");
+
+  const trimmed = input.feedback.trim();
+  if (!trimmed) throw new Error("Feedback cannot be empty");
+  if (trimmed.length > 4000) throw new Error("Feedback is too long (max 4000 characters)");
+
+  return prisma.leadRegistry.update({
+    where: { id: lead.id },
+    data: {
+      salesFeedback: trimmed,
+      salesFeedbackAt: new Date(),
+    },
+    select: {
+      id: true,
+      leadId: true,
+      salesFeedback: true,
+      salesFeedbackAt: true,
+    },
+  });
 }
 
 export async function assignLeadToSales(

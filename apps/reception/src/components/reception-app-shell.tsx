@@ -27,7 +27,7 @@ export const receptionNavItems = [
   },
   {
     href: "/dashboard/visits",
-    label: "Today's visits",
+    label: "Site visits",
     icon: Users,
     match: (p: string) => p.startsWith("/dashboard/visits"),
   },

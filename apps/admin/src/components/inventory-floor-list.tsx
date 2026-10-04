@@ -107,14 +107,14 @@ function isUnitDeleteDisabled(status: UnitStatus): boolean {
 }
 
 function isStatusLocked(status: UnitStatus): boolean {
-  // Booked stays managed via Bookings; admin may freely set Sold / Blocked / Available
+  // Unit number stays locked while booked; status can be released to Available.
   return status === "BOOKED";
 }
 
 function editModalDescription(unit: StructureUnit | null): string {
   if (!unit) return "Add a unit to a specific floor. Floor is created automatically if it does not exist.";
   if (unit.status === "BOOKED") {
-    return "This unit is tied to a booking. Status and unit number cannot be changed here — use the Bookings page.";
+    return "This unit is booked. You can change status to Available (cancels active bookings) or Sold. Unit number stays locked.";
   }
   if (unit.status === "BLOCKED") {
     return "This unit is blocked until marked Available (here or via Grid → Mass Unblock). Floor plan and cost sheet are optional.";
@@ -144,7 +144,7 @@ function StatusWarningBanner({ status }: { status: UnitStatus }) {
     BOOKED: {
       className: "border-red-200 bg-red-50 text-red-800",
       message:
-        "This unit is booked. Do not change status manually — use the Bookings page to manage the booking.",
+        "Booked unit — you can set status to Available (releases the unit and cancels active bookings) or Sold.",
     },
     SOLD: {
       className: "border-red-200 bg-red-50 text-red-800",
@@ -254,6 +254,7 @@ export function InventoryFloorList({
     const patchBody =
       editingUnitId && editingUnit && isStatusLocked(editingUnit.status)
         ? {
+            // Keep unit number locked for booked units, but allow status release.
             ...(form.floorPlanTypeId
               ? { floorPlanTypeId: form.floorPlanTypeId }
               : { floorPlanTypeId: "" }),
@@ -263,6 +264,7 @@ export function InventoryFloorList({
             facing: payload.facing,
             remarks: payload.remarks,
             priceOverride: payload.priceOverride,
+            status: form.status,
           }
         : {
             ...payload,
@@ -513,27 +515,28 @@ export function InventoryFloorList({
               </div>
               <div>
                 <Label>Status</Label>
-                {editingUnit && isStatusLocked(editingUnit.status) ? (
-                  <div className="mt-1">
-                    <StatusBadge status={editingUnit.status} />
-                  </div>
-                ) : (
-                  <select
-                    className="mt-1 w-full rounded-lg border p-2 text-sm"
-                    value={form.status ?? "AVAILABLE"}
-                    onChange={(e) =>
-                      setForm({ ...form, status: e.target.value as UnitStatus })
-                    }
-                  >
-                    {(["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"] as UnitStatus[]).map(
-                      (s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      )
-                    )}
-                  </select>
-                )}
+                <select
+                  className="mt-1 w-full rounded-lg border p-2 text-sm"
+                  value={form.status ?? "AVAILABLE"}
+                  onChange={(e) =>
+                    setForm({ ...form, status: e.target.value as UnitStatus })
+                  }
+                >
+                  {(
+                    (editingUnit?.status === "BOOKED"
+                      ? (["BOOKED", "AVAILABLE", "SOLD"] as UnitStatus[])
+                      : (["AVAILABLE", "BLOCKED", "BOOKED", "SOLD", "HOLD"] as UnitStatus[]))
+                  ).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                {editingUnit?.status === "BOOKED" ? (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Changing to Available cancels active bookings for this unit.
+                  </p>
+                ) : null}
               </div>
             </>
           )}

@@ -63,6 +63,10 @@ export const POST_block_resendBookingEmail = withLoggedHandler(
   H.POST_block_resendBookingEmail,
 );
 export const GET_directLeads = withLoggedHandler("sales.directLeads.list", H.GET_directLeads);
+export const PATCH_directLeadFeedback = withLoggedHandler(
+  "sales.directLeads.feedback",
+  H.PATCH_directLeadFeedback,
+);
 export const POST_directLeadSiteVisit = withLoggedHandler(
   "sales.directLeads.siteVisit",
   H.POST_directLeadSiteVisit,

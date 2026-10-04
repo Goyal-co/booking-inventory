@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, PageHeader } from "@booking/ui";
+import { Button, PageHeader, Modal, Label } from "@booking/ui";
 import { toast, Toaster } from "sonner";
 
 type VisitHistoryRow = {
@@ -27,6 +27,8 @@ type DirectLead = {
   currentProjectName?: string | null;
   visitHistory?: VisitHistoryRow[];
   isPresales?: boolean;
+  salesFeedback?: string | null;
+  salesFeedbackAt?: string | null;
   project?: { id: string; name: string } | null;
   visitingCp?: {
     partnerName: string;
@@ -38,6 +40,9 @@ type DirectLead = {
 export function DirectBookingPage() {
   const [leads, setLeads] = useState<DirectLead[]>([]);
   const [loading, setLoading] = useState(true);
+  const [feedbackLead, setFeedbackLead] = useState<DirectLead | null>(null);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,18 +69,50 @@ export function DirectBookingPage() {
   const isBooked = (l: DirectLead) =>
     Boolean(l.isBooked) || (l.intentType ?? "").includes("|booked");
 
+  const openFeedback = (lead: DirectLead) => {
+    setFeedbackLead(lead);
+    setFeedbackText(lead.salesFeedback ?? "");
+  };
+
+  const saveFeedback = async () => {
+    if (!feedbackLead) return;
+    const trimmed = feedbackText.trim();
+    if (!trimmed) {
+      toast.error("Enter feedback before saving");
+      return;
+    }
+    setFeedbackBusy(true);
+    try {
+      const res = await fetch(`/api/direct-leads/${feedbackLead.id}/feedback`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback: trimmed }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(d.error ?? "Failed to save feedback");
+        return;
+      }
+      toast.success("Feedback saved");
+      setFeedbackLead(null);
+      setFeedbackText("");
+      await load();
+    } finally {
+      setFeedbackBusy(false);
+    }
+  };
+
   return (
     <div className="p-4 md:p-6">
       <Toaster richColors />
       <PageHeader
         title="Assigned Leads"
-        description="Leads checked in by reception. Site visit is marked done in CRM and EOI Partner Portal at assignment. Use Live Booking to block a unit and send the customer the digital booking form — booking is confirmed in CRM and EOI after admin approval."
+        description="Leads checked in by reception. Add feedback after your meeting. Use Live Booking to block a unit and send the customer the digital booking form."
       />
 
       <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-        Site visit is completed when reception assigns you a lead. To book a unit, go to{" "}
-        <strong>Live Booking</strong>, block the unit, enter customer details, and the system
-        emails them a secure booking form link.
+        Site visit is completed when reception assigns you a lead. Capture meeting notes with{" "}
+        <strong>Add feedback</strong>. To book a unit, go to <strong>Live Booking</strong>.
       </div>
 
       <div className="mb-3 flex justify-end">
@@ -91,12 +128,13 @@ export function DirectBookingPage() {
               <th className="px-4 py-3">Customer</th>
               <th className="px-4 py-3">CP</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Feedback</th>
             </tr>
           </thead>
           <tbody>
             {leads.length === 0 && !loading && (
               <tr>
-                <td colSpan={3} className="px-4 py-10 text-center text-gray-500">
+                <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
                   No leads assigned to you yet. Reception assigns them after check-in.
                 </td>
               </tr>
@@ -159,11 +197,74 @@ export function DirectBookingPage() {
                     ) : null}
                   </div>
                 </td>
+                <td className="px-4 py-3">
+                  <div className="space-y-2">
+                    {l.salesFeedback ? (
+                      <p className="max-w-xs whitespace-pre-wrap text-xs text-gray-700">
+                        {l.salesFeedback}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-gray-400">No feedback yet</p>
+                    )}
+                    {l.salesFeedbackAt ? (
+                      <p className="text-[11px] text-gray-400">
+                        Updated {new Date(l.salesFeedbackAt).toLocaleString()}
+                      </p>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => openFeedback(l)}
+                    >
+                      {l.salesFeedback ? "Edit feedback" : "Add feedback"}
+                    </Button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <Modal
+        open={Boolean(feedbackLead)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFeedbackLead(null);
+            setFeedbackText("");
+          }
+        }}
+        title={feedbackLead ? `Feedback · ${feedbackLead.customerName}` : "Feedback"}
+        description="Notes from your meeting with this lead (visible on your Assigned Leads list)."
+        className="sm:max-w-lg"
+      >
+        <div className="space-y-3">
+          <div>
+            <Label>Feedback</Label>
+            <textarea
+              className="mt-1 min-h-[140px] w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value.slice(0, 4000))}
+              placeholder="Interest level, budget, follow-up needed…"
+            />
+            <p className="mt-1 text-xs text-gray-400">{feedbackText.length}/4000</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFeedbackLead(null);
+                setFeedbackText("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button disabled={feedbackBusy || !feedbackText.trim()} onClick={() => void saveFeedback()}>
+              {feedbackBusy ? "Saving…" : "Save feedback"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

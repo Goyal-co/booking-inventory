@@ -7,6 +7,13 @@ import { authConfig } from "./auth.config";
 
 assertNextAuthSecret();
 
+// Guard against shared monorepo .env where NEXTAUTH_URL points at sales.
+const receptionUrl = (process.env.RECEPTION_URL || "").trim().replace(/\/$/, "");
+if (receptionUrl) {
+  process.env.AUTH_URL = receptionUrl;
+  process.env.NEXTAUTH_URL = receptionUrl;
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   providers: [
