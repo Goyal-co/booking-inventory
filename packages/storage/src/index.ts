@@ -77,6 +77,9 @@ function s3Client() {
       secretAccessKey: cfg.secretAccessKey,
     },
     forcePathStyle: cfg.forcePathStyle,
+    // Default SDK checksums add x-amz-checksum-* to browser PUTs and S3 rejects the preflight.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
     requestHandler: new NodeHttpHandler({
       httpAgent: new HttpAgent({ keepAlive: true, maxSockets }),
       httpsAgent: new HttpsAgent({ keepAlive: true, maxSockets }),
@@ -160,7 +163,6 @@ export async function getPresignedUpload(params: {
       Bucket: cfg.bucket,
       Key: key,
       ContentType: params.mimeType,
-      ContentLength: params.size,
     });
     const uploadUrl = await getSignedUrl(s3Client(), command, { expiresIn: DOWNLOAD_TTL_SEC });
     return {

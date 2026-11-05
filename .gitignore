@@ -3,18 +3,11 @@ node_modules
 .turbo
 dist
 
-# Env / secrets — never commit real keys
+# Env / secrets — never commit real keys. Blank templates named .env.example may be committed.
 .env
 .env.*
 !.env.example
-.env.example
-.env.local
-.env*.local
-apps/*/.env
-apps/*/.env.local
-apps/*/.env.*.local
-packages/*/.env
-packages/*/.env.local
+!**/.env.example
 
 *.log
 .DS_Store
